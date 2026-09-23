@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aktor_agents}
+      POSTGRES_USER: ${POSTGRES_USER:-aktor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aktor_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aktor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5080:8080"
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-aktor_agents};Username=${POSTGRES_USER:-aktor};Password=${POSTGRES_PASSWORD:-aktor_dev_password}"
+      Tools__DatabaseConnectionString: "Host=postgres;Port=5432;Database=${POSTGRES_DB:-aktor_agents};Username=${POSTGRES_USER:-aktor};Password=${POSTGRES_PASSWORD:-aktor_dev_password}"
+      Llm__Provider: ${LLM_PROVIDER:-Mock}
+      Llm__Model: ${LLM_MODEL:-claude-sonnet-5}
+      Llm__ApiKey: ${LLM_API_KEY:-}
+      Tools__SearchApiKey: ${SEARCH_API_KEY:-}
+      Cors__AllowedOrigins__0: "http://localhost:3000"
+    volumes:
+      # Lets the API's shell_exec tool launch sandboxed sibling containers on the host's Docker
+      # daemon ("Docker outside of Docker") rather than needing Docker-in-Docker.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-workspace:/app/workspace
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:5080}
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres-data:
+  agent-workspace:
