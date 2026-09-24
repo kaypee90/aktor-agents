@@ -1,3 +1,4 @@
+using AgentRuntime.Configuration;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Simulation;
 using Microsoft.AspNetCore.Mvc;
@@ -17,8 +18,11 @@ public sealed class WorldsController(
     IWorldGenesis genesis,
     AgentDbContext db,
     IOptions<SimulationOptions> options,
+    IOptions<LlmOptions> llmOptions,
     ILogger<WorldsController> logger) : ControllerBase
 {
+    private SimulationLimits Limits => options.Value.LimitsFor(llmOptions.Value.IsLocal);
+
     public sealed record CreateWorldRequest(
         string Seed,
         int? Population,
@@ -34,15 +38,16 @@ public sealed class WorldsController(
             return BadRequest(new { error = "seed is required" });
         }
 
-        var o = options.Value;
         // Clamped server-side: these are the simulation's cost bound, so the client can't lift them.
-        var population = Math.Clamp(request.Population ?? 5, 1, o.MaxInitialPopulation);
+        // A local model gets tighter limits (see SimulationOptions.LocalModel).
+        var l = Limits;
+        var population = Math.Clamp(request.Population ?? l.DefaultPopulation, 1, l.MaxInitialPopulation);
         var settings = new WorldSettings
         {
             Seed = request.Seed.Trim(),
-            TickIntervalSeconds = Math.Clamp(request.TickIntervalSeconds ?? o.DefaultTickIntervalSeconds, o.MinTickIntervalSeconds, 600),
-            MaxTicks = Math.Clamp(request.MaxTicks ?? o.DefaultMaxTicks, 1, o.MaxTicksCeiling),
-            MaxDurationMinutes = Math.Clamp(request.MaxDurationMinutes ?? o.DefaultMaxDurationMinutes, 1, o.MaxDurationMinutesCeiling)
+            TickIntervalSeconds = Math.Clamp(request.TickIntervalSeconds ?? l.DefaultTickIntervalSeconds, l.MinTickIntervalSeconds, 600),
+            MaxTicks = Math.Clamp(request.MaxTicks ?? l.DefaultMaxTicks, 1, l.MaxTicks),
+            MaxDurationMinutes = Math.Clamp(request.MaxDurationMinutes ?? l.DefaultMaxDurationMinutes, 1, l.MaxDurationMinutes)
         };
 
         WorldBlueprint blueprint;
@@ -62,6 +67,35 @@ public sealed class WorldsController(
         await world.Start();
 
         return Ok(new { world_id = worldId });
+    }
+
+    /// <summary>Defaults and limits for the create-world form, which depend on the configured LLM
+    /// provider (a local model gets fewer residents and slower ticks).</summary>
+    [HttpGet("settings")]
+    public IActionResult Settings()
+    {
+        var l = Limits;
+        var llm = llmOptions.Value;
+        return Ok(new
+        {
+            provider = llm.Provider,
+            model = llm.Model,
+            local_model = llm.IsLocal,
+            defaults = new
+            {
+                population = l.DefaultPopulation,
+                tick_interval_seconds = l.DefaultTickIntervalSeconds,
+                max_ticks = l.DefaultMaxTicks,
+                max_duration_minutes = l.DefaultMaxDurationMinutes
+            },
+            limits = new
+            {
+                max_population = l.MaxInitialPopulation,
+                min_tick_interval_seconds = l.MinTickIntervalSeconds,
+                max_ticks = l.MaxTicks,
+                max_duration_minutes = l.MaxDurationMinutes
+            }
+        });
     }
 
     [HttpGet]

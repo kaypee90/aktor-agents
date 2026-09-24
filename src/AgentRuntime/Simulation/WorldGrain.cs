@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using AgentRuntime.Agents;
+using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
@@ -18,9 +19,11 @@ public sealed class WorldGrain(
     IEventPublisher events,
     IWorldArchive archive,
     IOptions<SimulationOptions> options,
+    IOptions<LlmOptions> llmOptions,
     ILogger<WorldGrain> logger) : Grain, IWorldGrain
 {
     private readonly SimulationOptions _opts = options.Value;
+    private readonly SimulationLimits _limits = options.Value.LimitsFor(llmOptions.Value.IsLocal);
     private IGrainTimer? _timer;
 
     private WorldState S => state.State;
@@ -59,7 +62,7 @@ public sealed class WorldGrain(
 
         Log("world", $"The world '{S.Name}' came into being.", global: true);
 
-        foreach (var resident in blueprint.Residents.Take(_opts.MaxInitialPopulation))
+        foreach (var resident in blueprint.Residents.Take(_limits.MaxInitialPopulation))
         {
             var created = await AddResidentAsync(resident, parentAgentId: null, _opts.StartingEnergy,
                 ResolveLocation(resident.StartingLocation) ?? S.Locations[0].Name);
@@ -549,9 +552,9 @@ public sealed class WorldGrain(
             return WorldActionResult.Fail("bring_new_agent needs a name and a role.");
         }
 
-        if (LivingResidents().Count() >= _opts.MaxPopulation)
+        if (LivingResidents().Count() >= _limits.MaxPopulation)
         {
-            return WorldActionResult.Fail($"The world is at its population limit ({_opts.MaxPopulation}).");
+            return WorldActionResult.Fail($"The world is at its population limit ({_limits.MaxPopulation}).");
         }
 
         if (!TryCharge(r, _opts.Costs.BringNewAgent, "bring_new_agent", out var fail)) return fail;

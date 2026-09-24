@@ -20,4 +20,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="AgentRuntime.Tests" />
+  </ItemGroup>
+
 </Project>

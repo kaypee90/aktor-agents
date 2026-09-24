@@ -11,6 +11,7 @@ public sealed class SimulationOptions
     public const string SectionName = "Simulation";
 
     // ---- Population and time bounds (the cost bound: a world always ends) ----
+    public int DefaultPopulation { get; set; } = 5;
     public int MaxInitialPopulation { get; set; } = 12;
     public int MaxPopulation { get; set; } = 20;
     public int DefaultTickIntervalSeconds { get; set; } = 15;
@@ -53,6 +54,25 @@ public sealed class SimulationOptions
     public int ResidentMaxToolCalls { get; set; } = 800;
     public decimal ResidentMaxCostUsd { get; set; } = 1.50m;
 
+    /// <summary>Overrides used when the LLM runs locally (Ollama). A local server usually answers
+    /// one request at a time, so each tick has to wait for every resident's turn in sequence:
+    /// fewer residents and slower ticks keep residents from constantly missing ticks while they
+    /// queue.</summary>
+    public LocalModelProfile LocalModel { get; set; } = new();
+
+    /// <summary>The population/time limits in force for the configured provider.</summary>
+    public SimulationLimits LimitsFor(bool localModel) => localModel
+        ? new SimulationLimits(
+            LocalModel.DefaultPopulation, LocalModel.MaxInitialPopulation, LocalModel.MaxPopulation,
+            LocalModel.DefaultTickIntervalSeconds, LocalModel.MinTickIntervalSeconds,
+            LocalModel.DefaultMaxTicks, MaxTicksCeiling,
+            LocalModel.DefaultMaxDurationMinutes, MaxDurationMinutesCeiling)
+        : new SimulationLimits(
+            DefaultPopulation, MaxInitialPopulation, MaxPopulation,
+            DefaultTickIntervalSeconds, MinTickIntervalSeconds,
+            DefaultMaxTicks, MaxTicksCeiling,
+            DefaultMaxDurationMinutes, MaxDurationMinutesCeiling);
+
     public ResourceBudget ResidentBudget(int maxDurationMinutes) => new()
     {
         MaxTokens = ResidentMaxTokens,
@@ -62,6 +82,28 @@ public sealed class SimulationOptions
         MaxDurationSeconds = maxDurationMinutes * 60
     };
 }
+
+public sealed class LocalModelProfile
+{
+    public int DefaultPopulation { get; set; } = 3;
+    public int MaxInitialPopulation { get; set; } = 6;
+    public int MaxPopulation { get; set; } = 8;
+    public int DefaultTickIntervalSeconds { get; set; } = 45;
+    public int MinTickIntervalSeconds { get; set; } = 20;
+    public int DefaultMaxTicks { get; set; } = 20;
+    public int DefaultMaxDurationMinutes { get; set; } = 30;
+}
+
+public sealed record SimulationLimits(
+    int DefaultPopulation,
+    int MaxInitialPopulation,
+    int MaxPopulation,
+    int DefaultTickIntervalSeconds,
+    int MinTickIntervalSeconds,
+    int DefaultMaxTicks,
+    int MaxTicks,
+    int DefaultMaxDurationMinutes,
+    int MaxDurationMinutes);
 
 public sealed class EnergyCosts
 {

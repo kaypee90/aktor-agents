@@ -213,6 +213,38 @@ LLM_API_KEY=sk-...
 The API never exposes this key to an agent or a tool call — it's held by the provider
 implementation and injected via configuration, per CLAUDE.md §44.
 
+### Local models with Ollama
+
+`LLM_PROVIDER=Ollama` runs every agent on a local model with no API key and no per-token cost
+(cost budgets are set to $0 per token automatically). Use a model with **tool calling**:
+`qwen2.5:7b`/`14b`, `qwen3:8b`, `llama3.1:8b`, `mistral-nemo`. Very small models (≤3B) tend to
+call tools badly.
+
+```bash
+ollama pull qwen2.5:7b
+# .env
+LLM_PROVIDER=Ollama
+LLM_MODEL=qwen2.5:7b
+LLM_BASE_URL=            # blank = Ollama on the Docker host (host.docker.internal:11434)
+```
+
+- The provider uses Ollama's native `/api/chat` and sends `num_ctx` (`LLM_CONTEXT_LENGTH`,
+  default 16384); Ollama's own default window would silently truncate agent prompts.
+- Thinking is switched off (`"think": false`, `LLM_DISABLE_THINKING=true`), so reasoning models
+  such as qwen3 or deepseek-r1 answer directly instead of spending most of each call on a hidden
+  reasoning trace. If a model reasons anyway (e.g. gpt-oss, which can't turn it off, or an Ollama
+  version older than 0.9, where the provider drops the flag automatically), any `<think>` text is
+  discarded and never stored or shown.
+- If the API container can't reach Ollama on the host, make Ollama listen on all interfaces
+  (`OLLAMA_HOST=0.0.0.0` before `ollama serve`, or set it as a Windows environment variable).
+- Or run Ollama inside Compose: `docker compose --profile ollama up -d --build`, set
+  `LLM_BASE_URL=http://ollama:11434`, then `docker compose exec ollama ollama pull qwen2.5:7b`.
+- Ollama answers one request at a time by default, so simulations switch to a local-model
+  profile automatically: 3 residents by default (max 6 at creation, 8 in total), 45 s ticks (min
+  20 s), 20 ticks and 30 min. The create form shows these, and the server enforces them
+  (`Simulation:LocalModel` in `appsettings.json`). If you have the VRAM, raise
+  `OLLAMA_NUM_PARALLEL` and loosen those limits.
+
 ## 9. Running the demonstration
 
 With the stack up, submit a goal through the dashboard, or directly:

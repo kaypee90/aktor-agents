@@ -108,3 +108,12 @@ export interface CreateWorldInput {
   max_ticks: number;
   max_duration_minutes: number;
 }
+
+/** GET /api/worlds/settings: form defaults and limits for the configured LLM provider. */
+export interface WorldFormSettings {
+  provider: string;
+  model: string;
+  local_model: boolean;
+  defaults: { population: number; tick_interval_seconds: number; max_ticks: number; max_duration_minutes: number };
+  limits: { max_population: number; min_tick_interval_seconds: number; max_ticks: number; max_duration_minutes: number };
+}

@@ -142,6 +142,10 @@ export function createWorld(input: import("./worldTypes").CreateWorldInput) {
   return apiFetch<{ world_id: string }>("/api/worlds", { method: "POST", body: JSON.stringify(input) });
 }
 
+export function getWorldSettings() {
+  return apiFetch<import("./worldTypes").WorldFormSettings>("/api/worlds/settings");
+}
+
 export function listWorlds() {
   return apiFetch<import("./worldTypes").WorldListItem[]>("/api/worlds");
 }

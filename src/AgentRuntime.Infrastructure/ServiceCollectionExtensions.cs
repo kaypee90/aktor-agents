@@ -64,6 +64,29 @@ public static class ServiceCollectionExtensions
             client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(configuredBaseUrl) ? "https://api.openai.com/" : configuredBaseUrl);
         });
 
+        services.AddHttpClient<OllamaProvider>(client =>
+        {
+            // Inside a container "localhost" is the container itself; the .NET base images set
+            // DOTNET_RUNNING_IN_CONTAINER, so default to the Docker host there instead.
+            var inContainer = string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase);
+            var fallback = inContainer ? "http://host.docker.internal:11434/" : "http://localhost:11434/";
+            var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl) ? fallback : configuredBaseUrl;
+            client.BaseAddress = new Uri(baseUrl.EndsWith('/') ? baseUrl : baseUrl + "/");
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(30, configuration.GetValue($"{LlmOptions.SectionName}:TimeoutSeconds", 300)));
+        });
+
+        if (providerName.Equals("Ollama", StringComparison.OrdinalIgnoreCase))
+        {
+            // Local inference costs nothing per token. Without this the default (cloud) prices
+            // would report phantom spend, and the per-agent cost caps would stop agents early.
+            // Explicitly configured prices still win.
+            services.PostConfigure<LlmOptions>(o =>
+            {
+                if (configuration[$"{LlmOptions.SectionName}:PricePerInputTokenUsd"] is null) o.PricePerInputTokenUsd = 0;
+                if (configuration[$"{LlmOptions.SectionName}:PricePerOutputTokenUsd"] is null) o.PricePerOutputTokenUsd = 0;
+            });
+        }
+
         switch (providerName)
         {
             case "Anthropic":
@@ -71,6 +94,9 @@ public static class ServiceCollectionExtensions
                 break;
             case "OpenAI":
                 services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<OpenAIProvider>());
+                break;
+            case "Ollama":
+                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<OllamaProvider>());
                 break;
             case "Gemini":
                 services.AddSingleton<ILLMProvider, GeminiProvider>();
