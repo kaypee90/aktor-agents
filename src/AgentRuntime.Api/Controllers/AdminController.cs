@@ -1,6 +1,7 @@
 using AgentRuntime.Agents;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
+using AgentRuntime.Simulation;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,7 @@ public sealed class AdminController(
     IAgentOrchestrator orchestrator,
     AgentDbContext db,
     AgentDatabaseSandbox databaseSandbox,
+    IGrainFactory grainFactory,
     IOptions<ToolsOptions> toolsOptions) : ControllerBase
 {
     /// <summary>Clears every task, agent, message, event, tool call, artifact, memory entry, and
@@ -27,6 +29,13 @@ public sealed class AdminController(
     [HttpPost("reset")]
     public async Task<IActionResult> Reset(CancellationToken ct)
     {
+        // Stop running worlds first, or their clocks would keep waking residents after the reset.
+        var liveWorlds = await db.Worlds.Where(w => w.Status != nameof(WorldStatus.Ended)).Select(w => w.WorldId).ToListAsync(ct);
+        foreach (var worldId in liveWorlds)
+        {
+            await grainFactory.GetGrain<IWorldGrain>(worldId).End("reset by the operator");
+        }
+
         await orchestrator.ResetRegistryAsync(ct);
 
         await db.Tasks.ExecuteDeleteAsync(ct);
@@ -36,6 +45,7 @@ public sealed class AdminController(
         await db.ToolCalls.ExecuteDeleteAsync(ct);
         await db.Artifacts.ExecuteDeleteAsync(ct);
         await db.MemoryEntries.ExecuteDeleteAsync(ct);
+        await db.Worlds.ExecuteDeleteAsync(ct);
 
         await databaseSandbox.ResetAsync(ct);
 

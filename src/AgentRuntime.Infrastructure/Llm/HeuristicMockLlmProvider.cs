@@ -17,6 +17,18 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
 
     public Task<LlmCompletionResponse> CompleteAsync(LlmCompletionRequest request, CancellationToken cancellationToken = default)
     {
+        // Simulation traffic is recognisable by its tools: genesis offers only define_world, and
+        // every resident has end_turn.
+        if (request.Tools.Any(t => t.Name == "define_world"))
+        {
+            return Task.FromResult(MockWorldBehavior.Genesis(request));
+        }
+
+        if (request.Tools.Any(t => t.Name == "end_turn"))
+        {
+            return Task.FromResult(MockWorldBehavior.Resident(request));
+        }
+
         var systemText = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
         var role = ExtractBetween(systemText, "acting as: ", ".") ?? "Agent";
         var goal = ExtractSection(systemText, "## GOAL") ?? "the assigned goal";

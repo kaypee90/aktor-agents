@@ -15,9 +15,16 @@ public sealed class ToolsOptions
     public string ShellMemoryLimit { get; set; } = "256m";
     public string ShellCpuLimit { get; set; } = "0.5";
 
-    /// <summary>Optional web search provider (e.g. Brave Search API). Left empty, web_search reports unavailable.</summary>
+    /// <summary>Which search API web_search calls: "Tavily" (free tier, no card) or "Brave".</summary>
+    public string SearchProvider { get; set; } = "Tavily";
+
+    /// <summary>API key for <see cref="SearchProvider"/>. Left empty, web_search reports unavailable.</summary>
     public string? SearchApiKey { get; set; }
-    public string SearchApiUrl { get; set; } = "https://api.search.brave.com/res/v1/web/search";
+
+    /// <summary>Optional endpoint override; defaults to the selected provider's public endpoint.</summary>
+    public string? SearchApiUrl { get; set; }
+
+    public int SearchMaxResults { get; set; } = 5;
 
     public int HttpTimeoutSeconds { get; set; } = 15;
     public int HttpMaxResponseBytes { get; set; } = 200_000;

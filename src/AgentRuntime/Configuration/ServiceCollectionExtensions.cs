@@ -1,9 +1,11 @@
 using AgentRuntime.Agents;
 using AgentRuntime.Events;
 using AgentRuntime.LLM;
+using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace AgentRuntime.Configuration;
 
@@ -21,6 +23,7 @@ public static class ServiceCollectionExtensions
         services.Configure<LlmOptions>(configuration.GetSection(LlmOptions.SectionName));
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
+        services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
 
         services.AddSingleton<InMemoryEventBus>();
         services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<InMemoryEventBus>());
@@ -40,9 +43,17 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITool, WriteMemoryTool>();
         services.AddSingleton<ITool, SearchKnowledgeTool>();
 
+        // Simulation: world actions for residents (never granted to task agents), genesis, and a
+        // no-op archive that the infrastructure layer replaces with Postgres.
+        services.AddWorldTools();
+        services.AddSingleton<IWorldGenesis, LlmWorldGenesis>();
+        services.TryAddSingleton<IWorldArchive, NullWorldArchive>();
+
         services.AddSingleton<IAgentPromptBuilder, AgentPromptBuilder>();
         services.AddSingleton<ISystemPromptSection, RoleSection>();
         services.AddSingleton<ISystemPromptSection, GoalSection>();
+        services.AddSingleton<ISystemPromptSection, ResidentPersonaSection>();
+        services.AddSingleton<ISystemPromptSection, WorldRulesSection>();
         services.AddSingleton<ISystemPromptSection, CurrentStateSection>();
         services.AddSingleton<ISystemPromptSection, CapabilitiesSection>();
         services.AddSingleton<ISystemPromptSection, ToolsSection>();

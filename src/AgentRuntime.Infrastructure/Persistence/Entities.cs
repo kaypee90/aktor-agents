@@ -100,3 +100,21 @@ public sealed class ToolCallRecord
     public bool Success { get; set; }
     public DateTimeOffset Timestamp { get; set; }
 }
+
+/// <summary>One simulated world. <see cref="SnapshotJson"/> is the latest full snapshot, so a world
+/// stays inspectable after the in-memory world grain is gone (e.g. after a restart).</summary>
+public sealed class WorldRecord
+{
+    public required string WorldId { get; set; }
+    public required string Name { get; set; }
+    public string Seed { get; set; } = string.Empty;
+    public string Status { get; set; } = "Created";
+    public int Tick { get; set; }
+    public int MaxTicks { get; set; }
+    public int Residents { get; set; }
+    public decimal CostUsd { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public DateTimeOffset? EndedAt { get; set; }
+    public string SnapshotJson { get; set; } = "{}";
+}

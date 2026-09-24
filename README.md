@@ -267,6 +267,53 @@ volume — all without restarting the containers. Existing agent grain activatio
 somehow still mid-turn) are simply left to idle out; nothing references their old ids once the
 registry and history are both cleared.
 
+## 10b. World simulation: agents living in a shared environment
+
+Besides goal-driven tasks, the runtime can host an open-ended **world** of autonomous residents
+that plan, talk and act on their own. Open **World simulation →** in the dashboard header
+(`/simulation`), describe a setting, and press *Create world and start*.
+
+```mermaid
+flowchart LR
+    Seed[Seed description] --> Genesis[Genesis: LLM calls define_world]
+    Genesis --> World[WorldGrain<br/>clock, places, board, energy, votes]
+    World -- "tick: perception event" --> R1[Resident agent]
+    World -- "tick: perception event" --> R2[Resident agent]
+    R1 -- "say / move_to / give_energy / vote ..." --> World
+    R1 -- "talk_to (private message, wakes recipient)" --> R2
+    R2 -- "bring_new_agent" --> World
+    World --> R3[New resident]
+```
+
+- **Genesis.** An LLM turns your description into locations and residents (persona, drives,
+  relationships) through a single structured `define_world` tool call.
+- **Residents are ordinary agent grains** with a world id. They get only world tools (no
+  filesystem, shell, network or `spawn_agent`), a per-resident spending cap, and short turns: each
+  tick's perception wakes them, they take a few actions, then call `end_turn` with a one-line plan.
+  Their LLM calls see only a sliding window of recent history (older memories go in
+  `note_to_self`), so cost per turn stays flat instead of growing over the world's lifetime.
+- **World actions** (all validated and charged by the `WorldGrain`, never by the LLM):
+  `look_around`, `move_to`, `say` (heard at your location), `talk_to` (private, wakes the recipient
+  at once), `post_to_board`, `give_energy`, `propose_removal`, `vote`, `bring_new_agent`,
+  `note_to_self`, `leave_world`, `end_turn`.
+- **Energy.** Every action costs energy; residents regain a little each tick. At 0 they go dormant
+  (their agent is paused, spending nothing) until another resident gives them energy.
+- **Removal is by vote.** A proposal needs a strict majority of the residents who were eligible
+  when it opened (minimum 3 voters) within 3 ticks. Nobody can remove anyone alone.
+- **Cost bound.** A world always ends at its tick limit or time limit, whichever comes first (both
+  clamped server-side), and ending it retires every resident. Pausing pauses every agent too.
+- **Insight.** The map shows who is where, speech bubbles, private-message and energy-gift arrows,
+  energy bars and lineage. The feed has *Conversations* (public and private speech, filterable),
+  *Minds* (each resident's stated plans and notes; structured summaries, never hidden
+  chain-of-thought), *Board*, *Votes* and *Raw events*. Clicking a resident shows its persona,
+  drives, notes, usage, and its full tool-call trace and messages.
+- **Mock provider.** With `LLM_PROVIDER=Mock` worlds run for free with randomised stand-in
+  behaviour, which is handy for trying the UI. Real personalities need a real provider.
+- **API:** `POST /api/worlds`, `GET /api/worlds`, `GET /api/worlds/{id}`,
+  `POST /api/worlds/{id}/pause|resume|end`. The live SSE feed is `/ws/events?taskId={worldId}`.
+  Snapshots are archived to the `Worlds` table every tick, so a world remains inspectable after a
+  restart. Rules live in the `Simulation` section of `appsettings.json`.
+
 ## 11. Resource and security controls
 
 - **Spawn limits**: `MAX_AGENT_DEPTH=5`, `MAX_CHILDREN_PER_AGENT=10`, `MAX_TOTAL_AGENTS=100`,

@@ -31,7 +31,10 @@ public enum MessageType
     SpawnNotification,
     CompletionNotification,
     FailureNotification,
-    Cancellation
+    Cancellation,
+
+    /// <summary>Free-form conversation between simulation residents (talk_to).</summary>
+    Conversation
 }
 
 public enum MessagePriority
@@ -58,7 +61,10 @@ public enum ToolPermission
     DatabaseRead = 1 << 6,
     DatabaseWrite = 1 << 7,
     SpawnAgents = 1 << 8,
-    SendMessages = 1 << 9
+    SendMessages = 1 << 9,
+
+    /// <summary>Acting inside a simulated world (move, speak, vote, ...). Only residents get this.</summary>
+    WorldActions = 1 << 10
 }
 
 public enum AutonomyLevel
@@ -113,5 +119,12 @@ public enum RuntimeEventType
     TaskCreated,
     TaskCompleted,
     ArtifactCreated,
-    EnvironmentChanged
+    EnvironmentChanged,
+
+    // Simulation (living world) events. The world grain publishes these with TaskId = world id,
+    // so the existing per-task SSE filter and event persistence work unchanged.
+    WorldCreated,
+    WorldTick,
+    WorldActivity,
+    WorldEnded
 }

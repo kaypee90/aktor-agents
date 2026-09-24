@@ -41,6 +41,7 @@ public sealed class CurrentStateSection : ISystemPromptSection
     public string Header => "CURRENT STATE";
     public string Render(AgentPromptContext context)
     {
+        if (context.State.IsResident) return string.Empty;
         var s = context.State;
         return $"""
             Status: {s.Status}
@@ -57,7 +58,7 @@ public sealed class CurrentStateSection : ISystemPromptSection
 public sealed class CapabilitiesSection : ISystemPromptSection
 {
     public string Header => "AVAILABLE CAPABILITIES";
-    public string Render(AgentPromptContext context) =>
+    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty :
         context.State.Capabilities.Count == 0 ? "General purpose." : string.Join(", ", context.State.Capabilities);
 }
 
@@ -73,6 +74,7 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
     public string Header => "RESOURCE LIMITS";
     public string Render(AgentPromptContext context)
     {
+        if (context.State.IsResident) return string.Empty;
         var b = context.State.Budget;
         var u = context.State.Usage;
         return $"""
@@ -91,7 +93,7 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
 public sealed class MessagingRulesSection : ISystemPromptSection
 {
     public string Header => "MESSAGING RULES";
-    public string Render(AgentPromptContext context) => """
+    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         You may message any agent directly using send_message; you do not need to route through
         the root agent. send_message is asynchronous: a successful result only means the message
         was delivered to the recipient's mailbox, not that they have replied. If you need a reply,
@@ -108,7 +110,7 @@ public sealed class MessagingRulesSection : ISystemPromptSection
 public sealed class SpawningRulesSection : ISystemPromptSection
 {
     public string Header => "SPAWNING RULES";
-    public string Render(AgentPromptContext context) => """
+    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         Use find_agents to check whether an existing idle agent can already do the work before
         spawning a new one. Spawn a new agent only when specialization or genuine parallelism
         justifies it. The runtime enforces max depth, max children, total-agent limits, and rejects
@@ -126,7 +128,7 @@ public sealed class SpawningRulesSection : ISystemPromptSection
 public sealed class CompletionCriteriaSection : ISystemPromptSection
 {
     public string Header => "COMPLETION CRITERIA";
-    public string Render(AgentPromptContext context) => """
+    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         If your goal produces a deliverable (code, a report, data), write it to your task workspace
         with filesystem_write and list the file in complete_task's artifacts — work that only exists
         in your messages is not a deliverable.
@@ -146,7 +148,7 @@ public sealed class EnvironmentInfoSection : ISystemPromptSection
 public sealed class BehavioralRulesSection : ISystemPromptSection
 {
     public string Header => "BEHAVIORAL RULES";
-    public string Render(AgentPromptContext context) => """
+    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         1. Work toward your assigned goal.
         2. Prefer completing trivial work yourself.
         3. Delegate when specialization or parallelism provides real value.

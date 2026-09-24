@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getTask, listAgents, resetAll, subscribeToEvents } from "@/lib/api";
 import type { AgentListItem, RuntimeEvent, TaskSummary } from "@/lib/types";
@@ -101,6 +102,13 @@ export default function Home() {
             Submit a goal and watch the agent hierarchy, messages, and tool calls unfold live.
           </p>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+        <Link
+          href="/simulation"
+          className="rounded border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950"
+        >
+          World simulation →
+        </Link>
         <button
           onClick={handleReset}
           disabled={resetting}
@@ -109,6 +117,7 @@ export default function Home() {
         >
           {resetting ? "Resetting…" : "Reset all"}
         </button>
+        </div>
       </header>
 
       <div className="border-b border-neutral-200 p-3 dark:border-neutral-800">

@@ -79,7 +79,11 @@ export type RuntimeEventType =
   | "TaskCreated"
   | "TaskCompleted"
   | "ArtifactCreated"
-  | "EnvironmentChanged";
+  | "EnvironmentChanged"
+  | "WorldCreated"
+  | "WorldTick"
+  | "WorldActivity"
+  | "WorldEnded";
 
 export interface RuntimeEvent {
   event_id: string;

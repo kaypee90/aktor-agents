@@ -4,6 +4,7 @@ using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.LLM;
 using AgentRuntime.Messaging;
+using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -27,9 +28,11 @@ public sealed class AgentGrain(
     IOptions<SupervisionOptions> supervisionOptions,
     IOptions<LlmOptions> llmOptions,
     IAgentOrchestrator orchestrator,
+    IOptions<SimulationOptions> simulationOptions,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain
 {
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
+    private readonly SimulationOptions _simulation = simulationOptions.Value;
     private readonly SupervisionOptions _supervision = supervisionOptions.Value;
     private readonly LlmOptions _llmOptions = llmOptions.Value;
 
@@ -50,7 +53,12 @@ public sealed class AgentGrain(
         s.Budget = request.Budget;
         s.Depth = request.Depth;
         s.TaskId = request.TaskId;
+        s.WorldId = request.WorldId;
         s.CreatedAt = DateTimeOffset.UtcNow;
+        foreach (var (key, value) in request.Metadata)
+        {
+            s.Metadata[key] = value;
+        }
         if (!string.IsNullOrWhiteSpace(request.InitialContext))
         {
             s.Metadata["initial_context"] = request.InitialContext;
@@ -95,6 +103,7 @@ public sealed class AgentGrain(
     private readonly Queue<AgentTranscriptEntry> _inbox = new();
     private bool _pauseRequested;
     private bool _stopRequested;
+    private string? _stopReason;
     private bool _forceWake;
 
     public async Task<AgentMessageAck> SendMessage(AgentMessage message)
@@ -178,6 +187,13 @@ public sealed class AgentGrain(
         if (s.Status == AgentStatus.Waiting)
         {
             s.Metadata.Remove("paused");
+            // Providers expect the conversation to end on user/tool input; after a pause it can end
+            // on the agent's own last reply, which some providers reject or treat as a prefill.
+            if (s.Transcript.Count > 0 && s.Transcript[^1].Role == "assistant")
+            {
+                AppendTranscript(new AgentTranscriptEntry { Role = "user", Content = "[Runtime notice] You were paused and have been resumed. Continue." });
+            }
+
             await state.WriteStateAsync();
             await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' resumed.");
             _forceWake = true;
@@ -191,6 +207,24 @@ public sealed class AgentGrain(
         await GrainFactory.GetGrain<IAgentGrain>(AgentId).WakeAndThink();
     }
 
+    public async Task Retire(string reason)
+    {
+        _stopReason = reason;
+        _stopRequested = true;
+        await GrainFactory.GetGrain<IAgentGrain>(AgentId).WakeAndThink();
+    }
+
+    public async Task ClearPause()
+    {
+        _pauseRequested = false;
+        var s = state.State;
+        if (s.Metadata.Remove("paused"))
+        {
+            await state.WriteStateAsync();
+            await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' unpaused.");
+        }
+    }
+
     /// <summary>Moves queued inbound messages/events into the transcript. Only called from
     /// non-interleaved code at a point where no tool_use is awaiting its tool_result.</summary>
     private bool DrainInbox()
@@ -200,6 +234,11 @@ public sealed class AgentGrain(
         {
             AppendTranscript(entry);
             any = true;
+        }
+
+        if (state.State.IsResident)
+        {
+            TrimResidentTranscript();
         }
 
         return any;
@@ -223,9 +262,12 @@ public sealed class AgentGrain(
             _inbox.Clear();
             s.ForceStatus(AgentStatus.Terminated);
             s.CompletedAt = DateTimeOffset.UtcNow;
+            if (_stopReason is not null) s.Metadata["terminated_reason"] = _stopReason;
             await state.WriteStateAsync();
             await UpdateRegistryStatusAsync(AgentStatus.Terminated);
-            await PublishAsync(RuntimeEventType.AgentTerminated, $"Agent '{s.Name}' terminated by operator.");
+            await PublishAsync(RuntimeEventType.AgentTerminated, _stopReason is null
+                ? $"Agent '{s.Name}' terminated by operator."
+                : $"Agent '{s.Name}' retired: {_stopReason}.");
             return true;
         }
 
@@ -261,8 +303,12 @@ public sealed class AgentGrain(
         var s = state.State;
         var recentToolCalls = new Queue<string>();
         var nudgedWithoutAction = false;
+        s.StartedAt ??= DateTimeOffset.UtcNow;
 
-        for (var iteration = 1; iteration <= _limits.MaxReasoningIterationsPerTurn; iteration++)
+        // Residents take short turns — perceive, act a little, end the turn — and are woken again
+        // by the next world tick, so they get a much smaller per-wake cap than task agents.
+        var maxIterations = s.IsResident ? _simulation.ResidentMaxIterationsPerTurn : _limits.MaxReasoningIterationsPerTurn;
+        for (var iteration = 1; iteration <= maxIterations; iteration++)
         {
             // Safe point: the previous response's tool calls all have results, so operator
             // requests can be applied and queued messages spliced into the transcript here.
@@ -362,8 +408,10 @@ public sealed class AgentGrain(
                 AppendTranscript(new AgentTranscriptEntry
                 {
                     Role = "user",
-                    Content = "Reminder: take an action using one of your tools (spawn_agent, send_message, " +
-                              "find_agents, etc.), or call complete_task if your goal is already satisfied."
+                    Content = s.IsResident
+                        ? "Reminder: you act only through your tools (say, talk_to, move_to, ...). If you are done for now, call end_turn with a one-line plan."
+                        : "Reminder: take an action using one of your tools (spawn_agent, send_message, " +
+                          "find_agents, etc.), or call complete_task if your goal is already satisfied."
                 });
                 await state.WriteStateAsync();
                 continue;
@@ -373,8 +421,8 @@ public sealed class AgentGrain(
             s.TransitionTo(AgentStatus.Executing);
             await state.WriteStateAsync();
 
-            var completed = await ExecuteToolCallsAsync(response.ToolCalls, recentToolCalls);
-            if (completed)
+            var turnOver = await ExecuteToolCallsAsync(response.ToolCalls, recentToolCalls);
+            if (turnOver)
             {
                 return;
             }
@@ -392,9 +440,12 @@ public sealed class AgentGrain(
             $"Agent '{s.Name}' reached its per-turn reasoning limit and is waiting for new input.");
     }
 
+    /// <summary>Runs the response's tool calls. Returns true when the turn is over: the agent
+    /// completed its goal, or (residents) called end_turn.</summary>
     private async Task<bool> ExecuteToolCallsAsync(IReadOnlyList<ToolCall> calls, Queue<string> recentToolCalls)
     {
         var s = state.State;
+        var endTurn = false;
 
         foreach (var call in calls)
         {
@@ -453,6 +504,13 @@ public sealed class AgentGrain(
                 return true;
             }
 
+            // Keep executing the rest of this response: every tool call needs its result recorded,
+            // or the next LLM call would carry an unanswered tool_use.
+            if (call.Name == "end_turn" && result.Success)
+            {
+                endTurn = true;
+            }
+
             if (call.Name == "spawn_agent" && result.Success)
             {
                 // Applied here, not via a grain call back to ourselves: this agent IS the parent,
@@ -486,6 +544,15 @@ public sealed class AgentGrain(
                     // Result shape unexpected; nothing to reconcile.
                 }
             }
+        }
+
+        if (endTurn)
+        {
+            s.TransitionTo(AgentStatus.Waiting);
+            await state.WriteStateAsync();
+            await UpdateRegistryStatusAsync(AgentStatus.Waiting);
+            await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' ended its turn.");
+            return true;
         }
 
         await state.WriteStateAsync();
@@ -592,13 +659,21 @@ public sealed class AgentGrain(
                     : new ToolDefinitionSummary(name, "(unavailable)"))
                 .ToList(),
             AutonomyLevel = Contracts.AutonomyLevel.Autonomous,
-            EnvironmentSummary = "You are running inside an autonomous multi-agent runtime. " +
-                                  "Other agents may exist concurrently; use find_agents to discover them."
+            EnvironmentSummary = s.IsResident
+                ? $"You live in the simulated world '{s.Metadata.GetValueOrDefault("world_name")}'. " +
+                  s.Metadata.GetValueOrDefault("world_description", string.Empty)
+                : "You are running inside an autonomous multi-agent runtime. " +
+                  "Other agents may exist concurrently; use find_agents to discover them."
         };
 
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
-        messages.AddRange(s.Transcript.Select(ToLlmMessage));
+        // Residents see only their recent past (their notes carry anything longer-lived); a task
+        // agent's whole conversation is its working context.
+        var history = s.IsResident
+            ? s.Transcript.Skip(SafeWindowStart(s.Transcript, _simulation.ResidentTranscriptWindow))
+            : s.Transcript;
+        messages.AddRange(history.Select(ToLlmMessage));
 
         var toolDefs = s.AllowedTools
             .Where(name => toolRegistry.TryGet(name, out _))
@@ -613,8 +688,41 @@ public sealed class AgentGrain(
         {
             Messages = messages,
             Tools = toolDefs,
-            Model = _llmOptions.Model
+            Model = _llmOptions.Model,
+            Temperature = s.IsResident ? _simulation.ResidentTemperature : 0.4
         });
+    }
+
+    /// <summary>Index of the first entry in a window of at most <paramref name="maxEntries"/>
+    /// recent entries that starts on a user message — starting anywhere else could begin with a
+    /// tool result whose tool call was cut off, which providers reject.</summary>
+    private static int SafeWindowStart(List<AgentTranscriptEntry> transcript, int maxEntries)
+    {
+        var start = Math.Max(0, transcript.Count - maxEntries);
+        for (var i = start; i < transcript.Count; i++)
+        {
+            if (transcript[i].Role == "user") return i;
+        }
+
+        // No user entry inside the window: fall back to the latest one before it.
+        for (var i = start - 1; i >= 0; i--)
+        {
+            if (transcript[i].Role == "user") return i;
+        }
+
+        return 0;
+    }
+
+    /// <summary>Bounds a long-lived resident's stored transcript; only the recent window is ever
+    /// sent to the LLM, so older entries are dead weight in grain state.</summary>
+    private void TrimResidentTranscript()
+    {
+        var t = state.State.Transcript;
+        var keep = _simulation.ResidentTranscriptWindow * 2;
+        if (t.Count <= keep * 2) return;
+
+        var start = SafeWindowStart(t, keep);
+        if (start > 0) t.RemoveRange(0, start);
     }
 
     private static LLM.ChatMessage ToLlmMessage(AgentTranscriptEntry entry) => new()
@@ -708,6 +816,7 @@ public sealed class AgentGrain(
         Budget = s.Budget,
         Usage = s.Usage,
         Depth = s.Depth,
-        FailureReason = s.FailureReason
+        FailureReason = s.FailureReason,
+        WorldId = s.WorldId
     };
 }

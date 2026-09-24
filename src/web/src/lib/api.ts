@@ -135,3 +135,29 @@ export function subscribeToEvents(
   };
   return source;
 }
+
+// ---- Simulation (living worlds) ----
+
+export function createWorld(input: import("./worldTypes").CreateWorldInput) {
+  return apiFetch<{ world_id: string }>("/api/worlds", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listWorlds() {
+  return apiFetch<import("./worldTypes").WorldListItem[]>("/api/worlds");
+}
+
+export function getWorld(worldId: string) {
+  return apiFetch<import("./worldTypes").WorldSnapshot>(`/api/worlds/${worldId}`);
+}
+
+export function pauseWorld(worldId: string) {
+  return apiFetch<void>(`/api/worlds/${worldId}/pause`, { method: "POST" });
+}
+
+export function resumeWorld(worldId: string) {
+  return apiFetch<void>(`/api/worlds/${worldId}/resume`, { method: "POST" });
+}
+
+export function endWorld(worldId: string) {
+  return apiFetch<void>(`/api/worlds/${worldId}/end`, { method: "POST" });
+}

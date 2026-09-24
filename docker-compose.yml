@@ -30,6 +30,7 @@ services:
       Llm__Provider: ${LLM_PROVIDER:-Mock}
       Llm__Model: ${LLM_MODEL:-claude-sonnet-5}
       Llm__ApiKey: ${LLM_API_KEY:-}
+      Tools__SearchProvider: ${SEARCH_PROVIDER:-Tavily}
       Tools__SearchApiKey: ${SEARCH_API_KEY:-}
       Cors__AllowedOrigins__0: "http://localhost:3000"
     volumes:

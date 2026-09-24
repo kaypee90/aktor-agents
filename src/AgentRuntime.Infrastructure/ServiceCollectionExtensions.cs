@@ -5,6 +5,7 @@ using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
 using AgentRuntime.LLM;
 using AgentRuntime.Memory;
+using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -28,6 +29,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AgentDbContext>(sp => sp.GetRequiredService<IDbContextFactory<AgentDbContext>>().CreateDbContext());
 
         services.AddSingleton<IMemoryStore, PostgresMemoryStore>();
+        services.AddSingleton<IWorldArchive, EfWorldArchive>();
         services.AddHostedService<PersistenceEventSubscriber>();
 
         services.AddHttpClient("agent-tools")

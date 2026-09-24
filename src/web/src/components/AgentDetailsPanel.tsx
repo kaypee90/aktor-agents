@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { STATUS_STYLES, isTerminal } from "@/lib/status";
 import type { AgentSnapshot, MessageRecord, ToolCallRecord } from "@/lib/types";
+import { BotIcon } from "./BotIcon";
 
 export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClose: () => void }) {
   const [snapshot, setSnapshot] = useState<AgentSnapshot | null>(null);
@@ -63,9 +64,14 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-start justify-between border-b border-neutral-200 p-3 dark:border-neutral-800">
-        <div>
-          <div className="text-sm font-semibold">{snapshot.role}</div>
-          <div className="text-xs text-neutral-500">{snapshot.agent_id}</div>
+        <div className="flex items-center gap-2">
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${style.border} ${style.text}`}>
+            <BotIcon className="h-5 w-5" />
+          </span>
+          <div>
+            <div className="text-sm font-semibold">{snapshot.role}</div>
+            <div className="text-xs text-neutral-500">{snapshot.agent_id}</div>
+          </div>
         </div>
         <button onClick={onClose} className="text-sm text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200">
           ✕

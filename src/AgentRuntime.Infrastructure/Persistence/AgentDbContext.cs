@@ -11,6 +11,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<ArtifactRecord> Artifacts => Set<ArtifactRecord>();
     public DbSet<MemoryEntity> MemoryEntries => Set<MemoryEntity>();
     public DbSet<ToolCallRecord> ToolCalls => Set<ToolCallRecord>();
+    public DbSet<WorldRecord> Worlds => Set<WorldRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -63,6 +64,12 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(t => t.Id);
             b.Property(t => t.Id).ValueGeneratedOnAdd();
             b.HasIndex(t => t.AgentId);
+        });
+
+        modelBuilder.Entity<WorldRecord>(b =>
+        {
+            b.HasKey(w => w.WorldId);
+            b.HasIndex(w => w.CreatedAt);
         });
     }
 }

@@ -3,6 +3,7 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
+using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Options;
 using Orleans;
@@ -14,10 +15,12 @@ public sealed class AgentOrchestrator(
     ToolRegistry toolRegistry,
     IEventPublisher events,
     IOptions<RuntimeLimitsOptions> limitsOptions,
-    IOptions<DefaultBudgetOptions> defaultBudgetOptions) : IAgentOrchestrator
+    IOptions<DefaultBudgetOptions> defaultBudgetOptions,
+    IOptions<SimulationOptions> simulationOptions) : IAgentOrchestrator
 {
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
     private readonly DefaultBudgetOptions _defaultBudget = defaultBudgetOptions.Value;
+    private readonly SimulationOptions _simulation = simulationOptions.Value;
 
     // In-process guard against runaway message storms within a single task (CLAUDE.md section 23).
     // A production deployment would back this with the registry grain / Postgres instead.
@@ -202,14 +205,16 @@ public sealed class AgentOrchestrator(
             return new AgentMessageAck { MessageId = message.MessageId, Accepted = false, RejectionReason = "An agent cannot message itself." };
         }
 
+        // A living world talks far more than a task does, so it gets its own (still finite) cap.
+        var maxMessages = WorldIds.IsWorld(message.TaskId) ? _simulation.MaxMessagesPerWorld : _limits.MaxMessagesPerTask;
         var count = _messageCountsByTask.AddOrUpdate(message.TaskId, 1, (_, c) => c + 1);
-        if (count > _limits.MaxMessagesPerTask)
+        if (count > maxMessages)
         {
             return new AgentMessageAck
             {
                 MessageId = message.MessageId,
                 Accepted = false,
-                RejectionReason = $"Task '{message.TaskId}' exceeded its max message count ({_limits.MaxMessagesPerTask})."
+                RejectionReason = $"Task '{message.TaskId}' exceeded its max message count ({maxMessages})."
             };
         }
 
@@ -263,6 +268,79 @@ public sealed class AgentOrchestrator(
 
     public Task StopAsync(string agentId, CancellationToken cancellationToken = default) =>
         grainFactory.GetGrain<IAgentGrain>(agentId).Stop();
+
+    public async Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, CancellationToken cancellationToken = default)
+    {
+        var agentId = $"res-{Guid.NewGuid().ToString("n")[..8]}";
+
+        // Residents act only through world tools: no filesystem, shell, network, or task tools.
+        // bring_new_agent is how a resident creates agents, so it needs SpawnAgents; talk_to routes
+        // through SendMessageAsync, so it needs SendMessages.
+        var permissions = ToolPermission.WorldActions | ToolPermission.SendMessages | ToolPermission.SpawnAgents;
+        var tools = FilterToolsByPermission(WorldToolCatalog.ToolNames, permissions);
+
+        var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
+        {
+            AgentId = agentId,
+            Role = request.Role,
+            Goal = request.Drives,
+            Status = AgentStatus.Created,
+            Capabilities = ["resident"],
+            ParentAgentId = request.ParentAgentId,
+            Depth = 0,
+            RootAgentId = request.WorldId
+        });
+        if (!validation.Allowed)
+        {
+            return new SpawnAgentResult { AgentId = string.Empty, Status = "rejected", RejectionReason = validation.RejectionReason };
+        }
+
+        var metadata = new Dictionary<string, string>
+        {
+            ["persona"] = request.Persona,
+            ["world_name"] = request.WorldName,
+            ["world_description"] = request.WorldDescription
+        };
+        if (!string.IsNullOrWhiteSpace(request.Relationships)) metadata["relationships"] = request.Relationships;
+
+        await grainFactory.GetGrain<IAgentGrain>(agentId).Initialize(new AgentInitializationRequest
+        {
+            AgentId = agentId,
+            ParentAgentId = request.ParentAgentId,
+            RootAgentId = request.WorldId,
+            Name = request.Name,
+            Role = request.Role,
+            Goal = request.Drives,
+            Capabilities = ["resident"],
+            AllowedTools = tools,
+            GrantedPermissions = permissions,
+            Budget = _simulation.ResidentBudget(request.MaxDurationMinutes),
+            Depth = validation.AllowedDepth,
+            TaskId = request.WorldId,
+            WorldId = request.WorldId,
+            Metadata = metadata
+        });
+
+        if (request.ParentAgentId is not null)
+        {
+            await events.PublishAsync(new RuntimeEvent
+            {
+                Type = RuntimeEventType.AgentSpawned,
+                AgentId = request.ParentAgentId,
+                TargetAgentId = agentId,
+                TaskId = request.WorldId,
+                Summary = $"Resident {request.ParentAgentId} brought '{request.Name}' ({agentId}) into the world."
+            }, cancellationToken);
+        }
+
+        return new SpawnAgentResult { AgentId = agentId, Status = "created" };
+    }
+
+    public Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default) =>
+        grainFactory.GetGrain<IAgentGrain>(agentId).Retire(reason);
+
+    public Task UnpauseAsync(string agentId, CancellationToken cancellationToken = default) =>
+        grainFactory.GetGrain<IAgentGrain>(agentId).ClearPause();
 
     public Task<IReadOnlyList<AgentDirectoryEntry>> GetAllAgentsAsync(CancellationToken cancellationToken = default) =>
         Registry.GetAllAsync();

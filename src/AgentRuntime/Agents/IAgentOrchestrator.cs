@@ -1,5 +1,6 @@
 using AgentRuntime.Contracts;
 using AgentRuntime.Messaging;
+using AgentRuntime.Simulation;
 
 namespace AgentRuntime.Agents;
 
@@ -32,6 +33,15 @@ public interface IAgentOrchestrator
     Task ResumeAsync(string agentId, CancellationToken cancellationToken = default);
 
     Task StopAsync(string agentId, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a simulation resident: registered under the world (RootAgentId = world id)
+    /// with world tools only and a per-resident safety budget. Returns a rejection if the registry's
+    /// global limits (total/active agents, depth, children) refuse it.</summary>
+    Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, CancellationToken cancellationToken = default);
+
+    Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default);
+
+    Task UnpauseAsync(string agentId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AgentDirectoryEntry>> GetAllAgentsAsync(CancellationToken cancellationToken = default);
 

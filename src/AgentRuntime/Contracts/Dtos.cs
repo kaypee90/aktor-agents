@@ -16,6 +16,8 @@ public sealed record AgentInitializationRequest
     [Id(10)] public int Depth { get; init; }
     [Id(11)] public string? InitialContext { get; init; }
     [Id(12)] public string TaskId { get; init; } = string.Empty;
+    [Id(13)] public string? WorldId { get; init; }
+    [Id(14)] public Dictionary<string, string> Metadata { get; init; } = [];
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -118,6 +120,7 @@ public sealed record AgentSnapshot
     [Id(16)] public int Depth { get; init; }
     [Id(19)] public string TaskId { get; init; } = string.Empty;
     [Id(17)] public string? FailureReason { get; init; }
+    [Id(20)] public string? WorldId { get; init; }
 }
 
 [GenerateSerializer]

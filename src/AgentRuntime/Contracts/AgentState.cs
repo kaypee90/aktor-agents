@@ -49,6 +49,12 @@ public sealed class AgentState
 
     [Id(27)] public string TaskId { get; set; } = string.Empty;
 
+    /// <summary>Set when this agent is a resident of a simulated world rather than a task worker.
+    /// Residents run short per-tick turns and act through world tools instead of completing a goal.</summary>
+    [Id(28)] public string? WorldId { get; set; }
+
+    public bool IsResident => WorldId is not null;
+
     public static readonly IReadOnlyDictionary<AgentStatus, AgentStatus[]> ValidTransitions =
         new Dictionary<AgentStatus, AgentStatus[]>
         {
