@@ -165,3 +165,47 @@ export function resumeWorld(worldId: string) {
 export function endWorld(worldId: string) {
   return apiFetch<void>(`/api/worlds/${worldId}/end`, { method: "POST" });
 }
+
+// ---- Workspaces (long-running agents with triggers) ----
+
+export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number }) {
+  return apiFetch<{ workspace_id: string }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listWorkspaces() {
+  return apiFetch<import("./workspaceTypes").WorkspaceListItem[]>("/api/workspaces");
+}
+
+export function getWorkspace(id: string) {
+  return apiFetch<import("./workspaceTypes").WorkspaceSnapshot>(`/api/workspaces/${id}`);
+}
+
+export function postWorkspaceMessage(id: string, text: string, clientMessageId: string, toAgentId?: string) {
+  return apiFetch<import("./workspaceTypes").ChatEntry>(`/api/workspaces/${id}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text, client_message_id: clientMessageId, to_agent_id: toAgentId }),
+  });
+}
+
+export function addWorkspaceTrigger(
+  id: string,
+  trigger: { kind: "schedule" | "webhook"; name: string; instruction?: string; target_agent_id?: string; every_minutes?: number; cron?: string },
+) {
+  return apiFetch<import("./workspaceTypes").TriggerView>(`/api/workspaces/${id}/triggers`, {
+    method: "POST",
+    body: JSON.stringify(trigger),
+  });
+}
+
+export function deleteWorkspaceTrigger(id: string, triggerId: string) {
+  return apiFetch<void>(`/api/workspaces/${id}/triggers/${triggerId}`, { method: "DELETE" });
+}
+
+export function updateWorkspaceBudget(id: string, budget: { daily_token_limit?: number; daily_cost_limit_usd?: number }) {
+  return apiFetch<void>(`/api/workspaces/${id}/budget`, { method: "PUT", body: JSON.stringify(budget) });
+}
+
+export function workspaceAction(id: string, action: "pause" | "resume" | "archive") {
+  return apiFetch<void>(`/api/workspaces/${id}/${action}`, { method: "POST" });
+}
+

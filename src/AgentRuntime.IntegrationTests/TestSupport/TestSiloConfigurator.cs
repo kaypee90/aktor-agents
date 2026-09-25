@@ -16,18 +16,24 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
     public void Configure(ISiloBuilder siloBuilder)
     {
         siloBuilder.AddMemoryGrainStorage("Default");
+        siloBuilder.UseInMemoryReminderService();
+        siloBuilder.ConfigureServices(services => AddRuntimeServices(services));
+    }
 
-        siloBuilder.ConfigureServices(services =>
+    /// <summary>The runtime's DI graph with hermetic test doubles; shared with the crash-recovery
+    /// cluster, which only swaps storage and reminders for ones that survive a killed silo.</summary>
+    public static void AddRuntimeServices(IServiceCollection services, IDictionary<string, string?>? extraConfiguration = null)
+    {
         {
             // Scripted test agents report zero token usage and run with small budgets, so the
             // real-provider funding minimum would reject every spawn these tests exercise.
-            var configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["RuntimeLimits:MinChildTokens"] = "0",
-                    ["RuntimeLimits:MinChildToolCalls"] = "1"
-                })
-                .Build();
+            var settings = new Dictionary<string, string?>
+            {
+                ["RuntimeLimits:MinChildTokens"] = "0",
+                ["RuntimeLimits:MinChildToolCalls"] = "1"
+            };
+            foreach (var (k, v) in extraConfiguration ?? new Dictionary<string, string?>()) settings[k] = v;
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
             services.AddAgentRuntimeCore(configuration);
             services.AddSingleton<ILLMProvider, ScriptedLlmProvider>();
             services.AddSingleton<IMemoryStore, InMemoryMemoryStore>();
@@ -37,6 +43,6 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
             services.AddSingleton<ITool, FilesystemReadTool>();
             services.AddSingleton<ITool, FilesystemWriteTool>();
             services.AddSingleton<ITool, FilesystemListTool>();
-        });
+        }
     }
 }

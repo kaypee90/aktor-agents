@@ -36,4 +36,7 @@ public sealed record EnvironmentEvent
     [Id(0)] public required string EventName { get; init; }
     [Id(1)] public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
     [Id(2)] public string Payload { get; init; } = "{}";
+    /// <summary>Deduplication id: delivering the same event twice (e.g. a world tick replayed after
+    /// a crash) reaches the agent once.</summary>
+    [Id(3)] public string EventId { get; init; } = Guid.NewGuid().ToString("n");
 }

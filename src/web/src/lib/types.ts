@@ -83,7 +83,11 @@ export type RuntimeEventType =
   | "WorldCreated"
   | "WorldTick"
   | "WorldActivity"
-  | "WorldEnded";
+  | "WorldEnded"
+  | "WorkspaceCreated"
+  | "WorkspaceMessage"
+  | "TriggerFired"
+  | "WorkspaceChanged";
 
 export interface RuntimeEvent {
   event_id: string;

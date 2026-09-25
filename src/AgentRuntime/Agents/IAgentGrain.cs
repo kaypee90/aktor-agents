@@ -23,7 +23,7 @@ public interface IAgentGrain : IGrainWithStringKey
     Task Start();
 
     /// <summary>
-    /// Always interleaves: it only enqueues the message into the agent's in-memory inbox (no state
+    /// Always interleaves: it only stores the message in the agent's durable mailbox (no agent state
     /// write) and schedules a one-way wake. Without this, a sender would block for the recipient's
     /// entire reasoning turn, and two agents messaging each other mid-turn would deadlock until the
     /// Orleans response timeout.
@@ -42,6 +42,8 @@ public interface IAgentGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task Pause();
 
+    /// <summary>Always interleaves: it only records the request in the durable mailbox.</summary>
+    [AlwaysInterleave]
     Task Resume();
 
     /// <summary>Always interleaves so an operator can stop a mid-turn agent; applied at the next

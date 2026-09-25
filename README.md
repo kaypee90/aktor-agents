@@ -346,6 +346,33 @@ flowchart LR
   Snapshots are archived to the `Worlds` table every tick, so a world remains inspectable after a
   restart. Rules live in the `Simulation` section of `appsettings.json`.
 
+## 10b-2. Workspaces: agents that keep working for you
+
+Open **Workspaces** in the dashboard (`/workspaces`) and describe what you want. For example:
+"Monitor my store inventory every hour and alert me when anything drops below 10 units."
+
+- A standing **coordinator** takes that request, and any later instruction you send in the chat.
+- It sets up the agents it needs: standing monitors or one-shot workers.
+- It wires up **schedules** (intervals or cron) and **webhooks** (e.g. from Shopify) to wake them.
+- Agents report back to you with `notify_user`.
+- Everything is durable and has one **daily budget** that the runtime enforces.
+
+See [docs/workspaces.md](docs/workspaces.md).
+
+## 10c. Durable execution
+
+Agents survive crashes, restarts and outages, and resume exactly where they stopped:
+- Every step of an agent's turn is saved before the next one runs.
+- Every input goes through a durable mailbox.
+- Durable reminders re-activate interrupted work without anyone asking.
+- Tool calls cut off by a crash are re-run with the same idempotency key when that's safe.
+- A non-idempotent call (a payment, a raw POST) is never blindly repeated: the agent is told its
+  outcome is unknown.
+
+State lives in Postgres through Orleans' ADO.NET storage (installed automatically). See
+[docs/durability.md](docs/durability.md) for the exact guarantees and limits, and
+`CrashRecoveryTests` for the kill-and-resume tests.
+
 ## 11. Resource and security controls
 
 - **Spawn limits**: `MAX_AGENT_DEPTH=5`, `MAX_CHILDREN_PER_AGENT=10`, `MAX_TOTAL_AGENTS=100`,
@@ -430,15 +457,9 @@ concurrently, tool-call budget exhaustion forcing a clean stop, and a spawn requ
 
 This is a prototype, and a few things are deliberately simplified rather than fully productionized:
 
-- **Single-process Orleans silo** (`UseLocalhostClustering` + in-memory grain storage). The
-  `Microsoft.Orleans.Clustering.AdoNet` / `Persistence.AdoNet` packages are already referenced in
-  `AgentRuntime.Infrastructure` for standing up a real multi-silo cluster against Postgres; this
-  wasn't wired up by default to keep `docker compose up` to three containers.
-  Postgres is still the durable source of history via `PersistenceEventSubscriber`, independent
-  of Orleans' own (in-memory) grain storage.
-- **Root-agent task kickoff is fire-and-forget** (`Task.Run` from the orchestrator) rather than
-  durable across an API restart. A production version would use an Orleans reminder or a
-  persistent queue to resume in-flight tasks after a restart.
+- **Single silo by default.** Agent state, mailboxes and reminders are durable in Postgres (see
+  [docs/durability.md](docs/durability.md)), so a restart or crash resumes in-flight work. For
+  failover across machines, set `Silo:Clustering=AdoNet` to run several silos.
 - **`GeminiProvider`** is a stub — see §6.
 - **`POST /api/admin/reset` has no auth** — anyone who can reach the API can wipe all data. Fine
   for a local prototype; a shared deployment should gate this behind an operator role.

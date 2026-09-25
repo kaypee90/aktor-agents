@@ -16,8 +16,11 @@ public interface IAgentOrchestrator
     Task<string> CreateRootAgentAsync(string taskId, string goal, ResourceBudget? budget = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Spawns a child agent. With an <paramref name="idempotencyKey"/> (the spawn_agent tool
+    /// call's key) the child id is derived from it, so a spawn replayed after a crash returns the
+    /// same child instead of creating a second one.</summary>
     Task<SpawnAgentResult> SpawnAgentAsync(string parentAgentId, SpawnAgentRequest request,
-        CancellationToken cancellationToken = default);
+        string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     Task<AgentMessageAck> SendMessageAsync(AgentMessage message, CancellationToken cancellationToken = default);
 
@@ -37,7 +40,12 @@ public interface IAgentOrchestrator
     /// <summary>Creates a simulation resident: registered under the world (RootAgentId = world id)
     /// with world tools only and a per-resident safety budget. Returns a rejection if the registry's
     /// global limits (total/active agents, depth, children) refuse it.</summary>
-    Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, CancellationToken cancellationToken = default);
+    Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Creates (idempotently) a workspace's standing coordinator and starts its first turn.</summary>
+    Task<string> CreateWorkspaceCoordinatorAsync(string workspaceId, string workspaceName, string goal,
+        Workspaces.WorkspacePolicy policy, CancellationToken cancellationToken = default);
 
     Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default);
 

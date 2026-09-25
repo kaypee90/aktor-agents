@@ -29,6 +29,13 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             return Task.FromResult(MockWorldBehavior.Resident(request));
         }
 
+        // Workspace agents: coordinators and standing agents have wait_for_events; one-shot
+        // workers in a workspace have the workspace tools (e.g. notify_user) too.
+        if (request.Tools.Any(t => t.Name is "wait_for_events" or "notify_user"))
+        {
+            return Task.FromResult(MockWorkspaceBehavior.Respond(request));
+        }
+
         var systemText = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
         var role = ExtractBetween(systemText, "acting as: ", ".") ?? "Agent";
         var goal = ExtractSection(systemText, "## GOAL") ?? "the assigned goal";

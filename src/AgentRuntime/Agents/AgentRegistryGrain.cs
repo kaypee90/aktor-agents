@@ -84,6 +84,13 @@ public sealed class AgentRegistryGrain(
 
     public async Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null)
     {
+        // Idempotent for replays: re-registering the same id (a spawn retried after a crash, with
+        // an id derived from its idempotency key) succeeds without counting against any limit.
+        if (state.State.Agents.TryGetValue(entry.AgentId, out var existing) && existing.ParentAgentId == entry.ParentAgentId)
+        {
+            return SpawnValidationResult.Allow(existing.Depth);
+        }
+
         var validation = await ValidateSpawnAsync(entry.ParentAgentId, role);
         if (!validation.Allowed)
         {

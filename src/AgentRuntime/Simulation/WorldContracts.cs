@@ -175,6 +175,9 @@ public sealed class WorldState
     [Id(20)] public double ElapsedSecondsBeforePause { get; set; }
     [Id(21)] public DateTimeOffset? RunningSince { get; set; }
     [Id(22)] public int NextProposalNumber { get; set; } = 1;
+    /// <summary>Recent action results by idempotency key (bounded), for replay deduplication.</summary>
+    [Id(23)] public Dictionary<string, WorldActionResult> ActionResults { get; set; } = [];
+    [Id(24)] public List<string> ActionResultOrder { get; set; } = [];
 }
 
 // ---- Actions ----------------------------------------------------------------

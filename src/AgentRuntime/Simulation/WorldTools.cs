@@ -25,6 +25,8 @@ public sealed class WorldTool(IGrainFactory grainFactory, WorldToolSpec spec) : 
         Name = spec.Name,
         Description = spec.Description,
         RequiredPermissions = spec.Permissions,
+        // The world grain deduplicates by idempotency key, so replaying any world action is safe.
+        SideEffects = spec.Kind == "look" ? ToolSideEffects.ReadOnly : ToolSideEffects.Idempotent,
         JsonSchema = spec.JsonSchema
     };
 
@@ -37,7 +39,7 @@ public sealed class WorldTool(IGrainFactory grainFactory, WorldToolSpec spec) : 
         }
 
         using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(request.ArgumentsJson) ? "{}" : request.ArgumentsJson);
-        var result = await grainFactory.GetGrain<IWorldGrain>(request.TaskId).Act(request.AgentId, spec.Parse(doc.RootElement));
+        var result = await grainFactory.GetGrain<IWorldGrain>(request.TaskId).Act(request.AgentId, spec.Parse(doc.RootElement), request.IdempotencyKey);
 
         return result.Success
             ? ToolExecutionResult.Ok(result.ResultJson ?? JsonSerializer.Serialize(new { ok = true, message = result.Message }, ToolJson.Options))

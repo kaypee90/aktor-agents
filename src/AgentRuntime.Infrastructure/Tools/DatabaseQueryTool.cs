@@ -20,6 +20,7 @@ public sealed partial class DatabaseQueryTool(AgentDatabaseSandbox sandbox) : IT
     public ToolDefinition Definition { get; } = new()
     {
         Name = "database_query",
+        SideEffects = ToolSideEffects.NonIdempotent,
         Description = "Run one SQL statement in your private Postgres scratch schema. Read access allows " +
                       "SELECT/WITH queries; write access also allows CREATE/ALTER/DROP TABLE and " +
                       "INSERT/UPDATE/DELETE. You can only see tables you (or other agents) created there.",

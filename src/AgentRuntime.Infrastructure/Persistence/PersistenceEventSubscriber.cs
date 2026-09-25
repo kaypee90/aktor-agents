@@ -82,9 +82,13 @@ public sealed class PersistenceEventSubscriber(
                 break;
 
             case RuntimeEventType.AgentMessageSent:
+                // Message ids are deterministic for replayed sends (docs/durability.md), so the
+                // same message can be reported twice after a crash; record it once.
+                var messageId = evt.Data.GetValueOrDefault("messageId", Guid.NewGuid().ToString("n"));
+                if (await db.Messages.AnyAsync(m => m.MessageId == messageId, ct)) break;
                 db.Messages.Add(new MessageRecord
                 {
-                    MessageId = evt.Data.GetValueOrDefault("messageId", Guid.NewGuid().ToString("n")),
+                    MessageId = messageId,
                     FromAgentId = evt.AgentId ?? string.Empty,
                     ToAgentId = evt.TargetAgentId ?? string.Empty,
                     ConversationId = evt.Data.GetValueOrDefault("conversationId", string.Empty),

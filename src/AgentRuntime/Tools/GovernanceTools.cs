@@ -15,6 +15,8 @@ namespace AgentRuntime.Tools;
 /// </summary>
 public static class ToolJson
 {
+    internal static string? NullIfEmptyKey(string? key) => string.IsNullOrEmpty(key) ? null : key;
+
     public static readonly JsonSerializerOptions Options = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -30,6 +32,7 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "spawn_agent",
+        SideEffects = ToolSideEffects.Idempotent,
         Description = "Create a new specialized sub-agent to work on part of your goal in parallel or with " +
                       "different expertise. The runtime enforces depth/child/total-agent limits.",
         RequiredPermissions = ToolPermission.SpawnAgents,
@@ -40,7 +43,8 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
             "role": { "type": "string", "description": "Short role name, e.g. 'database specialist'" },
             "goal": { "type": "string", "description": "The specific goal the new agent should pursue" },
             "capabilities": { "type": "array", "items": { "type": "string" } },
-            "initial_context": { "type": "string" }
+            "initial_context": { "type": "string" },
+            "standing": { "type": "boolean", "description": "Workspaces only: a long-lived agent (monitor, responder) that waits for events instead of finishing" }
           },
           "required": ["role", "goal"]
         }
@@ -57,15 +61,16 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
             Role = args.Role,
             Goal = args.Goal,
             Capabilities = args.Capabilities ?? [],
-            InitialContext = args.InitialContext
-        });
+            InitialContext = args.InitialContext,
+            Standing = args.Standing ?? false
+        }, ToolJson.NullIfEmptyKey(request.IdempotencyKey));
 
         return result.Success
             ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { agent_id = result.AgentId, status = result.Status, granted_budget = result.GrantedBudget }, ToolJson.Options))
             : ToolExecutionResult.Fail(result.RejectionReason ?? "Spawn rejected.");
     }
 
-    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext);
+    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext, bool? Standing);
 }
 
 public sealed class FindAgentsTool(IAgentOrchestrator orchestrator) : ITool
@@ -80,6 +85,7 @@ public sealed class FindAgentsTool(IAgentOrchestrator orchestrator) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "find_agents",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Discover agents within your own task by capability and/or status, so you can reuse " +
                       "one instead of spawning a duplicate. Only ever returns agents working on the same " +
                       "goal as you (never other unrelated tasks), capped to the most relevant matches.",
@@ -137,6 +143,7 @@ public sealed class SendMessageTool(IAgentOrchestrator orchestrator) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "send_message",
+        SideEffects = ToolSideEffects.Idempotent,
         Description = "Send a message directly to another agent (no need to route through the root agent). " +
                       "Use this to delegate, ask a question, or share findings.",
         RequiredPermissions = ToolPermission.SendMessages,
@@ -160,6 +167,9 @@ public sealed class SendMessageTool(IAgentOrchestrator orchestrator) : ITool
 
         var ack = await orchestrator.SendMessageAsync(new AgentMessage
         {
+            // Fixed by the call's idempotency key, so a send replayed after a crash is dropped by
+            // the recipient's mailbox instead of arriving twice.
+            MessageId = DeterministicId.FromOrNew("msg-", ToolJson.NullIfEmptyKey(request.IdempotencyKey)),
             FromAgentId = request.AgentId,
             ToAgentId = args.ToAgentId,
             MessageType = Enum.Parse<MessageType>(args.MessageType, ignoreCase: true),
@@ -180,6 +190,7 @@ public sealed class GetAgentStatusTool(IAgentOrchestrator orchestrator) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "get_agent_status",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Check the current status, goal, and resource usage of a specific agent by id.",
         JsonSchema = """
         { "type": "object", "properties": { "agent_id": { "type": "string" } }, "required": ["agent_id"] }
@@ -215,6 +226,7 @@ public sealed class ListChildrenTool(IAgentOrchestrator orchestrator) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "list_children",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "List the ids of agents you have spawned.",
         JsonSchema = """{ "type": "object", "properties": { "agent_id": { "type": "string" } }, "required": ["agent_id"] }"""
     };
@@ -235,6 +247,7 @@ public sealed class CompleteTaskTool : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "complete_task",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Declare that your assigned goal is complete (or has failed beyond recovery). " +
                       "The runtime records this as your final result.",
         JsonSchema = """

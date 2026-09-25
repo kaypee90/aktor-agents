@@ -118,3 +118,20 @@ public sealed class WorldRecord
     public DateTimeOffset? EndedAt { get; set; }
     public string SnapshotJson { get; set; } = "{}";
 }
+
+/// <summary>One workspace, with its latest snapshot for listing and after-restart inspection.
+/// The live state (conversation, triggers, ledger) is the workspace grain's durable state.</summary>
+public sealed class WorkspaceRecord
+{
+    public required string WorkspaceId { get; set; }
+    public required string Name { get; set; }
+    public string Goal { get; set; } = string.Empty;
+    public string Status { get; set; } = "Active";
+    public int Agents { get; set; }
+    public int Triggers { get; set; }
+    public long TotalTokens { get; set; }
+    public decimal TotalCostUsd { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public string SnapshotJson { get; set; } = "{}";
+}

@@ -5,6 +5,7 @@ using AgentRuntime.Events;
 using AgentRuntime.Messaging;
 using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
+using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Options;
 using Orleans;
 
@@ -16,8 +17,10 @@ public sealed class AgentOrchestrator(
     IEventPublisher events,
     IOptions<RuntimeLimitsOptions> limitsOptions,
     IOptions<DefaultBudgetOptions> defaultBudgetOptions,
-    IOptions<SimulationOptions> simulationOptions) : IAgentOrchestrator
+    IOptions<SimulationOptions> simulationOptions,
+    IOptions<WorkspaceOptions> workspaceOptions) : IAgentOrchestrator
 {
+    private readonly WorkspaceOptions _workspaces = workspaceOptions.Value;
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
     private readonly DefaultBudgetOptions _defaultBudget = defaultBudgetOptions.Value;
     private readonly SimulationOptions _simulation = simulationOptions.Value;
@@ -70,7 +73,8 @@ public sealed class AgentOrchestrator(
             GrantedPermissions = permissions,
             Budget = effectiveBudget,
             Depth = 0,
-            TaskId = taskId
+            TaskId = taskId,
+            AutoStart = true
         });
 
         await events.PublishAsync(new RuntimeEvent
@@ -82,15 +86,31 @@ public sealed class AgentOrchestrator(
             Data = new Dictionary<string, string> { ["goal"] = goal, ["rootAgentId"] = agentId }
         }, cancellationToken);
 
-        // One-way: returns as soon as the request is queued, not when the reasoning loop ends.
-        await grain.Start();
-
         return agentId;
     }
 
     public async Task<SpawnAgentResult> SpawnAgentAsync(
-        string parentAgentId, SpawnAgentRequest request, CancellationToken cancellationToken = default)
+        string parentAgentId, SpawnAgentRequest request, string? idempotencyKey = null, CancellationToken cancellationToken = default)
     {
+        var childId = DeterministicId.FromOrNew("agent-", idempotencyKey);
+
+        // A replay of a spawn that already happened (the parent crashed before saving the result):
+        // hand back the same child and its original grant rather than creating another agent.
+        if (idempotencyKey is not null && await Registry.GetAsync(childId) is { ParentAgentId: var existingParent } &&
+            existingParent == parentAgentId)
+        {
+            var existing = await grainFactory.GetGrain<IAgentGrain>(childId).GetSnapshot();
+            if (string.IsNullOrEmpty(existing.AgentId))
+            {
+                // Registered but never initialized: finish the spawn below with the same id.
+            }
+            else
+            {
+                // Workspace children are funded by the workspace, not reserved from the parent.
+                return new SpawnAgentResult { AgentId = childId, Status = "created", GrantedBudget = existing.WorkspaceId is null ? existing.Budget : null };
+            }
+        }
+
         var parentEntry = await Registry.GetAsync(parentAgentId);
         if (parentEntry is null)
         {
@@ -109,19 +129,45 @@ public sealed class AgentOrchestrator(
                 cancellationToken);
         }
 
-        // Elapsed time isn't tracked incrementally in ResourceUsage, so derive it here; otherwise a
-        // child spawned late in the parent's life would get the parent's full original duration.
-        var elapsedSeconds = parentSnapshot.StartedAt is { } startedAt
-            ? (int)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalSeconds)
-            : 0;
-        var childBudget = parentSnapshot.Budget.DeriveChildBudget(
-            parentSnapshot.Usage with { ElapsedSeconds = elapsedSeconds }, request.RequestedBudget);
-        if (childBudget.IsEmpty || childBudget.MaxTokens < _limits.MinChildTokens || childBudget.MaxToolCalls < _limits.MinChildToolCalls)
+        ResourceBudget childBudget;
+        WorkspacePolicy? policy = null;
+        if (parentSnapshot.WorkspaceId is { } workspaceId)
         {
-            return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
-                $"Not enough budget left to fund a useful new agent: it would get {childBudget.MaxTokens} tokens and " +
-                $"{childBudget.MaxToolCalls} tool calls (minimum {_limits.MinChildTokens} / {_limits.MinChildToolCalls}). " +
-                "Do this work yourself, or call complete_task.", cancellationToken);
+            // Inside a workspace the runtime funds agents from the workspace's policy (and caps
+            // the whole workspace's daily spend), rather than splitting the parent's budget: a
+            // coordinator that lives for months can't be drained by the helpers it spawns.
+            policy = await grainFactory.GetGrain<IWorkspaceGrain>(workspaceId).GetPolicy();
+            if (policy.Status != WorkspaceStatus.Active)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId, $"The workspace is {policy.Status.ToString().ToLowerInvariant()}.", cancellationToken);
+            }
+
+            var live = (await Registry.FindAsync(new FindAgentsQuery { RootAgentId = parentSnapshot.RootAgentId }))
+                .Count(a => a.Status is not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut));
+            if (live >= policy.MaxAgents)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    $"This workspace already runs {live} agents (limit {policy.MaxAgents}). Reuse an existing agent (find_agents) instead.", cancellationToken);
+            }
+
+            childBudget = request.Standing ? policy.StandingBudget : policy.WorkerBudget;
+        }
+        else
+        {
+            // Elapsed time isn't tracked incrementally in ResourceUsage, so derive it here; otherwise a
+            // child spawned late in the parent's life would get the parent's full original duration.
+            var elapsedSeconds = parentSnapshot.StartedAt is { } startedAt
+                ? (int)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalSeconds)
+                : 0;
+            childBudget = parentSnapshot.Budget.DeriveChildBudget(
+                parentSnapshot.Usage with { ElapsedSeconds = elapsedSeconds }, request.RequestedBudget);
+            if (childBudget.IsEmpty || childBudget.MaxTokens < _limits.MinChildTokens || childBudget.MaxToolCalls < _limits.MinChildToolCalls)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    $"Not enough budget left to fund a useful new agent: it would get {childBudget.MaxTokens} tokens and " +
+                    $"{childBudget.MaxToolCalls} tool calls (minimum {_limits.MinChildTokens} / {_limits.MinChildToolCalls}). " +
+                    "Do this work yourself, or call complete_task.", cancellationToken);
+            }
         }
 
         var requestedTools = AgentToolCatalog.ResolveToolsForCapabilities(
@@ -135,9 +181,12 @@ public sealed class AgentOrchestrator(
                 .Union(inheritedWorkspaceTools, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             parentSnapshot.GrantedPermissions);
-        var childPermissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | InferPermissionsForTools(childTools);
+        if (policy is not null && parentSnapshot.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions))
+        {
+            childTools = childTools.Union(WorkspaceToolCatalog.ToolNames, StringComparer.OrdinalIgnoreCase).ToList();
+        }
 
-        var childId = $"agent-{Guid.NewGuid().ToString("n")[..8]}";
+        var childPermissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | InferPermissionsForTools(childTools);
 
         // Validate and register atomically in one registry turn so concurrent spawns from
         // different parents can't both pass the total/active-agent limit checks.
@@ -181,7 +230,11 @@ public sealed class AgentOrchestrator(
             Budget = childBudget,
             Depth = validation.AllowedDepth,
             InitialContext = request.InitialContext,
-            TaskId = parentSnapshot.TaskId
+            TaskId = parentSnapshot.TaskId,
+            AutoStart = true,
+            WorkspaceId = parentSnapshot.WorkspaceId,
+            Standing = policy is not null && request.Standing,
+            ContextWindow = policy is not null && request.Standing ? policy.StandingContextWindow : 0
         });
 
         await events.PublishAsync(new RuntimeEvent
@@ -193,9 +246,7 @@ public sealed class AgentOrchestrator(
             Summary = $"Spawned '{request.Role}' agent {childId}."
         }, cancellationToken);
 
-        await childGrain.Start();
-
-        return new SpawnAgentResult { AgentId = childId, Status = "created", GrantedBudget = childBudget };
+        return new SpawnAgentResult { AgentId = childId, Status = "created", GrantedBudget = policy is null ? childBudget : null };
     }
 
     public async Task<AgentMessageAck> SendMessageAsync(AgentMessage message, CancellationToken cancellationToken = default)
@@ -205,9 +256,15 @@ public sealed class AgentOrchestrator(
             return new AgentMessageAck { MessageId = message.MessageId, Accepted = false, RejectionReason = "An agent cannot message itself." };
         }
 
-        // A living world talks far more than a task does, so it gets its own (still finite) cap.
-        var maxMessages = WorldIds.IsWorld(message.TaskId) ? _simulation.MaxMessagesPerWorld : _limits.MaxMessagesPerTask;
-        var count = _messageCountsByTask.AddOrUpdate(message.TaskId, 1, (_, c) => c + 1);
+        // A living world talks far more than a task does, so it gets its own (still finite) cap; a
+        // workspace lives indefinitely, so its cap is per hour instead of per lifetime.
+        var maxMessages = WorldIds.IsWorld(message.TaskId) ? _simulation.MaxMessagesPerWorld
+            : WorkspaceIds.IsWorkspace(message.TaskId) ? _workspaces.MaxMessagesPerHour
+            : _limits.MaxMessagesPerTask;
+        var counterKey = WorkspaceIds.IsWorkspace(message.TaskId)
+            ? $"{message.TaskId}:{DateTimeOffset.UtcNow:yyyyMMddHH}"
+            : message.TaskId;
+        var count = _messageCountsByTask.AddOrUpdate(counterKey, 1, (_, c) => c + 1);
         if (count > maxMessages)
         {
             return new AgentMessageAck
@@ -269,9 +326,10 @@ public sealed class AgentOrchestrator(
     public Task StopAsync(string agentId, CancellationToken cancellationToken = default) =>
         grainFactory.GetGrain<IAgentGrain>(agentId).Stop();
 
-    public async Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, CancellationToken cancellationToken = default)
+    public async Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
+        CancellationToken cancellationToken = default)
     {
-        var agentId = $"res-{Guid.NewGuid().ToString("n")[..8]}";
+        var agentId = DeterministicId.FromOrNew("res-", idempotencyKey);
 
         // Residents act only through world tools: no filesystem, shell, network, or task tools.
         // bring_new_agent is how a resident creates agents, so it needs SpawnAgents; talk_to routes
@@ -334,6 +392,58 @@ public sealed class AgentOrchestrator(
         }
 
         return new SpawnAgentResult { AgentId = agentId, Status = "created" };
+    }
+
+    public async Task<string> CreateWorkspaceCoordinatorAsync(
+        string workspaceId, string workspaceName, string goal, WorkspacePolicy policy, CancellationToken cancellationToken = default)
+    {
+        var agentId = WorkspaceIds.CoordinatorId(workspaceId);
+        var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
+                          | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.WorkspaceActions;
+        // The coordinator never completes: it lives as long as the workspace, so no complete_task.
+        var tools = FilterToolsByPermission(
+            AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"])
+                .Union(WorkspaceToolCatalog.ToolNames, StringComparer.OrdinalIgnoreCase)
+                .Where(t => t != "complete_task")
+                .ToList(),
+            permissions);
+
+        var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
+        {
+            AgentId = agentId,
+            Role = "Coordinator",
+            Goal = goal,
+            Status = AgentStatus.Created,
+            Capabilities = ["coordination"],
+            RootAgentId = agentId
+        });
+        if (!validation.Allowed)
+        {
+            throw new InvalidOperationException($"Cannot create the workspace coordinator: {validation.RejectionReason}");
+        }
+
+        await grainFactory.GetGrain<IAgentGrain>(agentId).Initialize(new AgentInitializationRequest
+        {
+            AgentId = agentId,
+            RootAgentId = agentId,
+            Name = "Coordinator",
+            Role = "Coordinator",
+            Goal = $"Run the '{workspaceName}' workspace on the user's behalf. Its purpose: {goal}",
+            Capabilities = ["coordination"],
+            AllowedTools = tools,
+            GrantedPermissions = permissions,
+            Budget = policy.StandingBudget,
+            TaskId = workspaceId,
+            WorkspaceId = workspaceId,
+            Standing = true,
+            ContextWindow = policy.StandingContextWindow,
+            InitialContext = "This is the user's first request for the workspace. Set up whatever standing agents, " +
+                             "schedules or webhooks it needs, tell the user what you've set up with notify_user, then " +
+                             "call wait_for_events.",
+            AutoStart = true
+        });
+
+        return agentId;
     }
 
     public Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default) =>

@@ -55,6 +55,54 @@ public sealed class AgentState
 
     public bool IsResident => WorldId is not null;
 
+    // ---- Durable execution journal (docs/durability.md) ----
+    // The transcript is the step journal: an assistant entry records the LLM's decision and each
+    // tool entry records a completed call. These fields hold what the transcript can't: where a
+    // turn is, and which side-effecting calls started but haven't recorded a result.
+
+    /// <summary>Highest mailbox sequence number already moved into the transcript.</summary>
+    [Id(29)] public long LastConsumedMailSeq { get; set; }
+
+    /// <summary>A reasoning turn is underway. If the agent is re-activated with this set (after a
+    /// crash), the runtime resumes the turn from the journal instead of waiting for new input.</summary>
+    [Id(30)] public bool TurnInProgress { get; set; }
+
+    [Id(31)] public int TurnIteration { get; set; }
+    [Id(32)] public bool TurnNudged { get; set; }
+    [Id(33)] public List<string> TurnFingerprints { get; set; } = [];
+
+    /// <summary>Non-idempotent tool calls recorded as started but not yet finished. One still here
+    /// on recovery may or may not have taken effect, so it is never blindly re-run.</summary>
+    [Id(34)] public List<string> InFlightToolCallIds { get; set; } = [];
+
+    /// <summary>Messages the runtime owes other agents (e.g. "your child completed"), saved in the
+    /// same write as the state change that caused them and removed once delivered.</summary>
+    [Id(35)] public List<Messaging.AgentMessage> Outbox { get; set; } = [];
+
+    /// <summary>A resume was requested; the next wake runs a turn even without new input.</summary>
+    [Id(36)] public bool ResumeRequested { get; set; }
+
+    [Id(37)] public bool Paused { get; set; }
+
+    // ---- Workspaces ----
+
+    /// <summary>The workspace this agent belongs to, if any (its task id is the same id).</summary>
+    [Id(38)] public string? WorkspaceId { get; set; }
+
+    /// <summary>A standing agent never "finishes": it waits for messages, schedules and webhooks
+    /// indefinitely. It sees only a sliding window of recent history and its budget renews.</summary>
+    [Id(39)] public bool Standing { get; set; }
+
+    /// <summary>Recent transcript entries sent to the LLM; 0 means the whole conversation.</summary>
+    [Id(40)] public int ContextWindow { get; set; }
+
+    /// <summary>Start of the current budget period, for budgets that renew (ResourceBudget.PeriodHours).</summary>
+    [Id(41)] public DateTimeOffset? BudgetPeriodStartedAt { get; set; }
+
+    public bool InWorkspace => WorkspaceId is not null;
+
+    public bool IsTerminal => Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut;
+
     public static readonly IReadOnlyDictionary<AgentStatus, AgentStatus[]> ValidTransitions =
         new Dictionary<AgentStatus, AgentStatus[]>
         {

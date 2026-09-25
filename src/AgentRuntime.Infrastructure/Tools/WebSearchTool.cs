@@ -21,6 +21,7 @@ public sealed class WebSearchTool(IHttpClientFactory httpClientFactory, IOptions
     public ToolDefinition Definition { get; } = new()
     {
         Name = "web_search",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Search the public web for current information. Returns a short list of results " +
                       "(title, url, snippet) and, when available, a brief summary answer.",
         RequiredPermissions = ToolPermission.NetworkAccess,

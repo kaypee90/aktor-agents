@@ -346,6 +346,52 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("ToolCalls");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.WorkspaceRecord", b =>
+                {
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Agents")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("TotalCostUsd")
+                        .HasColumnType("numeric");
+
+                    b.Property<long>("TotalTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Triggers")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("WorkspaceId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.ToTable("Workspaces");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.WorldRecord", b =>
                 {
                     b.Property<string>("WorldId")

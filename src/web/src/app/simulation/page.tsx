@@ -124,6 +124,7 @@ export default function SimulationPage() {
         <nav className="flex items-center gap-2 text-xs">
           <Link href="/" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Tasks</Link>
           <span className="rounded bg-neutral-100 px-2 py-1 font-medium dark:bg-neutral-800">Simulation</span>
+          <Link href="/workspaces" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Workspaces</Link>
           <select
             value={worldId ?? ""}
             onChange={(e) => open(e.target.value || null)}

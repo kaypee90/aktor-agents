@@ -51,13 +51,12 @@ builder.Services.AddOpenTelemetry()
         .AddSource("AktorAgents")
         .AddConsoleExporter());
 
-// Orleans co-hosted silo (CLAUDE.md section 7): a single-process silo is sufficient for this
-// prototype. Swap UseLocalhostClustering/AddMemoryGrainStorage for the AdoNet providers already
-// referenced in AgentRuntime.Infrastructure to run a multi-silo production cluster against Postgres.
+// Orleans co-hosted silo (CLAUDE.md section 7). Grain state and reminders are durable in Postgres
+// by default (docs/durability.md); set Silo:Clustering=AdoNet to run several silos that take
+// over each other's agents, or Silo:Storage=Memory for a throwaway demo.
 builder.Host.UseOrleans(silo =>
 {
-    silo.UseLocalhostClustering();
-    silo.AddMemoryGrainStorage("Default");
+    silo.UseAgentRuntimeStorage(builder.Configuration);
     silo.ConfigureLogging(logging => logging.AddConsole());
 });
 

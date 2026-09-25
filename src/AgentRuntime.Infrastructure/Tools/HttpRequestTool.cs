@@ -12,6 +12,7 @@ public sealed class HttpRequestTool(IHttpClientFactory httpClientFactory, IOptio
     public ToolDefinition Definition { get; } = new()
     {
         Name = "http_request",
+        SideEffects = ToolSideEffects.NonIdempotent,
         Description = "Make an outbound HTTP GET or POST request to a public URL.",
         RequiredPermissions = ToolPermission.NetworkAccess,
         JsonSchema = """

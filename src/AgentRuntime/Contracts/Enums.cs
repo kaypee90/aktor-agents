@@ -64,7 +64,10 @@ public enum ToolPermission
     SendMessages = 1 << 9,
 
     /// <summary>Acting inside a simulated world (move, speak, vote, ...). Only residents get this.</summary>
-    WorldActions = 1 << 10
+    WorldActions = 1 << 10,
+
+    /// <summary>Acting inside a workspace: notifying the user, creating schedules and webhooks.</summary>
+    WorkspaceActions = 1 << 11
 }
 
 public enum AutonomyLevel
@@ -126,5 +129,11 @@ public enum RuntimeEventType
     WorldCreated,
     WorldTick,
     WorldActivity,
-    WorldEnded
+    WorldEnded,
+
+    // Workspaces (long-running environments). Published with TaskId = workspace id.
+    WorkspaceCreated,
+    WorkspaceMessage,
+    TriggerFired,
+    WorkspaceChanged
 }

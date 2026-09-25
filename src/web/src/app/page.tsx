@@ -104,6 +104,12 @@ export default function Home() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
         <Link
+          href="/workspaces"
+          className="rounded border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950"
+        >
+          Workspaces →
+        </Link>
+        <Link
           href="/simulation"
           className="rounded border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950"
         >

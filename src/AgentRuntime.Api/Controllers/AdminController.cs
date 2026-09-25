@@ -1,4 +1,5 @@
 using AgentRuntime.Agents;
+using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
 using AgentRuntime.Simulation;
@@ -36,6 +37,24 @@ public sealed class AdminController(
             await grainFactory.GetGrain<IWorldGrain>(worldId).End("reset by the operator");
         }
 
+        // Archive live workspaces first so their schedules stop firing.
+        var liveWorkspaces = await db.Workspaces.Where(w => w.Status != "Archived").Select(w => w.WorkspaceId).ToListAsync(ct);
+        foreach (var workspaceId in liveWorkspaces)
+        {
+            await grainFactory.GetGrain<AgentRuntime.Workspaces.IWorkspaceGrain>(workspaceId).Archive();
+        }
+
+        // Agents are durable and resume themselves after interruptions (docs/durability.md), so a
+        // reset must stop every live agent first; otherwise a recovery reminder would bring one
+        // back to life after the wipe. A stopped agent drops its reminder on its next tick.
+        foreach (var agent in await orchestrator.GetAllAgentsAsync(ct))
+        {
+            if (agent.Status is not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut))
+            {
+                await orchestrator.StopAsync(agent.AgentId, ct);
+            }
+        }
+
         await orchestrator.ResetRegistryAsync(ct);
 
         await db.Tasks.ExecuteDeleteAsync(ct);
@@ -46,6 +65,7 @@ public sealed class AdminController(
         await db.Artifacts.ExecuteDeleteAsync(ct);
         await db.MemoryEntries.ExecuteDeleteAsync(ct);
         await db.Worlds.ExecuteDeleteAsync(ct);
+        await db.Workspaces.ExecuteDeleteAsync(ct);
 
         await databaseSandbox.ResetAsync(ct);
 

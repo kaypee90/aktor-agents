@@ -12,8 +12,11 @@ next-env.d.ts
 .env
 .env.local
 
-# Agent tool workspace (filesystem_write / shell_exec sandbox output)
-workspace/
+# Agent tool workspace (filesystem_write / shell_exec sandbox output). Anchored to where the API
+# creates it (Tools:WorkspaceRoot = ./workspace); a bare "workspace/" would also hide source
+# folders such as src/web/src/components/workspace.
+/workspace/
+src/AgentRuntime.Api/workspace/
 
 # Editor / OS
 .vs/

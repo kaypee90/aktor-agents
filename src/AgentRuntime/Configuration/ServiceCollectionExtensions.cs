@@ -3,6 +3,7 @@ using AgentRuntime.Events;
 using AgentRuntime.LLM;
 using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
+using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -24,6 +25,8 @@ public static class ServiceCollectionExtensions
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
         services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
+        services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
+        services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
 
         services.AddSingleton<InMemoryEventBus>();
         services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<InMemoryEventBus>());
@@ -49,11 +52,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IWorldGenesis, LlmWorldGenesis>();
         services.TryAddSingleton<IWorldArchive, NullWorldArchive>();
 
+        // Workspaces: long-running environments with triggers and a user channel.
+        services.AddWorkspaceTools();
+        services.TryAddSingleton<Workspaces.IWorkspaceArchive, Workspaces.NullWorkspaceArchive>();
+
         services.AddSingleton<IAgentPromptBuilder, AgentPromptBuilder>();
         services.AddSingleton<ISystemPromptSection, RoleSection>();
         services.AddSingleton<ISystemPromptSection, GoalSection>();
         services.AddSingleton<ISystemPromptSection, ResidentPersonaSection>();
         services.AddSingleton<ISystemPromptSection, WorldRulesSection>();
+        services.AddSingleton<ISystemPromptSection, Workspaces.WorkspaceSection>();
         services.AddSingleton<ISystemPromptSection, CurrentStateSection>();
         services.AddSingleton<ISystemPromptSection, CapabilitiesSection>();
         services.AddSingleton<ISystemPromptSection, ToolsSection>();

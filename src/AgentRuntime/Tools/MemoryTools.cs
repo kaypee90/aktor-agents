@@ -9,6 +9,7 @@ public sealed class ReadMemoryTool(IMemoryStore memory) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "read_memory",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Read a value you (or, for shared keys, another agent) previously wrote to memory.",
         JsonSchema = """{ "type": "object", "properties": { "key": { "type": "string" } }, "required": ["key"] }"""
     };
@@ -32,6 +33,7 @@ public sealed class WriteMemoryTool(IMemoryStore memory) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "write_memory",
+        SideEffects = ToolSideEffects.Idempotent,
         Description = "Persist a working-memory or episodic-memory value. Set shared=true to make it " +
                       "visible to other agents as shared knowledge.",
         JsonSchema = """
@@ -71,6 +73,7 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "search_knowledge",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Search shared knowledge written by any agent for relevant prior findings.",
         JsonSchema = """{ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }"""
     };

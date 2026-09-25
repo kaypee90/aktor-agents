@@ -77,6 +77,16 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
         if (context.State.IsResident) return string.Empty;
         var b = context.State.Budget;
         var u = context.State.Usage;
+        if (b.PeriodHours > 0)
+        {
+            return $"""
+                Your budget renews every {b.PeriodHours} hours. This period: {u.TokensUsed} of {b.MaxTokens} tokens,
+                {u.ToolCallsUsed} of {b.MaxToolCalls} tool calls, ${u.CostUsd:F2} of ${b.MaxCostUsd:F2}.
+                The workspace also has one daily budget shared by all its agents. When a budget runs out
+                you are paused until it renews. These limits are enforced by the runtime, not by you.
+                """;
+        }
+
         return $"""
             Token budget: {u.TokensUsed} used + {u.ReservedTokens} reserved for children, of {b.MaxTokens}
             Tool-call budget: {u.ToolCallsUsed} used + {u.ReservedToolCalls} reserved for children, of {b.MaxToolCalls}
@@ -128,7 +138,7 @@ public sealed class SpawningRulesSection : ISystemPromptSection
 public sealed class CompletionCriteriaSection : ISystemPromptSection
 {
     public string Header => "COMPLETION CRITERIA";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
+    public string Render(AgentPromptContext context) => context.State.Standing ? string.Empty : context.State.IsResident ? string.Empty : """
         If your goal produces a deliverable (code, a report, data), write it to your task workspace
         with filesystem_write and list the file in complete_task's artifacts — work that only exists
         in your messages is not a deliverable.

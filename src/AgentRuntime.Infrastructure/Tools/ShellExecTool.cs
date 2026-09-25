@@ -16,6 +16,7 @@ public sealed class ShellExecTool(IOptions<ToolsOptions> options) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "shell_exec",
+        SideEffects = ToolSideEffects.NonIdempotent,
         Description = "Run a shell command in an isolated, network-disabled Docker container with your " +
                       "task workspace mounted at /workspace. Use for builds, scripts, or data processing.",
         RequiredPermissions = ToolPermission.ExecuteShell,

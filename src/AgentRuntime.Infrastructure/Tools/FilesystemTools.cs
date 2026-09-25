@@ -54,6 +54,7 @@ public sealed class FilesystemReadTool(IOptions<ToolsOptions> options) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "filesystem_read",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "Read a text file from your task's sandboxed workspace.",
         RequiredPermissions = ToolPermission.ReadFilesystem,
         JsonSchema = """{ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }"""
@@ -82,6 +83,7 @@ public sealed class FilesystemWriteTool(IOptions<ToolsOptions> options, IEventPu
     public ToolDefinition Definition { get; } = new()
     {
         Name = "filesystem_write",
+        SideEffects = ToolSideEffects.Idempotent,
         Description = "Write a text file (e.g. a report or code artifact) into your task's sandboxed workspace.",
         RequiredPermissions = ToolPermission.WriteFilesystem,
         JsonSchema = """
@@ -127,6 +129,7 @@ public sealed class FilesystemListTool(IOptions<ToolsOptions> options) : ITool
     public ToolDefinition Definition { get; } = new()
     {
         Name = "filesystem_list",
+        SideEffects = ToolSideEffects.ReadOnly,
         Description = "List files/directories under a path in your task's sandboxed workspace.",
         RequiredPermissions = ToolPermission.ReadFilesystem,
         JsonSchema = """{ "type": "object", "properties": { "path": { "type": "string", "default": "." } } }"""

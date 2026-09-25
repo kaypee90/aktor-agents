@@ -30,6 +30,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IMemoryStore, PostgresMemoryStore>();
         services.AddSingleton<IWorldArchive, EfWorldArchive>();
+        services.AddSingleton<AgentRuntime.Workspaces.IWorkspaceArchive, EfWorkspaceArchive>();
         services.AddHostedService<PersistenceEventSubscriber>();
 
         services.AddHttpClient("agent-tools")
@@ -43,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITool, ShellExecTool>();
         services.AddSingleton<ITool, HttpRequestTool>();
         services.AddSingleton<AgentDatabaseSandbox>();
+        services.AddSingleton<OrleansSchemaInstaller>();
         services.AddSingleton<ITool, DatabaseQueryTool>();
 
         return services;
@@ -114,6 +116,15 @@ public static class ServiceCollectionExtensions
         using var scope = host.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
         await db.Database.MigrateAsync();
+
+        // Orleans' durable storage tables must exist before the silo starts (it starts after this).
+        var configuration = host.Services.GetRequiredService<IConfiguration>();
+        var orleans = configuration.GetOrleansOptions();
+        if (orleans.UsesAdoNetStorage || orleans.UsesAdoNetClustering)
+        {
+            await host.Services.GetRequiredService<OrleansSchemaInstaller>().InstallAsync(
+                configuration.GetConnectionString("Postgres")!, includeClustering: orleans.UsesAdoNetClustering);
+        }
 
         // After migrations, so the tables the sandbox role is locked out of already exist.
         await host.Services.GetRequiredService<AgentDatabaseSandbox>().ProvisionAsync();

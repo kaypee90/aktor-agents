@@ -3,6 +3,7 @@ using System.Text.Json;
 using AgentRuntime.Agents;
 using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
+using AgentRuntime.Durability;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
 using AgentRuntime.Tools;
@@ -20,11 +21,52 @@ public sealed class WorldGrain(
     IWorldArchive archive,
     IOptions<SimulationOptions> options,
     IOptions<LlmOptions> llmOptions,
-    ILogger<WorldGrain> logger) : Grain, IWorldGrain
+    IOptions<DurabilityOptions> durability,
+    ILogger<WorldGrain> logger) : Grain, IWorldGrain, IRemindable
 {
+    private const string ClockReminder = "world-clock";
+    private const int ActionResultCacheSize = 1000;
+
     private readonly SimulationOptions _opts = options.Value;
     private readonly SimulationLimits _limits = options.Value.LimitsFor(llmOptions.Value.IsLocal);
     private IGrainTimer? _timer;
+    private string? _currentActionKey;
+
+    // ---- Durability: the clock survives crashes ---------------------------------
+    // The tick timer lives only in memory, so a running world also holds a durable reminder. If
+    // the process dies, the reminder re-activates the world on a live silo and the clock restarts
+    // from the last saved tick.
+
+    public override Task OnActivateAsync(CancellationToken cancellationToken)
+    {
+        if (Exists && S.Status == WorldStatus.Running)
+        {
+            logger.LogInformation("World {WorldId} re-activated while running (tick {Tick}); restarting its clock", S.WorldId, S.Tick);
+            StartClock(TimeSpan.FromSeconds(S.TickIntervalSeconds));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task ReceiveReminder(string reminderName, TickStatus status)
+    {
+        if (reminderName != ClockReminder) return;
+
+        if (!Exists || S.Status == WorldStatus.Ended)
+        {
+            await UnregisterClockReminderAsync();
+        }
+        else if (S.Status == WorldStatus.Running && _timer is null)
+        {
+            StartClock(TimeSpan.Zero);
+        }
+    }
+
+    private async Task UnregisterClockReminderAsync()
+    {
+        var reminder = await this.GetReminder(ClockReminder);
+        if (reminder is not null) await this.UnregisterReminder(reminder);
+    }
 
     private WorldState S => state.State;
     private bool Exists => !string.IsNullOrEmpty(S.WorldId);
@@ -84,6 +126,7 @@ public sealed class WorldGrain(
         S.RunningSince = S.StartedAt;
         S.EndsAt = S.StartedAt.Value.AddMinutes(S.MaxDurationMinutes);
         await state.WriteStateAsync();
+        await this.RegisterOrUpdateReminder(ClockReminder, durability.Value.RecoveryReminderPeriod, durability.Value.RecoveryReminderPeriod);
 
         StartClock(TimeSpan.Zero);
         Log("world", "The world clock started.", global: true);
@@ -158,6 +201,7 @@ public sealed class WorldGrain(
             await orchestrator.RetireAsync(r.AgentId, $"the world ended ({reason})");
         }
 
+        await UnregisterClockReminderAsync();
         await PublishAsync(RuntimeEventType.WorldEnded, $"World '{S.Name}' ended after {S.Tick} ticks: {reason}",
             new Dictionary<string, string> { ["reason"] = reason, ["ticks"] = S.Tick.ToString() });
         await ArchiveAsync();
@@ -250,7 +294,14 @@ public sealed class WorldGrain(
 
             var perception = BuildPerception(r);
             r.LastSeenSeq = S.NextSeq - 1;
-            await agent.HandleEvent(new EnvironmentEvent { EventName = "WorldTick", Payload = perception });
+            // Fixed id per world, tick and resident: a tick replayed after a crash (its state wasn't
+            // saved yet) re-sends the same perception, which the resident's mailbox drops.
+            await agent.HandleEvent(new EnvironmentEvent
+            {
+                EventId = $"{S.WorldId}-t{S.Tick}-{r.AgentId}",
+                EventName = "WorldTick",
+                Payload = perception
+            });
         }
 
         if (!S.Residents.Values.Any(r => r.State == ResidentState.Active))
@@ -266,7 +317,41 @@ public sealed class WorldGrain(
 
     // ---- Actions ----------------------------------------------------------
 
-    public async Task<WorldActionResult> Act(string agentId, WorldAction action)
+    public async Task<WorldActionResult> Act(string agentId, WorldAction action, string idempotencyKey)
+    {
+        // A world tool call replayed after the resident crashed returns the recorded outcome
+        // instead of acting twice (no double speech, double charge, or second new resident).
+        if (!string.IsNullOrEmpty(idempotencyKey) && S.ActionResults.TryGetValue(idempotencyKey, out var recorded))
+        {
+            return recorded;
+        }
+
+        _currentActionKey = string.IsNullOrEmpty(idempotencyKey) ? null : idempotencyKey;
+        try
+        {
+            var result = await ActCoreAsync(agentId, action);
+            if (_currentActionKey is not null)
+            {
+                S.ActionResults[_currentActionKey] = result;
+                S.ActionResultOrder.Add(_currentActionKey);
+                while (S.ActionResultOrder.Count > ActionResultCacheSize)
+                {
+                    S.ActionResults.Remove(S.ActionResultOrder[0]);
+                    S.ActionResultOrder.RemoveAt(0);
+                }
+
+                await state.WriteStateAsync();
+            }
+
+            return result;
+        }
+        finally
+        {
+            _currentActionKey = null;
+        }
+    }
+
+    private async Task<WorldActionResult> ActCoreAsync(string agentId, WorldAction action)
     {
         if (!Exists || !S.Residents.TryGetValue(agentId, out var r))
         {
@@ -636,6 +721,7 @@ public sealed class WorldGrain(
         var persona = Clip(blueprint.Persona, 800, string.Empty);
         var drives = Clip(blueprint.Drives, 500, "Find your place in this world.");
 
+        // Keyed by the bring_new_agent call, so a replay can't create the resident twice.
         var result = await orchestrator.CreateResidentAsync(new ResidentCreationRequest
         {
             WorldId = S.WorldId,
@@ -648,7 +734,7 @@ public sealed class WorldGrain(
             Relationships = blueprint.Relationships,
             ParentAgentId = parentAgentId,
             MaxDurationMinutes = S.MaxDurationMinutes
-        });
+        }, _currentActionKey is null ? null : $"{_currentActionKey}:resident");
 
         if (!result.Success)
         {

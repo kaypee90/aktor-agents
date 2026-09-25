@@ -9,6 +9,7 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
     <PackageReference Include="Microsoft.Orleans.Clustering.AdoNet" Version="10.3.1" />
     <PackageReference Include="Microsoft.Orleans.Persistence.AdoNet" Version="10.3.1" />
+    <PackageReference Include="Microsoft.Orleans.Persistence.Memory" Version="10.3.1" />
     <PackageReference Include="Microsoft.Orleans.Reminders.AdoNet" Version="10.3.1" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
@@ -22,6 +23,12 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AgentRuntime.Tests" />
+  </ItemGroup>
+
+  <!-- Orleans' own PostgreSQL schema (grain state, reminders, clustering), copied verbatim from
+       dotnet/orleans v10.3.1 src/AdoNet. Installed at startup by OrleansSchemaInstaller. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Persistence/OrleansSql/*.sql" />
   </ItemGroup>
 
 </Project>

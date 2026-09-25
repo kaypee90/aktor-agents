@@ -13,6 +13,10 @@ public sealed record ResourceBudget
     [Id(3)] public int MaxToolCalls { get; init; } = 100;
     [Id(4)] public decimal MaxCostUsd { get; init; } = 2.00m;
 
+    /// <summary>When above 0, token/tool-call/cost limits apply per period of this many hours and
+    /// usage resets each period (standing agents); 0 means the limits are for the agent's lifetime.</summary>
+    [Id(5)] public int PeriodHours { get; init; }
+
     public int RemainingTokens(ResourceUsage usage) => Math.Max(0, MaxTokens - usage.TokensUsed - usage.ReservedTokens);
     public int RemainingToolCalls(ResourceUsage usage) => Math.Max(0, MaxToolCalls - usage.ToolCallsUsed - usage.ReservedToolCalls);
     public decimal RemainingCostUsd(ResourceUsage usage) => Math.Max(0, MaxCostUsd - usage.CostUsd - usage.ReservedCostUsd);
@@ -64,6 +68,11 @@ public sealed record ResourceUsage
     [Id(5)] public int ReservedTokens { get; init; }
     [Id(6)] public int ReservedToolCalls { get; init; }
     [Id(7)] public decimal ReservedCostUsd { get; init; }
+
+    /// <summary>Usage from completed budget periods (renewing budgets only), so totals stay visible.</summary>
+    [Id(8)] public long LifetimeTokens { get; init; }
+    [Id(9)] public long LifetimeToolCalls { get; init; }
+    [Id(10)] public decimal LifetimeCostUsd { get; init; }
 }
 
 public enum BudgetKind

@@ -29,8 +29,12 @@ public interface IWorldGrain : IGrainWithStringKey
     /// <summary>Ends the world: stops the clock and retires every resident.</summary>
     Task End(string reason);
 
-    /// <summary>A resident's action, called from world tools during its reasoning turn.</summary>
-    Task<WorldActionResult> Act(string agentId, WorldAction action);
+    /// <summary>
+    /// A resident's action, called from world tools during its reasoning turn. The
+    /// <paramref name="idempotencyKey"/> is the tool call's key: a replay with the same key returns
+    /// the recorded result without acting again.
+    /// </summary>
+    Task<WorldActionResult> Act(string agentId, WorldAction action, string idempotencyKey);
 
     /// <summary>Read-only; interleaves so the dashboard can poll mid-tick. Null if this world
     /// doesn't exist in memory (never created, or lost in a restart).</summary>

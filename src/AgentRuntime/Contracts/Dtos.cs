@@ -18,6 +18,13 @@ public sealed record AgentInitializationRequest
     [Id(12)] public string TaskId { get; init; } = string.Empty;
     [Id(13)] public string? WorldId { get; init; }
     [Id(14)] public Dictionary<string, string> Metadata { get; init; } = [];
+
+    /// <summary>Start the agent's first turn as part of initialization — one durable write, so a
+    /// crash can't leave an agent created but never started.</summary>
+    [Id(15)] public bool AutoStart { get; init; }
+    [Id(16)] public string? WorkspaceId { get; init; }
+    [Id(17)] public bool Standing { get; init; }
+    [Id(18)] public int ContextWindow { get; init; }
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -30,6 +37,9 @@ public sealed record SpawnAgentRequest
     [Id(3)] public string? InitialContext { get; init; }
     [Id(4)] public List<string>? RequestedTools { get; init; }
     [Id(5)] public ResourceBudget? RequestedBudget { get; init; }
+    /// <summary>Inside a workspace: the child is a standing agent (monitor, responder) rather than
+    /// a one-shot worker.</summary>
+    [Id(6)] public bool Standing { get; init; }
 }
 
 [GenerateSerializer]
@@ -121,6 +131,8 @@ public sealed record AgentSnapshot
     [Id(19)] public string TaskId { get; init; } = string.Empty;
     [Id(17)] public string? FailureReason { get; init; }
     [Id(20)] public string? WorldId { get; init; }
+    [Id(21)] public string? WorkspaceId { get; init; }
+    [Id(22)] public bool Standing { get; init; }
 }
 
 [GenerateSerializer]
