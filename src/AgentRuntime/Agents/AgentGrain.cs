@@ -6,6 +6,7 @@ using AgentRuntime.Events;
 using AgentRuntime.Integrations;
 using AgentRuntime.LLM;
 using AgentRuntime.Messaging;
+using AgentRuntime.Safety;
 using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
@@ -43,6 +44,7 @@ public sealed class AgentGrain(
     IOptions<SimulationOptions> simulationOptions,
     IntegrationService integrations,
     ContextCompactor compactor,
+    IAuditLog audit,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -269,11 +271,20 @@ public sealed class AgentGrain(
     private async Task<DrainResult> DrainMailboxAsync()
     {
         var s = S;
-        if (s.IsTerminal || PendingToolCalls().Count > 0) return default;
+        if (s.IsTerminal) return default;
 
         var items = await Mailbox.Peek(s.LastConsumedMailSeq);
         if (items.Count == 0) return default;
 
+        // Not a safe point for inputs (a tool call awaits its result, e.g. an approval), but a stop
+        // must still work: an agent parked for days on an approval can always be stopped.
+        if (PendingToolCalls().Count > 0 && !items.Any(i => i.Kind == MailKind.Control && i.Control == ControlKind.Stop))
+        {
+            return default;
+        }
+
+        // Parked with a stop queued: everything is acknowledged but only the stop applies.
+        var parked = PendingToolCalls().Count > 0;
         var newInput = false;
         var stopped = false;
         var pausedNow = false;
@@ -286,7 +297,7 @@ public sealed class AgentGrain(
 
             switch (item.Kind)
             {
-                case MailKind.Message when item.Message is { } m:
+                case MailKind.Message when item.Message is { } m && !parked:
                     AppendTranscript(new AgentTranscriptEntry
                     {
                         Role = "user",
@@ -300,7 +311,7 @@ public sealed class AgentGrain(
                     newInput = true;
                     break;
 
-                case MailKind.Event when item.Event is { } e:
+                case MailKind.Event when item.Event is { } e && !parked:
                     AppendTranscript(new AgentTranscriptEntry { Role = "user", Content = $"[Environment event: {e.EventName}]\n{e.Payload}" });
                     newInput = true;
                     break;
@@ -610,7 +621,49 @@ public sealed class AgentGrain(
                         ["outcome"] = "unknown",
                         ["error"] = unknown
                     });
+                await AuditToolCallAsync(call, ToolSideEffects.NonIdempotent, ToolExecutionResult.Fail(unknown), "unknown");
                 continue;
+            }
+
+            // Resolve what the call can do first: the safety policy decides on it, and it drives
+            // crash recovery below. Connection tools (MCP servers, APIs, messaging) are resolved
+            // through the workspace, with the side-effect class their plugin declared.
+            ConnectionToolTarget? connectionTool = null;
+            if (s.WorkspaceId is { } toolWorkspace && ConnectionNames.IsConnectionTool(call.Name) &&
+                s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+            {
+                connectionTool = await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name);
+            }
+
+            var sideEffects = connectionTool?.SideEffects
+                              ?? (toolRegistry.TryGet(call.Name, out var tool) ? tool.Definition.SideEffects : ToolSideEffects.ReadOnly);
+
+            // The workspace's safety policy, checked by the runtime before anything runs. Re-checking a
+            // parked call is cheap and idempotent, so it happens before the repeat guard below.
+            if (s.WorkspaceId is { } policyWorkspace)
+            {
+                var permission = await GrainFactory.GetGrain<IWorkspaceGrain>(policyWorkspace).CheckToolCall(new ToolCallPermissionRequest
+                {
+                    AgentId = AgentId,
+                    ToolName = call.Name,
+                    SideEffects = sideEffects,
+                    CallKey = $"{AgentId}:{call.Id}",
+                    ArgumentsJson = call.ArgumentsJson,
+                    AgentNote = AssistantNoteFor(call)
+                });
+
+                if (permission.IsWaiting)
+                {
+                    await ParkForApprovalAsync(call, permission);
+                    return true;
+                }
+
+                if (!permission.MayRun)
+                {
+                    AppendToolResult(call, ToolExecutionResult.Fail(permission.Message));
+                    await state.WriteStateAsync();
+                    continue;
+                }
             }
 
             var fingerprint = call.Name + "|" + call.ArgumentsJson;
@@ -635,17 +688,6 @@ public sealed class AgentGrain(
                 continue;
             }
 
-            // Connection tools (MCP servers, APIs, messaging) are resolved through the workspace; the
-            // side-effect class the plugin declared drives crash recovery exactly like built-ins.
-            ConnectionToolTarget? connectionTool = null;
-            if (s.WorkspaceId is { } toolWorkspace && ConnectionNames.IsConnectionTool(call.Name) &&
-                s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
-            {
-                connectionTool = await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name);
-            }
-
-            var sideEffects = connectionTool?.SideEffects
-                              ?? (toolRegistry.TryGet(call.Name, out var tool) ? tool.Definition.SideEffects : ToolSideEffects.ReadOnly);
             if (sideEffects == ToolSideEffects.NonIdempotent)
             {
                 // Journal the intent first, so a crash mid-call is detected rather than repeated.
@@ -674,6 +716,9 @@ public sealed class AgentGrain(
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
             s.InFlightToolCallIds.Remove(call.Id);
             AppendToolResult(call, result);
+            // Audited before the result is saved: if we crash in between, the replayed call is
+            // recorded once (same key), not zero times.
+            await AuditToolCallAsync(call, sideEffects, result, result.Success ? "ok" : "failed");
 
             await PublishAsync(RuntimeEventType.AgentToolCompleted,
                 $"Tool '{call.Name}' {(result.Success ? "completed" : "failed")}.",
@@ -717,6 +762,61 @@ public sealed class AgentGrain(
 
         return false;
     }
+
+    /// <summary>The agent's visible text alongside a tool call (never hidden reasoning), shown to
+    /// the approver and kept in the audit log as the stated reason.</summary>
+    private string? AssistantNoteFor(TranscriptToolCall call) =>
+        S.Transcript.LastOrDefault(e => e.Role == "assistant" && e.ToolCalls?.Any(c => c.Id == call.Id) == true)?.Content;
+
+    /// <summary>Stops the turn at this call until a human decides. The call has no result yet, so
+    /// the turn stays in progress: the next wake (the decision, or the recovery reminder after a
+    /// restart) re-checks it and runs or refuses it.</summary>
+    private async Task ParkForApprovalAsync(TranscriptToolCall call, ToolCallPermission permission)
+    {
+        var s = S;
+        s.CurrentTask = $"Waiting for approval {permission.ApprovalCode} to run {call.Name}";
+        if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
+        await state.WriteStateAsync();
+        await UpdateRegistryStatusAsync(s.Status);
+        await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' is waiting for approval {permission.ApprovalCode} ({call.Name}).");
+        await EnsureTurnReminderAsync();
+    }
+
+    private async Task AuditToolCallAsync(TranscriptToolCall call, ToolSideEffects sideEffects, ToolExecutionResult result, string outcome)
+    {
+        var s = S;
+        if (s.IsResident || call.Name is "wait_for_events" or "end_turn") return; // simulation moves and turn ends aren't actions
+
+        try
+        {
+            await audit.AppendAsync(new AuditEntry
+            {
+                Scope = s.WorkspaceId ?? s.TaskId,
+                Key = $"{AgentId}:{call.Id}:exec",
+                ActorType = "agent",
+                ActorId = AgentId,
+                ActorName = s.Role,
+                Action = "tool.call",
+                Target = call.Name,
+                SideEffects = sideEffects.ToString(),
+                Outcome = outcome,
+                Summary = $"{s.Role} called {call.Name}: {(result.Success ? "ok" : Clip(result.ErrorMessage ?? "failed", 160))}",
+                DetailJson = JsonSerializer.Serialize(new
+                {
+                    arguments = Clip(call.ArgumentsJson, 2000),
+                    result = result.Success ? Clip(result.ResultJson, 500) : null,
+                    error = result.Success ? null : Clip(result.ErrorMessage ?? string.Empty, 500),
+                    agent_note = AssistantNoteFor(call) is { } note ? Clip(note, 500) : null
+                })
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Audit write failed for {Tool} by {AgentId}", call.Name, AgentId);
+        }
+    }
+
+    private static string Clip(string s, int max) => s.Length > max ? s[..max] + "…" : s;
 
     private static string? ExtractSummary(string argumentsJson)
     {

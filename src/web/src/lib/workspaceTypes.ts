@@ -70,6 +70,8 @@ export interface WorkspaceSnapshot {
   pending_notifications?: number;
   /** Checks watches ran without an LLM call. */
   llm_calls_avoided?: number;
+  safety_policy?: SafetyPolicy;
+  approvals?: ApprovalRecord[];
 }
 
 export interface WorkspaceListItem {
@@ -129,4 +131,65 @@ export interface ConnectionView {
   supports_tools: boolean;
   supports_notifications: boolean;
   supports_inbound: boolean;
+}
+
+// ---- Safety (docs/safety.md) ----
+
+export type AutonomyLevel = "Autonomous" | "SemiAutonomous" | "Supervised";
+export type PolicyDecision = "Allow" | "Deny" | "RequireApproval";
+export type SideEffectScope = "Any" | "Writes" | "Unsafe";
+export type ApprovalStatus = "Pending" | "Approved" | "Rejected" | "Expired";
+
+export interface ApprovalRule {
+  id: string;
+  name: string;
+  tool_pattern: string;
+  applies: SideEffectScope;
+  decision: PolicyDecision;
+}
+
+export interface SafetyPolicy {
+  autonomy: AutonomyLevel;
+  rules: ApprovalRule[];
+  approval_timeout_hours: number;
+}
+
+export interface ApprovalRecord {
+  approval_id: string;
+  code: string;
+  agent_id: string;
+  agent_name: string;
+  tool_name: string;
+  side_effects: SideEffects;
+  arguments_json: string;
+  agent_note: string | null;
+  policy_reason: string;
+  status: ApprovalStatus;
+  requested_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+  decision_reason: string | null;
+}
+
+export interface AuditEntry {
+  seq: number;
+  at: string;
+  actor_type: string;
+  actor_id: string;
+  actor_name: string;
+  action: string;
+  target: string;
+  side_effects: string | null;
+  outcome: string;
+  summary: string;
+  detail_json: string;
+  hash: string;
+}
+
+export interface AuditVerification {
+  valid: boolean;
+  records: number;
+  first_broken_seq: number | null;
+  message: string;
 }

@@ -9,8 +9,9 @@ import { AgentGraph } from "../AgentGraph";
 import { BotIcon } from "../BotIcon";
 import { EventStream } from "../EventStream";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { SafetyPanel } from "./SafetyPanel";
 
-type Tab = "agents" | "triggers" | "integrations" | "graph" | "events";
+type Tab = "agents" | "triggers" | "integrations" | "safety" | "graph" | "events";
 
 function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
@@ -50,10 +51,12 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
     }));
   }, [workspace.agents, workspace.coordinator_agent_id]);
 
+  const pendingApprovals = workspace.approvals?.filter((a) => a.status === "Pending").length ?? 0;
   const tabs: [Tab, string][] = [
     ["agents", `Agents (${workspace.agents.length})`],
     ["triggers", `Triggers (${workspace.triggers.length})`],
     ["integrations", `Integrations${workspace.connections?.length ? ` (${workspace.connections.length})` : ""}`],
+    ["safety", `Safety${pendingApprovals ? ` (${pendingApprovals})` : ""}`],
     ["graph", "Graph"],
     ["events", "Events"],
   ];
@@ -97,6 +100,8 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
         {tab === "triggers" && <Triggers workspace={workspace} onChanged={onChanged} />}
 
         {tab === "integrations" && <IntegrationsPanel workspaceId={workspace.workspace_id} onChanged={onChanged} />}
+
+        {tab === "safety" && <SafetyPanel workspace={workspace} onChanged={onChanged} />}
 
         {tab === "graph" && (
           <div className="h-full min-h-[400px]">

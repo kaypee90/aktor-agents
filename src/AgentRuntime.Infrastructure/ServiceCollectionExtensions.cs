@@ -44,6 +44,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SecretsOptions>(configuration.GetSection(SecretsOptions.SectionName));
         services.AddSingleton<SecretProtector>();
         services.AddSingleton<AgentRuntime.Integrations.ISecretStore, PostgresSecretStore>();
+        services.AddSingleton<AgentRuntime.Safety.IAuditLog, Persistence.PostgresAuditLog>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, McpPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, HttpApiPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SlackPlugin>();

@@ -113,3 +113,8 @@ public sealed class FakeCrmPlugin : IToolProviderPlugin, INotificationChannelPlu
             : InboundResult.Ignore());
     }
 }
+
+public static class TestAudit
+{
+    public static readonly AgentRuntime.Safety.InMemoryAuditLog Log = new();
+}

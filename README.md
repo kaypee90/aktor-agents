@@ -385,6 +385,25 @@ Long-running agents are built to cost nothing while nothing is happening:
 
 See [docs/efficiency.md](docs/efficiency.md).
 
+## 10b-5. Safety: approvals and the audit log
+
+Each workspace has a safety policy that the runtime enforces before any tool runs. The LLM can't
+see around it or change it.
+- **Autonomy levels.**
+  - `Autonomous` is the default.
+  - `SemiAutonomous` asks you before actions that can't be undone or safely repeated, such as
+    sending, paying or deleting.
+  - `Supervised` asks before every external write.
+- **Rules** match tool names (`billing__*`, `*__send_sms`) and can allow, block or ask, whatever
+  the level.
+- **Approvals park the agent durably.** Parked agents survive restarts, and you can still stop
+  them. Decide from the Safety tab, the API, or by replying `approve A3` / `reject A3 too
+  expensive` in the chat or over SMS or Telegram.
+- **The audit log** records every tool call, approval, policy change and command. It's
+  hash-chained per workspace, so an edited or deleted record is detected.
+
+See [docs/safety.md](docs/safety.md).
+
 ## 10c. Durable execution
 
 Agents survive crashes, restarts and outages, and resume exactly where they stopped:

@@ -106,6 +106,24 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [OneWay]
     Task ProcessNotificationOutbox();
 
+    // ---- Safety ----
+
+    /// <summary>
+    /// Asked by an agent before every tool call. Applies the workspace's policy; for a call that
+    /// needs approval it creates (once, keyed by the call's idempotency key) an approval request
+    /// and asks the user. Asking again for the same call returns its current state, which is how
+    /// a parked agent learns it was approved — even after a restart.
+    /// </summary>
+    Task<Safety.ToolCallPermission> CheckToolCall(Safety.ToolCallPermissionRequest request);
+
+    /// <summary>A human's decision, by approval id or its short code ("A7").</summary>
+    Task<WorkspaceActionResult> DecideApproval(string approvalIdOrCode, bool approve, string? reason, string decidedBy, string channel);
+
+    [AlwaysInterleave]
+    Task<Safety.WorkspaceSafetyPolicy> GetSafetyPolicy();
+
+    Task UpdateSafetyPolicy(Safety.WorkspaceSafetyPolicy policy, string changedBy);
+
     /// <summary>Posts the once-a-day "budget reached" notice (called one-way from CheckBudget,
     /// which must not write state itself).</summary>
     [OneWay]

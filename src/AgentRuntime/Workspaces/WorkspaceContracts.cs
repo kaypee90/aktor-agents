@@ -223,6 +223,13 @@ public sealed class WorkspaceState
 
     /// <summary>Checks the runtime ran without an LLM call (watches), for the efficiency readout.</summary>
     [Id(24)] public long LlmCallsAvoided { get; set; }
+
+    // ---- Safety (phase 5) ----
+    [Id(25)] public Safety.WorkspaceSafetyPolicy SafetyPolicy { get; set; } = new();
+    [Id(26)] public Dictionary<string, Safety.ApprovalRecord> Approvals { get; set; } = [];
+    /// <summary>Tool call key → approval id, so a call re-checked after a restart finds its approval.</summary>
+    [Id(27)] public Dictionary<string, string> ApprovalByCallKey { get; set; } = [];
+    [Id(28)] public int NextApprovalNumber { get; set; } = 1;
 }
 
 [GenerateSerializer]
@@ -262,6 +269,9 @@ public sealed record WorkspaceSnapshot
     [Id(16)] public List<Integrations.ConnectionView> Connections { get; init; } = [];
     [Id(17)] public int PendingNotifications { get; init; }
     [Id(18)] public long LlmCallsAvoided { get; init; }
+    [Id(19)] public Safety.WorkspaceSafetyPolicy SafetyPolicy { get; init; } = new();
+    /// <summary>Pending first, then the most recent decided ones.</summary>
+    [Id(20)] public List<Safety.ApprovalRecord> Approvals { get; init; } = [];
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

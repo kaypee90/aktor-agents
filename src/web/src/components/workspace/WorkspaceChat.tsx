@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, postWorkspaceMessage } from "@/lib/api";
 import type { ChatEntry, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { BotIcon } from "../BotIcon";
+import { ApprovalCard } from "./SafetyPanel";
 
 const HOOK_PATH = /(\/api\/hooks\/[\w-]+\/[\w-]+\/[a-f0-9]+)/;
 
@@ -75,6 +76,7 @@ export function WorkspaceChat({ workspace, onSent, onSelectAgent }: {
   const [error, setError] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const archived = workspace.status === "Archived";
+  const pending = workspace.approvals?.filter((a) => a.status === "Pending") ?? [];
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -100,6 +102,11 @@ export function WorkspaceChat({ workspace, onSent, onSelectAgent }: {
 
   return (
     <div className="flex h-full flex-col">
+      {pending.length > 0 && (
+        <div className="max-h-[40%] space-y-1.5 overflow-y-auto border-b border-amber-200 bg-amber-50/50 p-2 dark:border-amber-900 dark:bg-amber-950/20">
+          {pending.map((a) => <ApprovalCard key={a.approval_id} workspaceId={workspace.workspace_id} approval={a} onDecided={onSent} compact />)}
+        </div>
+      )}
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {workspace.conversation.map((c) => <Message key={c.seq} entry={c} onSelectAgent={onSelectAgent} />)}
         <div ref={bottom} />

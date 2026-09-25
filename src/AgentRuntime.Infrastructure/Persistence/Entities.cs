@@ -144,3 +144,32 @@ public sealed class SecretRecord
     public required byte[] Ciphertext { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
+
+/// <summary>One audit log record (see Safety/SafetyContracts). Append-only; hash-chained per scope.</summary>
+public sealed class AuditRecord
+{
+    public long Id { get; set; }
+    public required string Scope { get; set; }
+    public long Seq { get; set; }
+    public required string Key { get; set; }
+    public DateTimeOffset At { get; set; }
+    public required string ActorType { get; set; }
+    public required string ActorId { get; set; }
+    public string ActorName { get; set; } = string.Empty;
+    public required string Action { get; set; }
+    public string Target { get; set; } = string.Empty;
+    public string? SideEffects { get; set; }
+    public string Outcome { get; set; } = "ok";
+    public string Summary { get; set; } = string.Empty;
+    public string DetailJson { get; set; } = "{}";
+    public required string PreviousHash { get; set; }
+    public required string Hash { get; set; }
+}
+
+/// <summary>The latest record of each audit chain, locked while appending so records are sequenced one at a time.</summary>
+public sealed class AuditHeadRecord
+{
+    public required string Scope { get; set; }
+    public long Seq { get; set; }
+    public required string Hash { get; set; }
+}

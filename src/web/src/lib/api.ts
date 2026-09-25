@@ -210,6 +210,30 @@ export function workspaceAction(id: string, action: "pause" | "resume" | "archiv
 }
 
 
+// ---- Safety ----
+
+export function updateSafetyPolicy(workspaceId: string, policy: import("./workspaceTypes").SafetyPolicy) {
+  return apiFetch<import("./workspaceTypes").SafetyPolicy>(`/api/workspaces/${workspaceId}/policy`, { method: "PUT", body: JSON.stringify(policy) });
+}
+
+export function decideApproval(workspaceId: string, approvalId: string, approve: boolean, reason?: string) {
+  return apiFetch<{ message: string }>(`/api/workspaces/${workspaceId}/approvals/${approvalId}/decision`, {
+    method: "POST",
+    body: JSON.stringify({ approve, reason: reason || undefined }),
+  });
+}
+
+export function listAudit(workspaceId: string, filters: { actor?: string; action?: string; q?: string; before?: number; limit?: number } = {}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const qs = params.toString();
+  return apiFetch<import("./workspaceTypes").AuditEntry[]>(`/api/workspaces/${workspaceId}/audit${qs ? `?${qs}` : ""}`);
+}
+
+export function verifyAudit(workspaceId: string) {
+  return apiFetch<import("./workspaceTypes").AuditVerification>(`/api/workspaces/${workspaceId}/audit/verify`);
+}
+
 // ---- Integrations ----
 
 export function listPlugins() {

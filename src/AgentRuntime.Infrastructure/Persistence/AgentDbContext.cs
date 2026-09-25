@@ -14,6 +14,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<WorldRecord> Worlds => Set<WorldRecord>();
     public DbSet<WorkspaceRecord> Workspaces => Set<WorkspaceRecord>();
     public DbSet<SecretRecord> Secrets => Set<SecretRecord>();
+    public DbSet<AuditRecord> AuditEntries => Set<AuditRecord>();
+    public DbSet<AuditHeadRecord> AuditHeads => Set<AuditHeadRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -71,6 +73,20 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         modelBuilder.Entity<SecretRecord>(b =>
         {
             b.HasKey(s => new { s.Scope, s.Key });
+        });
+
+        modelBuilder.Entity<AuditRecord>(b =>
+        {
+            b.HasKey(a => a.Id);
+            b.Property(a => a.Id).ValueGeneratedOnAdd();
+            b.HasIndex(a => a.Key).IsUnique();
+            b.HasIndex(a => new { a.Scope, a.Seq }).IsUnique();
+            b.HasIndex(a => new { a.Scope, a.ActorId });
+        });
+
+        modelBuilder.Entity<AuditHeadRecord>(b =>
+        {
+            b.HasKey(h => h.Scope);
         });
 
         modelBuilder.Entity<WorkspaceRecord>(b =>

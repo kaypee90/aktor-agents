@@ -6,6 +6,7 @@ using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Integrations;
 using AgentRuntime.Messaging;
+using AgentRuntime.Safety;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,7 +15,7 @@ using Orleans.Runtime;
 namespace AgentRuntime.Workspaces;
 
 /// <inheritdoc cref="IWorkspaceGrain"/>
-public sealed class WorkspaceGrain(
+public sealed partial class WorkspaceGrain(
     [PersistentState("workspace", "Default")] IPersistentState<WorkspaceState> state,
     IAgentOrchestrator orchestrator,
     IEventPublisher events,
@@ -25,6 +26,7 @@ public sealed class WorkspaceGrain(
     ISecretStore secretStore,
     IOptions<IntegrationsOptions> integrationOptions,
     IOptions<Durability.DurabilityOptions> durabilityOptions,
+    IAuditLog audit,
     ILogger<WorkspaceGrain> logger) : Grain, IWorkspaceGrain, IRemindable
 {
     private const string TriggerReminderPrefix = "trigger-";
@@ -85,6 +87,7 @@ public sealed class WorkspaceGrain(
             await orchestrator.PauseAsync(agent.AgentId);
         }
 
+        await AuditAsync("user", "user", "You", "workspace.paused", S.Name, "ok", $"Workspace paused");
         await ChangedAsync("paused");
     }
 
@@ -102,6 +105,7 @@ public sealed class WorkspaceGrain(
             await orchestrator.UnpauseAsync(agent.AgentId);
         }
 
+        await AuditAsync("user", "user", "You", "workspace.resumed", S.Name, "ok", $"Workspace resumed");
         await ChangedAsync("resumed");
     }
 
@@ -122,6 +126,7 @@ public sealed class WorkspaceGrain(
             await orchestrator.RetireAsync(agent.AgentId, "the workspace was archived");
         }
 
+        await AuditAsync("user", "user", "You", "workspace.archived", S.Name, "ok", $"Workspace archived");
         await ChangedAsync("archived");
     }
 
@@ -139,8 +144,28 @@ public sealed class WorkspaceGrain(
 
     // ---- Conversation -------------------------------------------------------
 
-    public Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId) =>
-        PostUserMessageCoreAsync(text, toAgentId, clientMessageId, "You");
+    public async Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId)
+    {
+        // "approve A7" typed in the chat decides the approval instead of reaching an agent.
+        var command = ApprovalCommand().Match(text.Trim());
+        if (Exists && toAgentId is null && command.Success &&
+            S.Approvals.Values.Any(a => a.Code.Equals(command.Groups[2].Value, StringComparison.OrdinalIgnoreCase)))
+        {
+            var approve = command.Groups[1].Value.ToLowerInvariant() is "approve" or "yes";
+            var result = await DecideApproval(command.Groups[2].Value, approve,
+                command.Groups[3].Value is { Length: > 0 } why ? why.Trim() : null, "user", "chat");
+            if (!result.Success)
+            {
+                AppendChat(ChatAuthorKind.System, "system", "Workspace", result.Message);
+                await SaveAsync();
+                await ChangedAsync("approval decision refused");
+            }
+
+            return S.Conversation[^1];
+        }
+
+        return await PostUserMessageCoreAsync(text, toAgentId, clientMessageId, "You");
+    }
 
     private async Task<ChatEntry> PostUserMessageCoreAsync(string text, string? toAgentId, string? clientMessageId, string authorName)
     {
@@ -171,6 +196,7 @@ public sealed class WorkspaceGrain(
         var chat = AppendChat(ChatAuthorKind.User, "user", authorName, body);
         if (dedupeKey is not null) Remember(dedupeKey, WorkspaceActionResult.Ok("delivered"));
         await SaveAsync();
+        await AuditAsync("user", "user", authorName, "user.command", target, "ok", Truncate(body, 300), key: $"{S.WorkspaceId}-chat-{chat.Seq}");
 
         // Durable delivery: the message id is fixed by the chat entry, so a retry of this call
         // can't reach the agent twice.
@@ -308,6 +334,10 @@ public sealed class WorkspaceGrain(
         }, ToolJson.Options));
         Remember(idempotencyKey, result);
         await SaveAsync();
+        await AuditAsync(createdBy == "user" ? "user" : "agent", createdBy, createdBy == "user" ? "You" : createdBy, "trigger.added", trigger.Name, "ok",
+            $"{trigger.Kind} '{trigger.Name}' for {trigger.TargetAgentId}: {(trigger.Kind == TriggerKind.Webhook ? "on webhook" : Describe(trigger))}",
+            JsonSerializer.Serialize(new { kind = trigger.Kind.ToString(), trigger.Instruction, trigger.SourceTool, watch = trigger.Kind == TriggerKind.Watch ? WatchSummary(trigger) : null }),
+            key: $"trigger:{trigger.TriggerId}:added");
 
         if (trigger.Kind is TriggerKind.Schedule or TriggerKind.Watch)
         {
@@ -333,6 +363,8 @@ public sealed class WorkspaceGrain(
         if (trigger.Kind is TriggerKind.Schedule or TriggerKind.Watch) await UnregisterTriggerReminderAsync(triggerId);
         AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Trigger '{trigger.Name}' removed by {(requestedBy == "user" ? "you" : requestedBy)}.");
         await SaveAsync();
+        await AuditAsync(requestedBy == "user" ? "user" : "agent", requestedBy, requestedBy == "user" ? "You" : requestedBy, "trigger.removed", trigger.Name, "ok",
+            $"Removed {trigger.Kind} '{trigger.Name}'", key: $"trigger:{triggerId}:removed");
         await ChangedAsync($"trigger {triggerId} removed");
         return WorkspaceActionResult.Ok($"Trigger '{trigger.Name}' removed.");
     }
@@ -576,6 +608,8 @@ public sealed class WorkspaceGrain(
         var chat = AppendChat(ChatAuthorKind.Agent, $"watch:{trigger.TriggerId}", $"Watch: {trigger.Name}", text, trigger.Urgency);
         QueueNotifications(chat);
         await SaveAsync();
+        await AuditAsync("watch", trigger.TriggerId, trigger.Name, "watch.alert", trigger.SourceTool ?? string.Empty, "ok",
+            Truncate(text, 300), key: $"watch:{trigger.TriggerId}:{tick}");
         await KickOutboxAsync();
         await PublishAsync(RuntimeEventType.WorkspaceMessage, $"Watch '{trigger.Name}': {Truncate(text, 120)}", ChatData(chat));
     }
@@ -697,6 +731,10 @@ public sealed class WorkspaceGrain(
 
         AppendChat(ChatAuthorKind.System, "system", "Workspace", string.Join(" ", parts));
         await SaveAsync();
+        await AuditAsync("user", "user", "You", "connection.added", name, "ok",
+            $"Connected {plugin.Manifest.Name} as '{name}' ({tools.Count} tools)",
+            JsonSerializer.Serialize(new { plugin = plugin.Manifest.Id, settings, secret_keys = definition.SecretKeys, notify = definition.NotifyLevel.ToString() }),
+            key: $"connection:{definition.ConnectionId}:added");
         await ChangedAsync($"connection {name} added");
         return ConnectionResult.Ok(ToView(definition), check.Message);
     }
@@ -722,6 +760,9 @@ public sealed class WorkspaceGrain(
         }
 
         await SaveAsync();
+        await AuditAsync("user", "user", "You", "connection.updated", c.Name, "ok",
+            $"Updated '{c.Name}': notify {c.NotifyLevel}, {c.Tools.Count(t => t.Enabled)}/{c.Tools.Count} tools enabled",
+            JsonSerializer.Serialize(new { update.NotifyLevel, update.EnabledTools, update.AllowedSenders }));
         await ChangedAsync($"connection {c.Name} updated");
         return ConnectionResult.Ok(ToView(c), "Updated.");
     }
@@ -746,6 +787,8 @@ public sealed class WorkspaceGrain(
         await secretStore.DeleteScopeAsync(ConnectionNames.Scope(S.WorkspaceId, connectionId));
         AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Connection '{c.Name}' removed; its secrets were deleted.");
         await SaveAsync();
+        await AuditAsync("user", "user", "You", "connection.removed", c.Name, "ok", $"Removed '{c.Name}' and deleted its secrets",
+            key: $"connection:{connectionId}:removed");
         await ChangedAsync($"connection {c.Name} removed");
     }
 
@@ -814,6 +857,23 @@ public sealed class WorkspaceGrain(
             logger.LogWarning("Ignored inbound message from unauthorized sender {Sender} on connection {Connection}", parsed.SenderId, c.Name);
             await PublishAsync(RuntimeEventType.WorkspaceChanged, $"Ignored a message from an unapproved sender on '{c.Name}'.");
             return reply;
+        }
+
+        await AuditAsync("user", parsed.SenderId, parsed.SenderName ?? parsed.SenderId, "channel.message", c.Name, "ok",
+            Truncate(parsed.Text, 200), key: $"inbound:{c.ConnectionId}:{parsed.MessageId ?? Guid.NewGuid().ToString("n")}");
+
+        // "approve A7" / "reject A7 too expensive" from an allowed sender decides an approval.
+        var command = ApprovalCommand().Match(parsed.Text.Trim());
+        if (command.Success)
+        {
+            var approve = command.Groups[1].Value.Equals("approve", StringComparison.OrdinalIgnoreCase) ||
+                          command.Groups[1].Value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+            var result = await DecideApproval(command.Groups[2].Value, approve,
+                command.Groups[3].Value is { Length: > 0 } why ? why.Trim() : null, parsed.SenderId, c.Name);
+            if (result.Success || S.Approvals.Values.Any(a => a.Code.Equals(command.Groups[2].Value, StringComparison.OrdinalIgnoreCase)))
+            {
+                return reply;
+            }
         }
 
         var dedupe = parsed.MessageId is null ? null : $"{c.ConnectionId}:{parsed.MessageId}";
@@ -926,6 +986,190 @@ public sealed class WorkspaceGrain(
         SupportsNotifications = c.SupportsNotifications,
         SupportsInbound = c.SupportsInbound
     };
+
+    // ---- Safety: policy, approvals, audit ----------------------------------------
+
+    public async Task<ToolCallPermission> CheckToolCall(ToolCallPermissionRequest request)
+    {
+        if (!Exists) return new ToolCallPermission { Decision = PolicyDecisionKind.Allow };
+
+        // A call that already has an approval keeps it, even if the policy changed since.
+        if (S.ApprovalByCallKey.TryGetValue(request.CallKey, out var existingId) && S.Approvals.TryGetValue(existingId, out var existing))
+        {
+            if (existing.Status == ApprovalStatus.Pending && DateTimeOffset.UtcNow > existing.ExpiresAt)
+            {
+                existing.Status = ApprovalStatus.Expired;
+                existing.DecidedAt = DateTimeOffset.UtcNow;
+                existing.DecidedBy = "system";
+                existing.DecisionReason = $"no decision within {S.SafetyPolicy.ApprovalTimeoutHours}h";
+                AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Approval {existing.Code} expired: {existing.AgentName} won't run {existing.ToolName}.");
+                await SaveAsync();
+                await AuditAsync("system", "system", "Workspace", "approval.expired", existing.ToolName, "denied",
+                    $"{existing.Code} expired", ApprovalDetail(existing), key: $"approval:{existing.ApprovalId}:expired");
+            }
+
+            return Permission(existing);
+        }
+
+        var verdict = PolicyEngine.Evaluate(S.SafetyPolicy, request.ToolName, request.SideEffects);
+        if (verdict.Decision == PolicyDecisionKind.Allow) return new ToolCallPermission { Decision = PolicyDecisionKind.Allow };
+
+        var agent = await Registry.GetAsync(request.AgentId);
+        var agentName = agent?.Role ?? request.AgentId;
+
+        if (verdict.Decision == PolicyDecisionKind.Deny)
+        {
+            await AuditAsync("agent", request.AgentId, agentName, "tool.denied", request.ToolName, "denied",
+                $"{agentName} was blocked from {request.ToolName} by {verdict.Reason}",
+                System.Text.Json.JsonSerializer.Serialize(new { arguments = Truncate(request.ArgumentsJson, 2000), reason = verdict.Reason }),
+                key: $"denied:{request.CallKey}");
+            return new ToolCallPermission { Decision = PolicyDecisionKind.Deny, Message = $"Blocked by the workspace's safety policy ({verdict.Reason}). Don't retry; tell the user if it matters." };
+        }
+
+        var approval = new ApprovalRecord
+        {
+            ApprovalId = DeterministicId.From("apr-", request.CallKey),
+            Code = $"A{S.NextApprovalNumber++}",
+            CallKey = request.CallKey,
+            AgentId = request.AgentId,
+            AgentName = agentName,
+            ToolName = request.ToolName,
+            SideEffects = request.SideEffects,
+            ArgumentsJson = Truncate(request.ArgumentsJson, 4000),
+            AgentNote = request.AgentNote is { Length: > 0 } note ? Truncate(note, 500) : null,
+            PolicyReason = verdict.Reason,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(Math.Max(1, S.SafetyPolicy.ApprovalTimeoutHours))
+        };
+        S.Approvals[approval.ApprovalId] = approval;
+        S.ApprovalByCallKey[request.CallKey] = approval.ApprovalId;
+        TrimApprovals();
+
+        var ask = AppendChat(ChatAuthorKind.System, "system", "Workspace",
+            $"Approval {approval.Code} needed: {agentName} wants to run {approval.ToolName} with {Truncate(approval.ArgumentsJson, 300)}" +
+            (approval.AgentNote is null ? string.Empty : $" — \"{Truncate(approval.AgentNote, 200)}\"") +
+            $". Reply \"approve {approval.Code}\" or \"reject {approval.Code} <reason>\".", "warning");
+        QueueNotifications(ask);
+        await SaveAsync();
+        await KickOutboxAsync();
+        await AuditAsync("agent", request.AgentId, agentName, "approval.requested", approval.ToolName, "pending",
+            $"{approval.Code}: {agentName} asked to run {approval.ToolName} ({verdict.Reason})", ApprovalDetail(approval),
+            key: $"approval:{approval.ApprovalId}:requested");
+        await ChangedAsync($"approval {approval.Code} requested");
+        return Permission(approval);
+    }
+
+    public async Task<WorkspaceActionResult> DecideApproval(string approvalIdOrCode, bool approve, string? reason, string decidedBy, string channel)
+    {
+        var approval = S.Approvals.GetValueOrDefault(approvalIdOrCode)
+                       ?? S.Approvals.Values.FirstOrDefault(a => a.Code.Equals(approvalIdOrCode.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (approval is null) return WorkspaceActionResult.Fail($"No approval '{approvalIdOrCode}'.");
+        if (approval.Status != ApprovalStatus.Pending)
+        {
+            return WorkspaceActionResult.Fail($"Approval {approval.Code} was already {approval.Status.ToString().ToLowerInvariant()}.");
+        }
+
+        approval.Status = DateTimeOffset.UtcNow > approval.ExpiresAt ? ApprovalStatus.Expired : approve ? ApprovalStatus.Approved : ApprovalStatus.Rejected;
+        approval.DecidedAt = DateTimeOffset.UtcNow;
+        approval.DecidedBy = decidedBy;
+        approval.DecisionReason = reason;
+
+        var verb = approval.Status switch { ApprovalStatus.Approved => "approved", ApprovalStatus.Rejected => "rejected", _ => "expired before a decision" };
+        AppendChat(ChatAuthorKind.System, "system", "Workspace",
+            $"Approval {approval.Code} {verb}{(channel == "chat" ? string.Empty : $" via {channel}")}: {approval.AgentName} " +
+            $"{(approval.Status == ApprovalStatus.Approved ? "will now run" : "won't run")} {approval.ToolName}" +
+            (reason is null ? "." : $" (\"{Truncate(reason, 200)}\")."));
+        await SaveAsync();
+        await AuditAsync("user", decidedBy, decidedBy == "user" ? "You" : decidedBy, $"approval.{approval.Status.ToString().ToLowerInvariant()}",
+            approval.ToolName, approval.Status == ApprovalStatus.Approved ? "ok" : "denied",
+            $"{approval.Code} {verb} via {channel}{(reason is null ? string.Empty : $": {reason}")}", ApprovalDetail(approval),
+            key: $"approval:{approval.ApprovalId}:decided");
+
+        // Wake the parked agent now; its recovery reminder covers the case where this is lost.
+        await GrainFactory.GetGrain<IAgentGrain>(approval.AgentId).WakeAndThink();
+        await ChangedAsync($"approval {approval.Code} {verb}");
+        return WorkspaceActionResult.Ok($"Approval {approval.Code} {verb}.");
+    }
+
+    public Task<WorkspaceSafetyPolicy> GetSafetyPolicy() => Task.FromResult(S.SafetyPolicy);
+
+    public async Task UpdateSafetyPolicy(WorkspaceSafetyPolicy policy, string changedBy)
+    {
+        if (!Exists) return;
+        var before = S.SafetyPolicy;
+        S.SafetyPolicy = policy with { ApprovalTimeoutHours = Math.Clamp(policy.ApprovalTimeoutHours, 1, 24 * 30), Rules = policy.Rules.Take(50).ToList() };
+        AppendChat(ChatAuthorKind.System, "system", "Workspace",
+            $"Safety policy updated: {S.SafetyPolicy.Autonomy} mode, {S.SafetyPolicy.Rules.Count} rule(s).");
+        await SaveAsync();
+        await AuditAsync("user", changedBy, "You", "policy.updated", "safety policy", "ok",
+            $"{before.Autonomy} → {S.SafetyPolicy.Autonomy}, {S.SafetyPolicy.Rules.Count} rule(s)",
+            System.Text.Json.JsonSerializer.Serialize(new { before, after = S.SafetyPolicy }), key: $"policy:{Guid.NewGuid():n}");
+        await ChangedAsync("safety policy updated");
+    }
+
+    private static ToolCallPermission Permission(ApprovalRecord a) => new()
+    {
+        Decision = PolicyDecisionKind.RequireApproval,
+        ApprovalStatus = a.Status,
+        ApprovalCode = a.Code,
+        Message = a.Status switch
+        {
+            ApprovalStatus.Pending => $"Waiting for the user to approve {a.Code}.",
+            ApprovalStatus.Approved => $"Approved by the user ({a.Code}).",
+            ApprovalStatus.Rejected => $"The user rejected this action ({a.Code}){(a.DecisionReason is null ? "." : $": {a.DecisionReason.TrimEnd('.')}.")} Don't retry it unless the user asks.",
+            _ => $"The approval request {a.Code} expired without a decision, so this action was not run. Ask the user if it's still needed."
+        }
+    };
+
+    private void TrimApprovals()
+    {
+        const int keep = 500;
+        foreach (var old in S.Approvals.Values.Where(a => a.Status != ApprovalStatus.Pending).OrderBy(a => a.RequestedAt).Take(Math.Max(0, S.Approvals.Count - keep)).ToList())
+        {
+            S.Approvals.Remove(old.ApprovalId);
+            S.ApprovalByCallKey.Remove(old.CallKey);
+        }
+    }
+
+    private static string ApprovalDetail(ApprovalRecord a) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        code = a.Code,
+        tool = a.ToolName,
+        side_effects = a.SideEffects.ToString(),
+        arguments = a.ArgumentsJson,
+        agent_note = a.AgentNote,
+        policy = a.PolicyReason,
+        decided_by = a.DecidedBy,
+        reason = a.DecisionReason
+    });
+
+    /// <summary>Writes an audit record; a failure is logged, never allowed to break the action.</summary>
+    private async Task AuditAsync(string actorType, string? actorId, string? actorName, string action, string target, string outcome,
+        string summary, string detailJson = "{}", string? key = null)
+    {
+        try
+        {
+            await audit.AppendAsync(new AuditEntry
+            {
+                Scope = S.WorkspaceId,
+                Key = key ?? $"{action}:{Guid.NewGuid():n}",
+                ActorType = actorType,
+                ActorId = actorId ?? "unknown",
+                ActorName = actorName ?? actorId ?? "unknown",
+                Action = action,
+                Target = target,
+                Outcome = outcome,
+                Summary = summary,
+                DetailJson = detailJson
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Audit write failed for {Action} in workspace {WorkspaceId}", action, S.WorkspaceId);
+        }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(approve|reject|yes|no)\s+(A\d+)\b\s*(.*)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ApprovalCommand();
 
     // ---- Budget -------------------------------------------------------------
 
@@ -1059,7 +1303,13 @@ public sealed class WorkspaceGrain(
             TotalCostUsd = S.TotalCostUsd,
             Connections = S.Connections.Values.Select(ToView).ToList(),
             PendingNotifications = S.NotificationOutbox.Count,
-            LlmCallsAvoided = S.LlmCallsAvoided
+            LlmCallsAvoided = S.LlmCallsAvoided,
+            SafetyPolicy = S.SafetyPolicy,
+            Approvals = S.Approvals.Values
+                .OrderBy(a => a.Status == ApprovalStatus.Pending ? 0 : 1)
+                .ThenByDescending(a => a.RequestedAt)
+                .Take(50)
+                .ToList()
         };
     }
 
