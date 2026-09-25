@@ -78,6 +78,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, CompletionCriteriaSection>();
         services.AddSingleton<ISystemPromptSection, BehavioralRulesSection>();
         services.AddSingleton<ISystemPromptSection, EnvironmentInfoSection>();
+        services.AddSingleton<ISystemPromptSection, ContextSummarySection>();
+        services.AddSingleton<ContextCompactor>();
 
         return services;
     }

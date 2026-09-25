@@ -36,6 +36,9 @@ services:
       Llm__ContextLength: ${LLM_CONTEXT_LENGTH:-16384}
       Llm__TimeoutSeconds: ${LLM_TIMEOUT_SECONDS:-300}
       Llm__DisableThinking: ${LLM_DISABLE_THINKING:-true}
+      # Token efficiency (docs/efficiency.md): a cheaper model for routine event handling and
+      # history summaries, e.g. claude-haiku-4-5 / gpt-4o-mini. Empty = use LLM_MODEL everywhere.
+      Llm__FastModel: ${LLM_FAST_MODEL:-}
       Tools__SearchProvider: ${SEARCH_PROVIDER:-Tavily}
       Tools__SearchApiKey: ${SEARCH_API_KEY:-}
       # Integrations (docs/plugins.md). The vault key encrypts connection secrets: set

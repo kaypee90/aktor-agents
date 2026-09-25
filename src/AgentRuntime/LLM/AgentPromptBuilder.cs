@@ -8,8 +8,25 @@ public sealed class AgentPromptBuilder(IEnumerable<ISystemPromptSection> section
 
     public ChatMessage BuildSystemPrompt(AgentPromptContext context)
     {
+        // Stable sections first, changing ones last: providers cache a prompt by its prefix, so
+        // one changing line near the top (a token count, the time) would defeat caching entirely.
         var sb = new StringBuilder();
-        foreach (var section in _sections)
+        Append(sb, _sections.Where(s => !s.IsDynamic), context);
+        var stableLength = sb.Length;
+        Append(sb, _sections.Where(s => s.IsDynamic), context);
+
+        var text = sb.ToString().TrimEnd();
+        return new ChatMessage
+        {
+            Role = ChatRole.System,
+            Content = text,
+            CacheablePrefixLength = Math.Min(stableLength, text.Length)
+        };
+    }
+
+    private static void Append(StringBuilder sb, IEnumerable<ISystemPromptSection> sections, AgentPromptContext context)
+    {
+        foreach (var section in sections)
         {
             var body = section.Render(context);
             if (string.IsNullOrWhiteSpace(body)) continue;
@@ -18,8 +35,6 @@ public sealed class AgentPromptBuilder(IEnumerable<ISystemPromptSection> section
             sb.AppendLine(body);
             sb.AppendLine();
         }
-
-        return ChatMessage.System(sb.ToString().TrimEnd());
     }
 }
 
@@ -39,6 +54,7 @@ public sealed class GoalSection : ISystemPromptSection
 public sealed class CurrentStateSection : ISystemPromptSection
 {
     public string Header => "CURRENT STATE";
+    public bool IsDynamic => true;
     public string Render(AgentPromptContext context)
     {
         if (context.State.IsResident) return string.Empty;
@@ -72,6 +88,7 @@ public sealed class ToolsSection : ISystemPromptSection
 public sealed class ResourceLimitsSection : ISystemPromptSection
 {
     public string Header => "RESOURCE LIMITS";
+    public bool IsDynamic => true;
     public string Render(AgentPromptContext context)
     {
         if (context.State.IsResident) return string.Empty;
@@ -152,6 +169,7 @@ public sealed class CompletionCriteriaSection : ISystemPromptSection
 public sealed class EnvironmentInfoSection : ISystemPromptSection
 {
     public string Header => "ENVIRONMENT INFORMATION";
+    public bool IsDynamic => true;
     public string Render(AgentPromptContext context) => context.EnvironmentSummary;
 }
 

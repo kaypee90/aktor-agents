@@ -22,27 +22,7 @@ public sealed class AnthropicProvider(HttpClient httpClient, IOptions<LlmOptions
     public async Task<LlmCompletionResponse> CompleteAsync(
         LlmCompletionRequest request, CancellationToken cancellationToken = default)
     {
-        var systemPrompt = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
-        var conversation = request.Messages.Where(m => m.Role != ChatRole.System).ToList();
-
-        var body = new JsonObject
-        {
-            ["model"] = request.Model ?? _options.Model,
-            ["max_tokens"] = request.MaxTokens,
-            ["temperature"] = request.Temperature,
-            ["system"] = systemPrompt,
-            ["messages"] = BuildMessages(conversation)
-        };
-
-        if (request.Tools.Count > 0)
-        {
-            body["tools"] = new JsonArray(request.Tools.Select(t => (JsonNode)new JsonObject
-            {
-                ["name"] = t.Name,
-                ["description"] = t.Description,
-                ["input_schema"] = JsonNode.Parse(t.JsonSchema)
-            }).ToArray());
-        }
+        var body = BuildBody(request, _options.Model);
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "v1/messages")
         {
@@ -62,6 +42,66 @@ public sealed class AnthropicProvider(HttpClient httpClient, IOptions<LlmOptions
         }
 
         return ParseResponse(responseBody);
+    }
+
+    private static JsonObject CacheControl() => new() { ["type"] = "ephemeral" };
+
+    /// <summary>
+    /// Builds the Messages API body with prompt-cache breakpoints (Anthropic allows four; three are
+    /// used): after the tools, after the stable part of the system prompt, and after the latest
+    /// message. Everything up to a breakpoint that matches a recent call is read from cache at a
+    /// tenth of the price, so a multi-step turn pays full price only for what's new each step.
+    /// </summary>
+    internal static JsonObject BuildBody(LlmCompletionRequest request, string defaultModel)
+    {
+        var system = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System);
+        var conversation = request.Messages.Where(m => m.Role != ChatRole.System).ToList();
+
+        var body = new JsonObject
+        {
+            ["model"] = request.Model ?? defaultModel,
+            ["max_tokens"] = request.MaxTokens,
+            ["temperature"] = request.Temperature,
+            ["system"] = BuildSystem(system),
+            ["messages"] = BuildMessages(conversation)
+        };
+
+        if (request.Tools.Count > 0)
+        {
+            var tools = new JsonArray(request.Tools.Select(t => (JsonNode)new JsonObject
+            {
+                ["name"] = t.Name,
+                ["description"] = t.Description,
+                ["input_schema"] = JsonNode.Parse(t.JsonSchema)
+            }).ToArray());
+            ((JsonObject)tools[^1]!)["cache_control"] = CacheControl();
+            body["tools"] = tools;
+        }
+
+        // Cache the conversation so far: the next step of this turn re-sends all of it.
+        if (body["messages"] is JsonArray { Count: > 0 } messages &&
+            messages[^1]?["content"] is JsonArray { Count: > 0 } lastContent)
+        {
+            ((JsonObject)lastContent[^1]!)["cache_control"] = CacheControl();
+        }
+
+        return body;
+    }
+
+    private static JsonArray BuildSystem(ChatMessage? system)
+    {
+        var text = system?.Content ?? string.Empty;
+        var blocks = new JsonArray();
+        if (text.Length == 0) return blocks;
+
+        var split = system!.CacheablePrefixLength is { } n && n > 0 && n < text.Length ? n : text.Length;
+        blocks.Add(new JsonObject { ["type"] = "text", ["text"] = text[..split], ["cache_control"] = CacheControl() });
+        if (split < text.Length)
+        {
+            blocks.Add(new JsonObject { ["type"] = "text", ["text"] = text[split..] });
+        }
+
+        return blocks;
     }
 
     private static JsonArray BuildMessages(IReadOnlyList<ChatMessage> conversation)
@@ -129,7 +169,7 @@ public sealed class AnthropicProvider(HttpClient httpClient, IOptions<LlmOptions
         return messages;
     }
 
-    private static LlmCompletionResponse ParseResponse(string json)
+    internal static LlmCompletionResponse ParseResponse(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -166,12 +206,17 @@ public sealed class AnthropicProvider(HttpClient httpClient, IOptions<LlmOptions
             _ => LlmFinishReason.Stop
         };
 
-        var inputTokens = 0;
-        var outputTokens = 0;
+        int Usage(JsonElement usage, string name) =>
+            usage.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+
+        int uncached = 0, cacheRead = 0, cacheWrite = 0, outputTokens = 0;
         if (root.TryGetProperty("usage", out var usage))
         {
-            inputTokens = usage.TryGetProperty("input_tokens", out var it) ? it.GetInt32() : 0;
-            outputTokens = usage.TryGetProperty("output_tokens", out var ot) ? ot.GetInt32() : 0;
+            // input_tokens excludes cached tokens; the total processed is the sum of all three.
+            uncached = Usage(usage, "input_tokens");
+            cacheRead = Usage(usage, "cache_read_input_tokens");
+            cacheWrite = Usage(usage, "cache_creation_input_tokens");
+            outputTokens = Usage(usage, "output_tokens");
         }
 
         return new LlmCompletionResponse
@@ -179,8 +224,10 @@ public sealed class AnthropicProvider(HttpClient httpClient, IOptions<LlmOptions
             Content = text,
             ToolCalls = toolCalls,
             FinishReason = finish,
-            InputTokens = inputTokens,
-            OutputTokens = outputTokens
+            InputTokens = uncached + cacheRead + cacheWrite,
+            OutputTokens = outputTokens,
+            CachedInputTokens = cacheRead,
+            CacheWriteInputTokens = cacheWrite
         };
     }
 }

@@ -12,11 +12,16 @@ import { IntegrationsPanel } from "./IntegrationsPanel";
 
 type Tab = "agents" | "triggers" | "integrations" | "graph" | "events";
 
-function describeSchedule(t: TriggerView) {
-  if (t.kind === "Webhook") return "on webhook";
+function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
   const s = t.interval_seconds ?? 0;
   return s % 3600 === 0 ? `every ${s / 3600}h` : s % 60 === 0 ? `every ${s / 60} min` : `every ${s}s`;
+}
+
+function describeSchedule(t: TriggerView) {
+  if (t.kind === "Webhook") return "on webhook";
+  if (t.kind === "Watch") return `watch, ${describeInterval(t)}`;
+  return describeInterval(t);
 }
 
 export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged }: {
@@ -144,10 +149,19 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
       {workspace.triggers.map((t) => (
         <div key={t.trigger_id} className="rounded border border-neutral-200 p-2 dark:border-neutral-800">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold">{t.kind === "Webhook" ? "🔗" : "⏰"} {t.name}</span>
+            <span className="font-semibold">{t.kind === "Webhook" ? "🔗" : t.kind === "Watch" ? "👁" : "⏰"} {t.name}</span>
             <button onClick={() => deleteWorkspaceTrigger(workspace.workspace_id, t.trigger_id).then(onChanged)} className="text-[10px] text-rose-600 hover:underline">delete</button>
           </div>
           <div className="text-neutral-500">{describeSchedule(t)} → {agentName(t.target_agent_id)} · by {t.created_by === "user" ? "you" : agentName(t.created_by)}</div>
+          {t.watch_summary && (
+            <div className="mt-0.5 font-mono text-[10px] text-neutral-600 dark:text-neutral-400">{t.watch_summary}</div>
+          )}
+          {t.kind === "Watch" && (
+            <div className="mt-0.5 text-[10px] text-emerald-700 dark:text-emerald-400">
+              {t.checks} checks without the LLM · {t.alerts} alert{t.alerts === 1 ? "" : "s"} · matching now: {t.last_match_count}
+            </div>
+          )}
+          {t.last_error && <div className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-300">Last error: {t.last_error}</div>}
           {t.instruction && <div className="mt-0.5 text-neutral-600 dark:text-neutral-400">“{t.instruction}”</div>}
           <div className="mt-0.5 text-[10px] text-neutral-400">
             fired {t.fire_count}×{t.last_fired_at && ` · last ${new Date(t.last_fired_at).toLocaleTimeString()}`}

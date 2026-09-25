@@ -1,5 +1,5 @@
 export type WorkspaceStatus = "Active" | "Paused" | "Archived";
-export type TriggerKind = "Schedule" | "Webhook";
+export type TriggerKind = "Schedule" | "Webhook" | "Watch";
 export type ChatAuthorKind = "User" | "Agent" | "System";
 
 export interface ChatEntry {
@@ -28,6 +28,12 @@ export interface TriggerView {
   next_due_at: string | null;
   created_by: string;
   dropped_count: number;
+  /** Watches: "shop__get: qty < 10 → notify". */
+  watch_summary: string | null;
+  checks: number;
+  alerts: number;
+  last_match_count: number;
+  last_error: string | null;
 }
 
 export interface WorkspaceAgentView {
@@ -40,6 +46,7 @@ export interface WorkspaceAgentView {
   tokens_used: number;
   cost_usd: number;
   current_task: string | null;
+  cached_input_tokens: number;
 }
 
 export interface WorkspaceSnapshot {
@@ -61,6 +68,8 @@ export interface WorkspaceSnapshot {
   total_cost_usd: number;
   connections?: ConnectionView[];
   pending_notifications?: number;
+  /** Checks watches ran without an LLM call. */
+  llm_calls_avoided?: number;
 }
 
 export interface WorkspaceListItem {

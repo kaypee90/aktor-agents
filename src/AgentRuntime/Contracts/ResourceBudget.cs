@@ -73,6 +73,9 @@ public sealed record ResourceUsage
     [Id(8)] public long LifetimeTokens { get; init; }
     [Id(9)] public long LifetimeToolCalls { get; init; }
     [Id(10)] public decimal LifetimeCostUsd { get; init; }
+
+    /// <summary>Input tokens served from the provider's prompt cache (a subset of TokensUsed).</summary>
+    [Id(11)] public long CachedInputTokens { get; init; }
 }
 
 public enum BudgetKind

@@ -16,7 +16,11 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
 {
     public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
-    public sealed record TriggerBody(string Kind, string Name, string? Instruction, string? TargetAgentId, double? EveryMinutes, string? Cron);
+    public sealed record WatchConditionBody(string Field, string Op, string? Value);
+    public sealed record TriggerBody(string Kind, string Name, string? Instruction, string? TargetAgentId, double? EveryMinutes, string? Cron,
+        // Watches (kind "watch"): a read-only connection tool, where the items are, and the rule.
+        string? SourceTool = null, JsonElement? SourceArguments = null, string? ItemsPath = null, List<WatchConditionBody>? Conditions = null,
+        string? KeyField = null, List<string>? DisplayFields = null, string? Mode = null, string? Message = null, string? Urgency = null);
     public sealed record BudgetBody(int? DailyTokenLimit, decimal? DailyCostLimitUsd);
 
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
@@ -89,7 +93,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     public async Task<IActionResult> AddTrigger(string id, [FromBody] TriggerBody body)
     {
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
-        if (!Enum.TryParse<TriggerKind>(body.Kind, ignoreCase: true, out var kind)) return BadRequest(new { error = "kind must be schedule or webhook" });
+        if (!Enum.TryParse<TriggerKind>(body.Kind, ignoreCase: true, out var kind)) return BadRequest(new { error = "kind must be schedule, webhook or watch" });
 
         var result = await Workspace(id).AddTrigger(new TriggerSpec
         {
@@ -98,7 +102,21 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             Instruction = body.Instruction ?? string.Empty,
             TargetAgentId = body.TargetAgentId,
             EveryMinutes = body.EveryMinutes,
-            Cron = body.Cron
+            Cron = body.Cron,
+            SourceTool = body.SourceTool,
+            SourceArgumentsJson = body.SourceArguments is { ValueKind: JsonValueKind.Object } a ? a.GetRawText() : null,
+            Rule = kind == TriggerKind.Watch
+                ? new WatchRule
+                {
+                    ItemsPath = body.ItemsPath ?? string.Empty,
+                    Conditions = (body.Conditions ?? []).Select(c => new WatchCondition { Field = c.Field, Op = c.Op, Value = c.Value }).ToList(),
+                    KeyField = body.KeyField,
+                    DisplayFields = body.DisplayFields ?? []
+                }
+                : null,
+            WatchMode = body.Mode,
+            MessageTemplate = body.Message,
+            Urgency = body.Urgency
         }, "user", idempotencyKey: string.Empty, revealSecret: true);
 
         return result.Success

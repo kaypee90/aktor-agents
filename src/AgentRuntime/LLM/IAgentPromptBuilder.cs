@@ -18,6 +18,11 @@ public interface ISystemPromptSection
 {
     string Header { get; }
     string Render(AgentPromptContext context);
+
+    /// <summary>True for sections that change between calls (status, usage, time). The builder puts
+    /// them after all stable sections, so the stable prefix can be served from the provider's
+    /// prompt cache on every call.</summary>
+    bool IsDynamic => false;
 }
 
 /// <summary>

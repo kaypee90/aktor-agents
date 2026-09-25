@@ -42,6 +42,7 @@ public sealed class AgentGrain(
     IAgentOrchestrator orchestrator,
     IOptions<SimulationOptions> simulationOptions,
     IntegrationService integrations,
+    ContextCompactor compactor,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -69,11 +70,16 @@ public sealed class AgentGrain(
 
         // Upgrade: workspace agents created before connections existed get the permission to use
         // their workspace's connections (a runtime decision about the runtime's own grants).
-        if (S.InWorkspace && S.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions) &&
-            !S.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+        // Likewise, workspace tools added in later versions (e.g. create_watch) are granted.
+        if (S.InWorkspace && S.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions))
         {
-            S.GrantedPermissions |= ToolPermission.Integrations;
-            await state.WriteStateAsync();
+            var missing = WorkspaceToolCatalog.ToolNames.Except(S.AllowedTools, StringComparer.OrdinalIgnoreCase).ToList();
+            if (missing.Count > 0 || !S.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+            {
+                S.AllowedTools = [.. S.AllowedTools, .. missing];
+                S.GrantedPermissions |= ToolPermission.Integrations;
+                await state.WriteStateAsync();
+            }
         }
 
         // Interrupted work from a previous activation (a crash, or this silo being replaced):
@@ -341,9 +347,9 @@ public sealed class AgentGrain(
             if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
         }
 
-        if (s.IsResident || s.ContextWindow > 0)
+        if (s.IsResident)
         {
-            TrimWindowedTranscript();
+            TrimResidentTranscript();
         }
 
         await state.WriteStateAsync();
@@ -426,6 +432,12 @@ public sealed class AgentGrain(
                 return;
             }
 
+            // Also a safe point for compaction: no tool call is waiting for its result.
+            if (await CompactIfNeededAsync())
+            {
+                await state.WriteStateAsync();
+            }
+
             if (s.TurnIteration >= maxIterations)
             {
                 await EndTurnAsync($"Agent '{s.Name}' reached its per-turn reasoning limit and is waiting for new input.");
@@ -473,12 +485,12 @@ public sealed class AgentGrain(
                 return; // Failed permanently; FailAsync already ran.
             }
 
-            var callCost = response.InputTokens * _llmOptions.PricePerInputTokenUsd +
-                           response.OutputTokens * _llmOptions.PricePerOutputTokenUsd;
+            var callCost = _llmOptions.CostOf(response, fast: s.UsesFastTier);
             s.Usage = s.Usage with
             {
                 TokensUsed = s.Usage.TokensUsed + response.InputTokens + response.OutputTokens,
-                CostUsd = s.Usage.CostUsd + callCost
+                CostUsd = s.Usage.CostUsd + callCost,
+                CachedInputTokens = s.Usage.CachedInputTokens + response.CachedInputTokens
             };
             if (s.WorkspaceId is { } usageWorkspace)
             {
@@ -975,10 +987,12 @@ public sealed class AgentGrain(
 
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
-        // Residents and standing agents see only their recent past (notes and memory carry anything
-        // longer-lived) so cost per turn stays flat; a task agent's whole conversation is its context.
-        var window = s.IsResident ? _simulation.ResidentTranscriptWindow : s.ContextWindow;
-        var history = window > 0 ? s.Transcript.Skip(SafeWindowStart(s.Transcript, window)) : s.Transcript;
+        // Residents see only their recent past (their notes carry anything longer-lived). Everyone
+        // else sends the whole remaining transcript: compaction keeps it bounded, and the summary
+        // of what was compacted is in the system prompt.
+        var history = s.IsResident
+            ? s.Transcript.Skip(SafeWindowStart(s.Transcript, _simulation.ResidentTranscriptWindow))
+            : s.Transcript;
         messages.AddRange(history.Select(ToLlmMessage));
 
         var toolDefs = s.AllowedTools
@@ -995,7 +1009,9 @@ public sealed class AgentGrain(
         {
             Messages = messages,
             Tools = toolDefs,
-            Model = _llmOptions.Model,
+            // Routine event handling can run on the cheaper tier; planning and real work don't.
+            Model = _llmOptions.ModelFor(s.UsesFastTier),
+            MaxTokens = s.UsesFastTier ? _llmOptions.FastMaxOutputTokens : _llmOptions.MaxOutputTokens,
             Temperature = s.IsResident ? _simulation.ResidentTemperature : 0.4
         });
     }
@@ -1020,12 +1036,81 @@ public sealed class AgentGrain(
         return 0;
     }
 
-    /// <summary>Bounds a long-lived agent's stored transcript; only the recent window is ever sent
-    /// to the LLM, so older entries are dead weight in grain state.</summary>
-    private void TrimWindowedTranscript()
+    /// <summary>
+    /// Folds older history into <see cref="AgentState.ContextSummary"/> so it isn't resent on every
+    /// call. Standing agents compact once their history outgrows their window (keeping the most
+    /// recent half); task agents once it passes a token size. Only runs at a safe point.
+    /// </summary>
+    private async Task<bool> CompactIfNeededAsync()
+    {
+        var s = S;
+        var t = s.Transcript;
+        if (s.IsResident || PendingToolCalls().Count > 0) return false;
+
+        int start;
+        if (s.ContextWindow > 0)
+        {
+            if (t.Count <= s.ContextWindow) return false;
+            start = SafeCompactionStart(t, Math.Max(4, s.ContextWindow / 2));
+        }
+        else
+        {
+            if (ContextCompactor.EstimateTokens(t) <= _llmOptions.CompactAboveTokens) return false;
+            start = SafeCompactionStart(t, _llmOptions.CompactKeepRecentEntries);
+        }
+
+        if (start <= 0) return false;
+
+        var summary = await compactor.SummarizeAsync(s, t.Take(start).ToList());
+        s.ContextSummary = summary.Summary;
+        t.RemoveRange(0, start);
+        // Providers require the conversation to open with a user message.
+        if (t.Count == 0 || t[0].Role != "user")
+        {
+            t.Insert(0, new AgentTranscriptEntry
+            {
+                Role = "user",
+                Content = "[Runtime notice] Your earlier work is summarized under EARLIER CONTEXT in your instructions. Continue from where you are."
+            });
+        }
+
+        if (summary.Usage is { } usage)
+        {
+            var cost = _llmOptions.CostOf(usage, fast: true);
+            s.Usage = s.Usage with
+            {
+                TokensUsed = s.Usage.TokensUsed + usage.InputTokens + usage.OutputTokens,
+                CostUsd = s.Usage.CostUsd + cost
+            };
+            if (s.WorkspaceId is { } ws)
+            {
+                await GrainFactory.GetGrain<IWorkspaceGrain>(ws).RecordUsage(AgentId, usage.InputTokens + usage.OutputTokens, cost);
+            }
+        }
+
+        await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' compacted {start} older transcript entries into a summary.");
+        return true;
+    }
+
+    /// <summary>The first index, keeping at least <paramref name="keep"/> recent entries, where the
+    /// history can be cut without separating a tool result from its call: a user message or one
+    /// of the agent's own steps (whose results all come after it). 0 means no safe cut.</summary>
+    private static int SafeCompactionStart(List<AgentTranscriptEntry> transcript, int keep)
+    {
+        for (var i = Math.Max(1, transcript.Count - keep); i < transcript.Count; i++)
+        {
+            if (transcript[i].Role is "user" or "assistant") return i;
+        }
+
+        return 0;
+    }
+
+    /// <summary>Bounds a resident's stored transcript; only its recent window is ever sent to the
+    /// LLM, so older entries are dead weight in grain state.</summary>
+    private void TrimResidentTranscript()
     {
         var t = S.Transcript;
-        var keep = (S.IsResident ? _simulation.ResidentTranscriptWindow : S.ContextWindow) * 2;
+        var keep = _simulation.ResidentTranscriptWindow * 2;
         if (t.Count <= keep * 2) return;
 
         var start = SafeWindowStart(t, keep);

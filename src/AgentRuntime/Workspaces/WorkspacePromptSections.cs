@@ -36,8 +36,12 @@ public sealed class WorkspaceSection : ISystemPromptSection
         return role + """
 
             Rules for long-running work (every wake-up costs tokens, so be frugal):
+            - For a recurring check with a clear condition (a value crossing a threshold, a status
+              changing, a new record matching a filter),
+              use create_watch: the runtime runs it without you and only reports new matches, at zero
+              tokens per check. Use create_schedule only when each run genuinely needs judgement.
             - Prefer webhooks (create_webhook) over polling when a service can push events. When
-              polling, use the longest create_schedule interval that meets the need.
+              polling, use the longest interval that meets the need.
             - Don't create a second schedule or agent for something that already has one:
               check list_triggers and find_agents first.
             - Only notify_user when there's something worth reading: a result, an alert, a question.

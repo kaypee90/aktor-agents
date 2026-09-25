@@ -7,11 +7,11 @@ using AgentRuntime.Tools;
 namespace AgentRuntime.Infrastructure.Plugins;
 
 /// <summary>
-/// Any REST API behind a base URL and one auth header — Shopify Admin (X-Shopify-Access-Token),
-/// Stripe, an internal service. Agents choose only the path and query; the host, scheme and
+/// Any REST API behind a base URL and one auth header: a CRM, a store, a payments provider, a
+/// ticketing system, an internal service. Agents choose only the path and query; the host, scheme and
 /// credentials are fixed by the connection, so an agent can't point the credential elsewhere.
 /// Reads are a ReadOnly tool; writes are a separate tool that exists only when the user enabled
-/// them, and send an Idempotency-Key header (honoured by Stripe, Shopify and others).
+/// them, and send an Idempotency-Key header (honoured by many APIs).
 /// </summary>
 public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolProviderPlugin
 {
@@ -19,18 +19,19 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
     {
         Id = "http-api",
         Name = "HTTP API",
-        Description = "Let agents call a REST API (e.g. Shopify Admin, Stripe, your own service) with a stored credential.",
+        Description = "Let agents call any REST API (CRM, store, payments, ticketing, your own service) with a stored credential.",
         Category = PluginCategory.Data,
         Settings =
         [
-            new() { Key = "base_url", Label = "Base URL", Required = true, Placeholder = "https://my-shop.myshopify.com/admin/api/2025-07" },
-            new() { Key = "description", Label = "What this API is (shown to agents)", Placeholder = "My Shopify store's Admin REST API" },
-            new() { Key = "auth_header_name", Label = "Auth header name", DefaultValue = "Authorization", Placeholder = "X-Shopify-Access-Token" },
+            new() { Key = "base_url", Label = "Base URL", Required = true, Placeholder = "https://api.example.com/v1" },
+            new() { Key = "description", Label = "What this API is (shown to agents)", Placeholder = "Our CRM's REST API: contacts, deals, activities" },
+            new() { Key = "auth_header_name", Label = "Auth header name", DefaultValue = "Authorization", Placeholder = "Authorization or X-Api-Key" },
             new() { Key = "auth_header_value", Label = "Auth header value", Secret = true },
             new() { Key = "allow_writes", Label = "Allow writes (POST/PUT/PATCH/DELETE)", Options = ["false", "true"], DefaultValue = "false" }
         ],
-        SetupHelp = "Shopify: create a custom app in your store admin, give it the read_inventory/read_products scopes, " +
-                    "and use its Admin API access token with the header X-Shopify-Access-Token."
+        SetupHelp = "Use a token with the narrowest permissions that do the job (read-only unless agents must write). " +
+                    "Most APIs take 'Authorization: Bearer <token>'; some use their own header (e.g. X-Api-Key, or " +
+                    "X-Shopify-Access-Token for Shopify)."
     };
 
     public async Task<ConnectionCheck> ValidateAsync(PluginConnection connection, CancellationToken cancellationToken)

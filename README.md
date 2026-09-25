@@ -348,8 +348,10 @@ flowchart LR
 
 ## 10b-2. Workspaces: agents that keep working for you
 
-Open **Workspaces** in the dashboard (`/workspaces`) and describe what you want. For example:
-"Monitor my store inventory every hour and alert me when anything drops below 10 units."
+Open **Workspaces** in the dashboard (`/workspaces`) and describe what you want: a daily research
+briefing, support-ticket triage, CRM follow-ups, service monitoring, store inventory alerts, and so
+on. Nothing is domain-specific; the building blocks are generic and your instructions and
+connections decide what a workspace does.
 
 - A standing **coordinator** takes that request, and any later instruction you send in the chat.
 - It sets up the agents it needs: standing monitors or one-shot workers.
@@ -371,6 +373,17 @@ In a workspace's **Integrations** tab you can connect services, and you can add 
 - **Your own plugins:** build against `AgentRuntime.Plugins.Sdk` and drop the DLL into `./plugins`.
 
 See [docs/plugins.md](docs/plugins.md) and [samples/ExamplePlugin](samples/ExamplePlugin).
+
+## 10b-4. Token efficiency
+
+Long-running agents are built to cost nothing while nothing is happening:
+- **Watches.** Recurring checks such as "stock < 10" are evaluated by the runtime with no LLM call,
+  and only newly matching items are reported.
+- **Prompt caching.** The prompt has a stable prefix, with Anthropic cache breakpoints.
+- **Model routing.** A cheaper `LLM_FAST_MODEL` handles routine event handling.
+- **Context compaction.** Long histories are summarized once instead of being resent every call.
+
+See [docs/efficiency.md](docs/efficiency.md).
 
 ## 10c. Durable execution
 

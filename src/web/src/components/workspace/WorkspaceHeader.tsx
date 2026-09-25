@@ -15,6 +15,24 @@ function Meter({ label, used, limit, format }: { label: string; used: number; li
   );
 }
 
+/** What the efficiency features saved: checks run with no LLM call, and cached input share. */
+function Efficiency({ workspace }: { workspace: WorkspaceSnapshot }) {
+  const tokens = workspace.agents.reduce((n, a) => n + a.tokens_used, 0);
+  const cached = workspace.agents.reduce((n, a) => n + (a.cached_input_tokens ?? 0), 0);
+  const avoided = workspace.llm_calls_avoided ?? 0;
+  if (avoided === 0 && cached === 0) return null;
+  return (
+    <div className="shrink-0 text-[10px] text-neutral-500" title="Watches run checks in code; cached tokens are billed at a discount">
+      <div>Saved</div>
+      <div className="text-[11px] tabular-nums text-emerald-700 dark:text-emerald-400">
+        {avoided > 0 && `${avoided.toLocaleString()} LLM calls`}
+        {avoided > 0 && cached > 0 && " · "}
+        {cached > 0 && `${Math.round((cached / Math.max(1, tokens)) * 100)}% cached`}
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceHeader({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
   const tone: Record<string, string> = {
     Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -35,6 +53,7 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
       </div>
       <Meter label="Tokens today" used={workspace.tokens_today} limit={workspace.daily_token_limit} format={(n) => n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`} />
       <Meter label="Cost today" used={workspace.cost_today} limit={workspace.daily_cost_limit_usd} format={(n) => `$${n.toFixed(2)}`} />
+      <Efficiency workspace={workspace} />
       <div className="shrink-0 text-[10px] text-neutral-500">
         <div>All time</div>
         <div className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-300">{workspace.total_tokens.toLocaleString()} tokens · ${workspace.total_cost_usd.toFixed(4)}</div>

@@ -107,7 +107,7 @@ public sealed class OpenAIProvider(HttpClient httpClient, IOptions<LlmOptions> o
         return array;
     }
 
-    private static LlmCompletionResponse ParseResponse(string json)
+    internal static LlmCompletionResponse ParseResponse(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message");
@@ -141,6 +141,12 @@ public sealed class OpenAIProvider(HttpClient httpClient, IOptions<LlmOptions> o
         var usage = doc.RootElement.TryGetProperty("usage", out var u) ? u : default;
         var inputTokens = usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("prompt_tokens", out var pt) ? pt.GetInt32() : 0;
         var outputTokens = usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("completion_tokens", out var ct) ? ct.GetInt32() : 0;
+        // OpenAI caches long, stable prompt prefixes automatically; prompt_tokens includes them.
+        var cachedTokens = usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("prompt_tokens_details", out var details) &&
+                           details.ValueKind == JsonValueKind.Object && details.TryGetProperty("cached_tokens", out var cached) &&
+                           cached.ValueKind == JsonValueKind.Number
+            ? cached.GetInt32()
+            : 0;
 
         return new LlmCompletionResponse
         {
@@ -148,7 +154,8 @@ public sealed class OpenAIProvider(HttpClient httpClient, IOptions<LlmOptions> o
             ToolCalls = toolCalls,
             FinishReason = finish,
             InputTokens = inputTokens,
-            OutputTokens = outputTokens
+            OutputTokens = outputTokens,
+            CachedInputTokens = cachedTokens
         };
     }
 }

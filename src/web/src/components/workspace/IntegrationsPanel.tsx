@@ -65,7 +65,7 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
       {error && <div className="rounded bg-rose-50 p-2 text-rose-700 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
       {connections.length === 0 && !adding && (
         <div className="text-neutral-500">
-          No connections yet. Connect an MCP server, an API (e.g. your Shopify store), or a messaging channel so agents
+          No connections yet. Connect an MCP server, any REST API (CRM, store, payments, ticketing…), or a messaging channel so agents
           can reach you by SMS, Slack, email or Telegram.
         </div>
       )}

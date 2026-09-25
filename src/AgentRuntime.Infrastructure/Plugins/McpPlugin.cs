@@ -34,7 +34,7 @@ public sealed class McpPlugin(
     {
         Id = "mcp",
         Name = "MCP server",
-        Description = "Connect any Model Context Protocol server — Shopify, GitHub, databases, internal tools — and give your agents its tools.",
+        Description = "Connect any Model Context Protocol server (a SaaS product, a code host, a database, an internal tool) and give your agents its tools.",
         Category = PluginCategory.Tools,
         Settings =
         [

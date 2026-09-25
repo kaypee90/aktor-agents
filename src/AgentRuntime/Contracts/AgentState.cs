@@ -101,6 +101,13 @@ public sealed class AgentState
 
     public bool InWorkspace => WorkspaceId is not null;
 
+    /// <summary>Summary of older history that was compacted out of the transcript (see
+    /// ContextCompactor). Shown to the LLM so long-lived agents keep continuity cheaply.</summary>
+    [Id(42)] public string? ContextSummary { get; set; }
+
+    /// <summary>Routine event handling that can use the fast model tier.</summary>
+    public bool UsesFastTier => IsResident || (Standing && Role != "Coordinator");
+
     public bool IsTerminal => Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut;
 
     public static readonly IReadOnlyDictionary<AgentStatus, AgentStatus[]> ValidTransitions =

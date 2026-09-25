@@ -8,7 +8,7 @@ public sealed record WebhookDelivery
     [Id(0)] public required string TriggerId { get; init; }
     [Id(1)] public required string Token { get; init; }
     [Id(2)] public required string Body { get; init; }
-    /// <summary>The sender's delivery id (e.g. X-Shopify-Webhook-Id), used to drop redeliveries.</summary>
+    /// <summary>The sender's delivery id (an Idempotency-Key or provider webhook-id header), used to drop redeliveries.</summary>
     [Id(3)] public string? DeliveryId { get; init; }
     [Id(4)] public string? ContentType { get; init; }
 }

@@ -27,6 +27,11 @@ public sealed record ChatMessage
     public string? ToolCallId { get; init; }
     public string? ToolName { get; init; }
 
+    /// <summary>System messages: the first this-many characters are the same on every call
+    /// (role, rules, tool guidance) and the rest changes (status, usage, time). Providers with
+    /// explicit prompt caching (Anthropic) mark the boundary so the stable part is served from cache.</summary>
+    public int? CacheablePrefixLength { get; init; }
+
     public static ChatMessage System(string content) => new() { Role = ChatRole.System, Content = content };
     public static ChatMessage User(string content) => new() { Role = ChatRole.User, Content = content };
 }
@@ -60,8 +65,13 @@ public sealed record LlmCompletionResponse
     public string? Content { get; init; }
     public IReadOnlyList<ToolCall> ToolCalls { get; init; } = [];
     public LlmFinishReason FinishReason { get; init; }
+    /// <summary>All input tokens, including those read from or written to the prompt cache.</summary>
     public int InputTokens { get; init; }
     public int OutputTokens { get; init; }
+    /// <summary>Input tokens served from the provider's prompt cache (billed at a discount).</summary>
+    public int CachedInputTokens { get; init; }
+    /// <summary>Input tokens written to the cache on this call (Anthropic bills these at a premium).</summary>
+    public int CacheWriteInputTokens { get; init; }
 }
 
 /// <summary>

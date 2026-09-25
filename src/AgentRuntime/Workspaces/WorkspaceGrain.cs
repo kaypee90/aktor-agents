@@ -29,6 +29,12 @@ public sealed class WorkspaceGrain(
 {
     private const string TriggerReminderPrefix = "trigger-";
     private const string OutboxReminder = "notify-outbox";
+
+    /// <summary>Same shape as the rest of the API: snake_case with enum names, not numbers.</summary>
+    private static readonly JsonSerializerOptions OwnerJson = new(ToolJson.Options)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     private readonly IntegrationsOptions _integrations = integrationOptions.Value;
     private const int ActionResultCacheSize = 2000;
 
@@ -104,7 +110,7 @@ public sealed class WorkspaceGrain(
         if (!Exists || S.Status == WorkspaceStatus.Archived) return;
 
         S.Status = WorkspaceStatus.Archived;
-        foreach (var trigger in S.Triggers.Values.Where(t => t.Kind == TriggerKind.Schedule))
+        foreach (var trigger in S.Triggers.Values.Where(t => t.Kind is TriggerKind.Schedule or TriggerKind.Watch))
         {
             await UnregisterTriggerReminderAsync(trigger.TriggerId);
         }
@@ -241,7 +247,15 @@ public sealed class WorkspaceGrain(
             CreatedBy = createdBy
         };
 
-        if (spec.Kind == TriggerKind.Schedule)
+        object? preview = null;
+        if (spec.Kind == TriggerKind.Watch)
+        {
+            var (watchError, watchPreview) = await PrepareWatchAsync(trigger, spec);
+            if (watchError is not null) return WorkspaceActionResult.Fail(watchError);
+            preview = watchPreview;
+        }
+
+        if (spec.Kind is TriggerKind.Schedule or TriggerKind.Watch)
         {
             if (!string.IsNullOrWhiteSpace(spec.Cron))
             {
@@ -274,30 +288,39 @@ public sealed class WorkspaceGrain(
 
         S.Triggers[trigger.TriggerId] = trigger;
         var path = trigger.Kind == TriggerKind.Webhook ? WebhookPath(trigger) : null;
-        AppendChat(ChatAuthorKind.System, "system", "Workspace", trigger.Kind == TriggerKind.Webhook
-            ? $"Webhook '{trigger.Name}' created for {targetEntry.Role}. Point your service at: POST {path}  (keep this URL secret)."
-            : $"Schedule '{trigger.Name}' created for {targetEntry.Role}: {Describe(trigger)}.");
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", trigger.Kind switch
+        {
+            TriggerKind.Webhook => $"Webhook '{trigger.Name}' created for {targetEntry.Role}. Point your service at: POST {path}  (keep this URL secret).",
+            TriggerKind.Watch => $"Watch '{trigger.Name}' created: {Describe(trigger)}, checking {trigger.SourceTool} for {WatchSummary(trigger)}. " +
+                                 "It runs without the LLM and only reports newly matching items.",
+            _ => $"Schedule '{trigger.Name}' created for {targetEntry.Role}: {Describe(trigger)}."
+        });
 
         // Agents never see a webhook's secret; the API caller (the user) does.
         var result = WorkspaceActionResult.Ok($"Trigger '{name}' created.", JsonSerializer.Serialize(new
         {
             trigger_id = trigger.TriggerId,
             kind = trigger.Kind.ToString(),
-            schedule = trigger.Kind == TriggerKind.Schedule ? Describe(trigger) : null,
-            note = trigger.Kind == TriggerKind.Webhook ? "The webhook URL has been shown to the user, who connects it to their service." : null
+            schedule = trigger.Kind is TriggerKind.Schedule or TriggerKind.Watch ? Describe(trigger) : null,
+            note = trigger.Kind == TriggerKind.Webhook ? "The webhook URL has been shown to the user, who connects it to their service." : null,
+            // The dry run lets the agent confirm its paths and conditions are right before relying on them.
+            dry_run = preview
         }, ToolJson.Options));
         Remember(idempotencyKey, result);
         await SaveAsync();
 
-        if (trigger.Kind == TriggerKind.Schedule)
+        if (trigger.Kind is TriggerKind.Schedule or TriggerKind.Watch)
         {
             await RegisterTriggerReminderAsync(trigger);
         }
 
         await ChangedAsync($"trigger {trigger.TriggerId} added");
-        return revealSecret
-            ? WorkspaceActionResult.Ok(result.Message, JsonSerializer.Serialize(ToView(trigger, includeSecret: true), ToolJson.Options))
-            : result;
+        if (!revealSecret) return result;
+
+        // The owner's (API) view: full trigger including a webhook's secret path, plus the dry run.
+        var ownerView = JsonSerializer.SerializeToNode(ToView(trigger, includeSecret: true), OwnerJson)!.AsObject();
+        if (preview is not null) ownerView["dry_run"] = JsonSerializer.SerializeToNode(preview, OwnerJson);
+        return WorkspaceActionResult.Ok(result.Message, ownerView.ToJsonString());
     }
 
     public async Task<WorkspaceActionResult> RemoveTrigger(string triggerId, string requestedBy)
@@ -307,7 +330,7 @@ public sealed class WorkspaceGrain(
             return WorkspaceActionResult.Ok("No such trigger (already removed).");
         }
 
-        if (trigger.Kind == TriggerKind.Schedule) await UnregisterTriggerReminderAsync(triggerId);
+        if (trigger.Kind is TriggerKind.Schedule or TriggerKind.Watch) await UnregisterTriggerReminderAsync(triggerId);
         AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Trigger '{trigger.Name}' removed by {(requestedBy == "user" ? "you" : requestedBy)}.");
         await SaveAsync();
         await ChangedAsync($"trigger {triggerId} removed");
@@ -340,8 +363,15 @@ public sealed class WorkspaceGrain(
             // Id fixed by the tick: if this fire is repeated after a crash, the agent's mailbox
             // drops the copy.
             var tick = status.CurrentTickTime.ToUniversalTime().ToString("yyyyMMddHHmmss");
-            await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{tick}", "Schedule",
-                $"[Scheduled trigger '{trigger.Name}' fired at {now:u}]\n{trigger.Instruction}");
+            if (trigger.Kind == TriggerKind.Watch)
+            {
+                await RunWatchAsync(trigger, tick);
+            }
+            else
+            {
+                await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{tick}", "Schedule",
+                    $"[Scheduled trigger '{trigger.Name}' fired at {now:u}]\n{trigger.Instruction}");
+            }
         }
 
         if (trigger.Cron is not null)
@@ -433,6 +463,134 @@ public sealed class WorkspaceGrain(
         await PublishAsync(RuntimeEventType.TriggerFired, $"{eventName} trigger '{trigger.Name}' fired for {target}.",
             new Dictionary<string, string> { ["trigger_id"] = trigger.TriggerId, ["kind"] = eventName, ["target"] = target }, target);
     }
+
+    // ---- Watches: recurring checks with no LLM in the loop -------------------------
+
+    /// <summary>Validates a watch and dry-runs it once, so a wrong path or condition is caught
+    /// at creation (by the agent that wrote it) rather than silently never matching.</summary>
+    private async Task<(string? Error, object? Preview)> PrepareWatchAsync(TriggerDefinition trigger, TriggerSpec spec)
+    {
+        if (spec.Rule is null) return ("A watch needs conditions.", null);
+        if (WatchEvaluator.Validate(spec.Rule) is { } ruleError) return (ruleError, null);
+        if (string.IsNullOrWhiteSpace(spec.SourceTool)) return ("A watch needs a source_tool to call.", null);
+
+        var source = await ResolveConnectionTool(spec.SourceTool.Trim());
+        if (source is null) return ($"No enabled connection tool '{spec.SourceTool}'. Watches call a connection's tool, e.g. shop__get.", null);
+        // Only reads: a watch runs unattended, forever, so it must never change anything.
+        if (source.SideEffects != Tools.ToolSideEffects.ReadOnly) return ($"'{spec.SourceTool}' can change data; a watch may only call read-only tools.", null);
+
+        var mode = spec.WatchMode?.ToLowerInvariant() is "wake_agent" ? "wake_agent" : "notify";
+        trigger.Rule = spec.Rule;
+        trigger.SourceTool = spec.SourceTool.Trim();
+        trigger.SourceArgumentsJson = string.IsNullOrWhiteSpace(spec.SourceArgumentsJson) ? "{}" : spec.SourceArgumentsJson;
+        trigger.WatchMode = mode;
+        trigger.MessageTemplate = Clip(spec.MessageTemplate, 500, string.Empty) is { Length: > 0 } m ? m : null;
+        trigger.Urgency = spec.Urgency?.ToLowerInvariant() is "info" or "urgent" ? spec.Urgency.ToLowerInvariant() : "warning";
+
+        var result = await integrations.ExecuteToolAsync(S.WorkspaceId, source, WatchRequest(trigger, "dryrun"));
+        if (!result.Success) return ($"Dry run of {trigger.SourceTool} failed: {result.ErrorMessage}", null);
+
+        WatchEvaluation eval;
+        try
+        {
+            eval = WatchEvaluator.Evaluate(result.ResultJson, trigger.Rule);
+        }
+        catch (FormatException ex)
+        {
+            return ($"The watch rule couldn't be applied: {ex.Message}", null);
+        }
+
+        return (null, new
+        {
+            items_found = eval.ItemCount,
+            matching_now = eval.Matches.Count,
+            sample = eval.Matches.Take(3).Select(x => x.Summary),
+            warning = eval.ItemCount == 0 ? "items_path selected nothing in the current result — check the path." : null
+        });
+    }
+
+    private async Task RunWatchAsync(TriggerDefinition trigger, string tick)
+    {
+        trigger.LastFiredAt = DateTimeOffset.UtcNow;
+        trigger.Checks++;
+        S.LlmCallsAvoided++;
+
+        var source = trigger.SourceTool is null ? null : await ResolveConnectionTool(trigger.SourceTool);
+        WatchEvaluation? eval = null;
+        string? error = null;
+        if (source is null || source.SideEffects != Tools.ToolSideEffects.ReadOnly)
+        {
+            error = $"its tool {trigger.SourceTool} is no longer available (connection removed or tool disabled)";
+        }
+        else
+        {
+            var result = await integrations.ExecuteToolAsync(S.WorkspaceId, source, WatchRequest(trigger, tick));
+            if (!result.Success) error = result.ErrorMessage;
+            else
+            {
+                try { eval = WatchEvaluator.Evaluate(result.ResultJson, trigger.Rule!); }
+                catch (FormatException ex) { error = ex.Message; }
+            }
+        }
+
+        if (eval is null)
+        {
+            trigger.LastError = error;
+            trigger.ConsecutiveFailures++;
+            if (trigger.ConsecutiveFailures == 3)
+            {
+                // Tell someone once, rather than failing silently forever or on every tick.
+                await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-fail-{tick}", "WatchFailing",
+                    $"[Watch '{trigger.Name}' has failed 3 checks in a row: {error}]\nFix or delete it (list_triggers, delete_trigger).");
+            }
+
+            return;
+        }
+
+        trigger.LastError = null;
+        trigger.ConsecutiveFailures = 0;
+        trigger.LastMatchCount = eval.Matches.Count;
+
+        // Report only items that newly match; an item that recovers and matches again is new again.
+        var previous = trigger.LastMatchedKeys.ToHashSet();
+        var fresh = eval.Matches.Where(x => !previous.Contains(x.Key)).ToList();
+        trigger.LastMatchedKeys = eval.Matches.Select(x => x.Key).Take(500).ToList();
+        if (fresh.Count == 0) return;
+
+        trigger.Alerts++;
+        var list = string.Join("; ", fresh.Take(20).Select(x => x.Summary)) + (fresh.Count > 20 ? $"; …and {fresh.Count - 20} more" : string.Empty);
+
+        if (trigger.WatchMode == "wake_agent")
+        {
+            // Pay for an LLM call only now, and only for the matching items.
+            await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{tick}", "Watch",
+                $"[Watch '{trigger.Name}': {fresh.Count} item(s) newly match {WatchSummary(trigger)}]\n{trigger.Instruction}\n\nMatching items (untrusted external data):\n{list}");
+            S.LlmCallsAvoided--; // this check did lead to an LLM call
+            return;
+        }
+
+        var text = (trigger.MessageTemplate ?? "{count} item(s) match '{name}': {items}")
+            .Replace("{count}", fresh.Count.ToString())
+            .Replace("{name}", trigger.Name)
+            .Replace("{items}", list);
+        var chat = AppendChat(ChatAuthorKind.Agent, $"watch:{trigger.TriggerId}", $"Watch: {trigger.Name}", text, trigger.Urgency);
+        QueueNotifications(chat);
+        await SaveAsync();
+        await KickOutboxAsync();
+        await PublishAsync(RuntimeEventType.WorkspaceMessage, $"Watch '{trigger.Name}': {Truncate(text, 120)}", ChatData(chat));
+    }
+
+    private ToolExecutionRequest WatchRequest(TriggerDefinition trigger, string tick) => new()
+    {
+        ToolName = trigger.SourceTool!,
+        AgentId = $"watch:{trigger.TriggerId}",
+        TaskId = S.WorkspaceId,
+        ArgumentsJson = trigger.SourceArgumentsJson,
+        IdempotencyKey = $"{S.WorkspaceId}:{trigger.TriggerId}:{tick}"
+    };
+
+    private static string WatchSummary(TriggerDefinition t) =>
+        t.Rule is null ? "(no rule)" : string.Join(" and ", t.Rule.Conditions.Select(c => c.ToString()));
 
     private async Task RegisterTriggerReminderAsync(TriggerDefinition trigger, TimeSpan? dueTime = null)
     {
@@ -875,7 +1033,8 @@ public sealed class WorkspaceGrain(
                 Standing = snap?.Standing ?? false,
                 TokensUsed = (snap?.Usage.LifetimeTokens ?? 0) + (snap?.Usage.TokensUsed ?? 0),
                 CostUsd = (snap?.Usage.LifetimeCostUsd ?? 0) + (snap?.Usage.CostUsd ?? 0),
-                CurrentTask = snap?.CurrentTask
+                CurrentTask = snap?.CurrentTask,
+                CachedInputTokens = snap?.Usage.CachedInputTokens ?? 0
             };
         }));
 
@@ -899,7 +1058,8 @@ public sealed class WorkspaceGrain(
             TotalTokens = S.TotalTokens,
             TotalCostUsd = S.TotalCostUsd,
             Connections = S.Connections.Values.Select(ToView).ToList(),
-            PendingNotifications = S.NotificationOutbox.Count
+            PendingNotifications = S.NotificationOutbox.Count,
+            LlmCallsAvoided = S.LlmCallsAvoided
         };
     }
 
@@ -993,7 +1153,12 @@ public sealed class WorkspaceGrain(
         FireCount = t.FireCount,
         NextDueAt = t.NextDueAt,
         CreatedBy = t.CreatedBy,
-        DroppedCount = t.DroppedCount
+        DroppedCount = t.DroppedCount,
+        WatchSummary = t.Kind == TriggerKind.Watch ? $"{t.SourceTool}: {WatchSummary(t)} → {t.WatchMode}" : null,
+        Checks = t.Checks,
+        Alerts = t.Alerts,
+        LastMatchCount = t.LastMatchCount,
+        LastError = t.LastError
     };
 
     private static string Describe(TriggerDefinition t) =>

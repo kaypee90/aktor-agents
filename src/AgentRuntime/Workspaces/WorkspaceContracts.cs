@@ -12,7 +12,10 @@ public enum WorkspaceStatus
 public enum TriggerKind
 {
     Schedule,
-    Webhook
+    Webhook,
+    /// <summary>A compiled check: the runtime calls a read-only tool on a schedule and evaluates a
+    /// rule in code, with no LLM involved unless something matches.</summary>
+    Watch
 }
 
 public enum ChatAuthorKind
@@ -67,7 +70,7 @@ public sealed class TriggerDefinition
     [Id(2)] public required string Name { get; set; }
     /// <summary>The agent woken when the trigger fires.</summary>
     [Id(3)] public required string TargetAgentId { get; set; }
-    /// <summary>What the agent is told to do each time, e.g. "Check stock levels and alert on anything below 10".</summary>
+    /// <summary>What the agent is told to do each time, e.g. "Summarize new support tickets and flag urgent ones".</summary>
     [Id(4)] public string Instruction { get; set; } = string.Empty;
     [Id(5)] public int? IntervalSeconds { get; set; }
     [Id(6)] public string? Cron { get; set; }
@@ -80,6 +83,23 @@ public sealed class TriggerDefinition
     [Id(12)] public long FireCount { get; set; }
     [Id(13)] public DateTimeOffset? NextDueAt { get; set; }
     [Id(14)] public long DroppedCount { get; set; }
+
+    // ---- Watch (TriggerKind.Watch) ----
+    [Id(15)] public WatchRule? Rule { get; set; }
+    /// <summary>The read-only connection tool the watch calls, e.g. "shop__get".</summary>
+    [Id(16)] public string? SourceTool { get; set; }
+    [Id(17)] public string SourceArgumentsJson { get; set; } = "{}";
+    /// <summary>"notify": the runtime alerts the user itself. "wake_agent": the target agent is
+    /// woken with only the matching items, when judgement is needed.</summary>
+    [Id(18)] public string WatchMode { get; set; } = "notify";
+    [Id(19)] public string? MessageTemplate { get; set; }
+    [Id(20)] public string Urgency { get; set; } = "warning";
+    [Id(21)] public List<string> LastMatchedKeys { get; set; } = [];
+    [Id(22)] public long Checks { get; set; }
+    [Id(23)] public long Alerts { get; set; }
+    [Id(24)] public string? LastError { get; set; }
+    [Id(25)] public int ConsecutiveFailures { get; set; }
+    [Id(26)] public int LastMatchCount { get; set; }
 }
 
 [GenerateSerializer]
@@ -91,6 +111,14 @@ public sealed record TriggerSpec
     [Id(3)] public string Instruction { get; init; } = string.Empty;
     [Id(4)] public double? EveryMinutes { get; init; }
     [Id(5)] public string? Cron { get; init; }
+
+    // Watch
+    [Id(6)] public WatchRule? Rule { get; init; }
+    [Id(7)] public string? SourceTool { get; init; }
+    [Id(8)] public string? SourceArgumentsJson { get; init; }
+    [Id(9)] public string? WatchMode { get; init; }
+    [Id(10)] public string? MessageTemplate { get; init; }
+    [Id(11)] public string? Urgency { get; init; }
 }
 
 [GenerateSerializer]
@@ -111,6 +139,11 @@ public sealed record TriggerView
     [Id(11)] public DateTimeOffset? NextDueAt { get; init; }
     [Id(12)] public string CreatedBy { get; init; } = "user";
     [Id(13)] public long DroppedCount { get; init; }
+    [Id(14)] public string? WatchSummary { get; init; }
+    [Id(15)] public long Checks { get; init; }
+    [Id(16)] public long Alerts { get; init; }
+    [Id(17)] public int LastMatchCount { get; init; }
+    [Id(18)] public string? LastError { get; init; }
 }
 
 [GenerateSerializer]
@@ -187,6 +220,9 @@ public sealed class WorkspaceState
     /// <summary>Notifications owed to channels (SMS, Slack, ...). Saved with the chat entry that
     /// caused them and removed once delivered, so a crash neither loses nor forgets them.</summary>
     [Id(23)] public List<Integrations.NotificationDelivery> NotificationOutbox { get; set; } = [];
+
+    /// <summary>Checks the runtime ran without an LLM call (watches), for the efficiency readout.</summary>
+    [Id(24)] public long LlmCallsAvoided { get; set; }
 }
 
 [GenerateSerializer]
@@ -201,6 +237,7 @@ public sealed record WorkspaceAgentView
     [Id(6)] public long TokensUsed { get; init; }
     [Id(7)] public decimal CostUsd { get; init; }
     [Id(8)] public string? CurrentTask { get; init; }
+    [Id(9)] public long CachedInputTokens { get; init; }
 }
 
 [GenerateSerializer]
@@ -224,6 +261,7 @@ public sealed record WorkspaceSnapshot
     [Id(15)] public decimal TotalCostUsd { get; init; }
     [Id(16)] public List<Integrations.ConnectionView> Connections { get; init; } = [];
     [Id(17)] public int PendingNotifications { get; init; }
+    [Id(18)] public long LlmCallsAvoided { get; init; }
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

@@ -33,7 +33,21 @@ flowchart LR
 | **Email (SMTP)** (`email-smtp`) | `send_email` | ✓ | | STARTTLS on 587. A stable Message-ID per notification lets receivers spot retried duplicates. |
 | **Telegram** (`telegram`) | `send_message` | ✓ | ✓ | Registers its webhook with a per-connection secret token when `PUBLIC_BASE_URL` is set. |
 
-### Example: the Shopify inventory monitor
+Nothing in the platform is tied to a particular business domain. Connections, tools, watches,
+schedules and webhooks are general building blocks, and what a workspace does comes from your
+instructions plus the services you connect. Two examples:
+
+### Example: support triage (webhook, no polling)
+
+1. Create a workspace: "For every new support ticket, classify its urgency, draft a reply, and
+   alert me immediately about urgent ones."
+2. The coordinator creates a webhook and posts its secret URL in the chat. Point your helpdesk's
+   "new ticket" webhook at it.
+3. Connect **Slack** (notifications: everything) and **SMS** (notifications: urgent only).
+4. Each ticket wakes a standing triage agent with the ticket as untrusted data. It classifies the
+   ticket and posts to Slack; urgent tickets also reach your phone.
+
+### Example: a store inventory monitor
 
 1. Create a workspace: "Check my Shopify inventory every hour and alert me when anything drops
    below 10 units."

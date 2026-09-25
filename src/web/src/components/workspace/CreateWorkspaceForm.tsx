@@ -3,10 +3,14 @@
 import { useState } from "react";
 import { createWorkspace } from "@/lib/api";
 
+// Deliberately varied: workspaces are generic, and these only seed the form.
 const EXAMPLES = [
-  { name: "Shop inventory", goal: "Monitor my online store's inventory every hour and alert me when any product drops below 10 units. Suggest a reorder quantity." },
-  { name: "Morning briefing", goal: "Every weekday at 08:00 UTC, research the latest news about AI agents and send me a five-bullet summary." },
-  { name: "Support inbox", goal: "Create a webhook for new support tickets. For each ticket, classify its urgency and alert me immediately about urgent ones." },
+  { name: "Morning briefing", goal: "Every weekday at 08:00 UTC, research the latest news in my industry and send me a five-bullet summary." },
+  { name: "Support inbox", goal: "Create a webhook for new support tickets. Classify each by urgency, draft a reply, and alert me immediately about urgent ones." },
+  { name: "Sales follow-ups", goal: "Each afternoon, check my CRM for deals with no activity in 7 days and draft follow-up emails for me to review." },
+  { name: "Ops watchdog", goal: "Watch our status API every 5 minutes and alert me by SMS if any service reports an error." },
+  { name: "Research project", goal: "Research the market for AI-powered property management software and produce a report with competitors and pricing." },
+  { name: "Shop inventory", goal: "Check my store's inventory every hour and alert me when any product drops below 10 units." },
 ];
 
 export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => void }) {

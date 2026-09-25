@@ -17,6 +17,19 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
 
     public Task<LlmCompletionResponse> CompleteAsync(LlmCompletionRequest request, CancellationToken cancellationToken = default)
     {
+        // History compaction: answer with a (mock) summary, as a real model would.
+        if (request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content?.StartsWith(AgentRuntime.LLM.ContextCompactor.SystemMarker) == true)
+        {
+            var text = request.Messages.LastOrDefault(m => m.Role == ChatRole.User)?.Content ?? string.Empty;
+            return Task.FromResult(new LlmCompletionResponse
+            {
+                Content = "Summary (mock): " + (text.Length > 400 ? text[..400] + "…" : text),
+                FinishReason = LlmFinishReason.Stop,
+                InputTokens = text.Length / 4,
+                OutputTokens = 100
+            });
+        }
+
         // Simulation traffic is recognisable by its tools: genesis offers only define_world, and
         // every resident has end_turn.
         if (request.Tools.Any(t => t.Name == "define_world"))

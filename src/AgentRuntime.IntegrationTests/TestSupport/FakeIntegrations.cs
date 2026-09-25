@@ -34,12 +34,15 @@ public sealed class FakeCrmPlugin : IToolProviderPlugin, INotificationChannelPlu
     public static readonly ConcurrentQueue<(string Tool, string Args, string ApiKey)> ToolCalls = new();
     public static readonly ConcurrentQueue<OutboundNotification> Notifications = new();
     public static int FailNextNotifications;
+    /// <summary>What list_inventory returns (sku -> quantity); tests change it between checks.</summary>
+    public static readonly ConcurrentDictionary<string, int> Inventory = new();
 
     public static void Reset()
     {
         ToolCalls.Clear();
         Notifications.Clear();
         FailNextNotifications = 0;
+        Inventory.Clear();
     }
 
     public PluginManifest Manifest { get; } = new()
@@ -68,6 +71,13 @@ public sealed class FakeCrmPlugin : IToolProviderPlugin, INotificationChannelPlu
             },
             new()
             {
+                Name = "list_inventory",
+                Description = "List stock levels.",
+                SideEffects = ToolSideEffects.ReadOnly,
+                JsonSchema = """{ "type": "object", "properties": {} }"""
+            },
+            new()
+            {
                 Name = "delete_customer",
                 Description = "Delete a customer.",
                 SideEffects = ToolSideEffects.NonIdempotent,
@@ -78,6 +88,13 @@ public sealed class FakeCrmPlugin : IToolProviderPlugin, INotificationChannelPlu
     public Task<ToolExecutionResult> ExecuteToolAsync(PluginConnection connection, string toolName, ToolExecutionRequest request)
     {
         ToolCalls.Enqueue((toolName, request.ArgumentsJson, connection.Secret("api_key")));
+        if (toolName == "list_inventory")
+        {
+            // Shaped like an HTTP API result: the body is a JSON string.
+            var body = JsonSerializer.Serialize(new { items = Inventory.OrderBy(kv => kv.Key).Select(kv => new { sku = kv.Key, qty = kv.Value }) });
+            return Task.FromResult(ToolExecutionResult.Ok(JsonSerializer.Serialize(new { status = 200, body })));
+        }
+
         return Task.FromResult(ToolExecutionResult.Ok(JsonSerializer.Serialize(new { customer = "Ama Mensah", tier = "gold", region = connection.Setting("region") })));
     }
 

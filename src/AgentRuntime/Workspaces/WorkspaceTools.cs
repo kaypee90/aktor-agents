@@ -106,13 +106,101 @@ public sealed class CreateScheduleTool(IGrainFactory grains) : WorkspaceToolBase
         }, request.AgentId, request.IdempotencyKey, revealSecret: false);
 }
 
+/// <summary>A recurring check that costs no LLM tokens: the runtime calls a read-only tool on a
+/// schedule and evaluates the conditions itself, alerting (or waking an agent) only on new matches.</summary>
+public sealed class CreateWatchTool(IGrainFactory grains) : WorkspaceToolBase(grains)
+{
+    public override ToolDefinition Definition { get; } = new()
+    {
+        Name = "create_watch",
+        Description = "Set up a recurring check that runs WITHOUT you (no tokens per check): on a schedule the runtime calls a " +
+                      "read-only connection tool, finds the items at items_path, and tests the conditions. Only items that newly " +
+                      "match are reported — straight to the user (mode 'notify') or to an agent (mode 'wake_agent') when judgement " +
+                      "is needed. Prefer this over create_schedule whenever the check is a clear condition (status == 'failed', " +
+                      "amount > 1000, days_open >= 3, a count below a threshold). The response includes a dry run: check items_found " +
+                      "and matching_now.",
+        RequiredPermissions = ToolPermission.WorkspaceActions,
+        SideEffects = ToolSideEffects.Idempotent,
+        JsonSchema = """
+        {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "source_tool": { "type": "string", "description": "A read-only connection tool, e.g. crm__get" },
+            "source_arguments": { "type": "object", "description": "Arguments for source_tool, e.g. { path: '/orders' }" },
+            "items_path": { "type": "string", "description": "JSONPath to the list of items, e.g. $.body.data[*] (JSON inside strings is parsed)" },
+            "conditions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": { "type": "string", "description": "Path within an item, e.g. status or totals.amount" },
+                  "op": { "type": "string", "enum": ["<", "<=", ">", ">=", "==", "!=", "contains", "not_contains", "exists", "not_exists"] },
+                  "value": { "type": "string" }
+                },
+                "required": ["field", "op"]
+              }
+            },
+            "key_field": { "type": "string", "description": "Identifies an item across checks, e.g. id" },
+            "display_fields": { "type": "array", "items": { "type": "string" }, "description": "Shown per matching item, e.g. id and status" },
+            "every_minutes": { "type": "number" },
+            "cron": { "type": "string" },
+            "mode": { "type": "string", "enum": ["notify", "wake_agent"] },
+            "message": { "type": "string", "description": "Alert text for mode 'notify'; placeholders {count}, {items}, {name}" },
+            "urgency": { "type": "string", "enum": ["info", "warning", "urgent"] },
+            "instruction": { "type": "string", "description": "For mode 'wake_agent': what the agent should do with the matches" },
+            "target_agent_id": { "type": "string", "description": "For mode 'wake_agent'; defaults to you" }
+          },
+          "required": ["name", "source_tool", "conditions"]
+        }
+        """
+    };
+
+    protected override Task<WorkspaceActionResult> RunAsync(IWorkspaceGrain workspace, JsonElement args, ToolExecutionRequest request)
+    {
+        var conditions = args.TryGetProperty("conditions", out var cs) && cs.ValueKind == JsonValueKind.Array
+            ? cs.EnumerateArray().Select(c => new WatchCondition
+            {
+                Field = Str(c, "field") ?? string.Empty,
+                Op = Str(c, "op") ?? string.Empty,
+                Value = Str(c, "value")
+            }).ToList()
+            : [];
+        var display = args.TryGetProperty("display_fields", out var ds) && ds.ValueKind == JsonValueKind.Array
+            ? ds.EnumerateArray().Select(d => d.ToString()).ToList()
+            : [];
+
+        return workspace.AddTrigger(new TriggerSpec
+        {
+            Kind = TriggerKind.Watch,
+            Name = Str(args, "name") ?? "watch",
+            Instruction = Str(args, "instruction") ?? string.Empty,
+            EveryMinutes = Num(args, "every_minutes"),
+            Cron = Str(args, "cron"),
+            TargetAgentId = Str(args, "target_agent_id"),
+            SourceTool = Str(args, "source_tool"),
+            SourceArgumentsJson = args.TryGetProperty("source_arguments", out var sa) && sa.ValueKind == JsonValueKind.Object ? sa.GetRawText() : "{}",
+            Rule = new WatchRule
+            {
+                ItemsPath = Str(args, "items_path") ?? string.Empty,
+                Conditions = conditions,
+                KeyField = Str(args, "key_field"),
+                DisplayFields = display
+            },
+            WatchMode = Str(args, "mode"),
+            MessageTemplate = Str(args, "message"),
+            Urgency = Str(args, "urgency")
+        }, request.AgentId, request.IdempotencyKey, revealSecret: false);
+    }
+}
+
 public sealed class CreateWebhookTool(IGrainFactory grains) : WorkspaceToolBase(grains)
 {
     public override ToolDefinition Definition { get; } = new()
     {
         Name = "create_webhook",
         Description = "Create an inbound webhook that wakes an agent (yourself by default) whenever an external service " +
-                      "(e.g. Shopify, Stripe, GitHub) posts to it. The secret URL is shown to the user, who connects it " +
+                      "(a payment provider, a form, a code repository, your own app) posts to it. The secret URL is shown to the user, who connects it " +
                       "to their service; you never see it. Prefer webhooks over polling schedules when a service supports them.",
         RequiredPermissions = ToolPermission.WorkspaceActions,
         SideEffects = ToolSideEffects.Idempotent,
@@ -207,13 +295,14 @@ public sealed class WaitForEventsTool : ITool
 public static class WorkspaceToolCatalog
 {
     public static readonly string[] ToolNames =
-        ["notify_user", "create_schedule", "create_webhook", "list_triggers", "delete_trigger", "wait_for_events"];
+        ["notify_user", "create_schedule", "create_watch", "create_webhook", "list_triggers", "delete_trigger", "wait_for_events"];
 
     public static IServiceCollection AddWorkspaceTools(this IServiceCollection services)
     {
         services.AddSingleton<ITool>(sp => new NotifyUserTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool>(sp => new CreateScheduleTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool>(sp => new CreateWebhookTool(sp.GetRequiredService<IGrainFactory>()));
+        services.AddSingleton<ITool>(sp => new CreateWatchTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool>(sp => new ListTriggersTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool>(sp => new DeleteTriggerTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool, WaitForEventsTool>();
