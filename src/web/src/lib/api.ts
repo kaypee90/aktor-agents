@@ -209,3 +209,49 @@ export function workspaceAction(id: string, action: "pause" | "resume" | "archiv
   return apiFetch<void>(`/api/workspaces/${id}/${action}`, { method: "POST" });
 }
 
+
+// ---- Integrations ----
+
+export function listPlugins() {
+  return apiFetch<import("./workspaceTypes").PluginInfo[]>("/api/plugins");
+}
+
+export function listConnections(workspaceId: string) {
+  return apiFetch<import("./workspaceTypes").ConnectionView[]>(`/api/workspaces/${workspaceId}/connections`);
+}
+
+export function addConnection(workspaceId: string, body: {
+  plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>;
+  notify_level?: string; allowed_senders?: string[];
+}) {
+  return apiFetch<{ message: string; connection: import("./workspaceTypes").ConnectionView }>(`/api/workspaces/${workspaceId}/connections`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateConnection(workspaceId: string, connectionId: string, body: { notify_level?: string; enabled_tools?: string[]; allowed_senders?: string[] }) {
+  return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/workspaces/${workspaceId}/connections/${connectionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function refreshConnection(workspaceId: string, connectionId: string) {
+  return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/workspaces/${workspaceId}/connections/${connectionId}/refresh`, { method: "POST" });
+}
+
+export function removeConnection(workspaceId: string, connectionId: string) {
+  return apiFetch<void>(`/api/workspaces/${workspaceId}/connections/${connectionId}`, { method: "DELETE" });
+}
+
+/** Turns "POST /api/workspaces/... failed: 400 {"error":"..."}" into just the error text. */
+export function apiErrorMessage(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err);
+  const json = text.slice(text.indexOf("{"));
+  try {
+    return (JSON.parse(json) as { error?: string }).error ?? text;
+  } catch {
+    return text;
+  }
+}

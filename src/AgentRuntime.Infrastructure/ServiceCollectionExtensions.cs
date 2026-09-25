@@ -2,6 +2,8 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Infrastructure.Llm;
 using AgentRuntime.Infrastructure.Memory;
 using AgentRuntime.Infrastructure.Persistence;
+using AgentRuntime.Infrastructure.Plugins;
+using AgentRuntime.Infrastructure.Secrets;
 using AgentRuntime.Infrastructure.Tools;
 using AgentRuntime.LLM;
 using AgentRuntime.Memory;
@@ -35,6 +37,20 @@ public static class ServiceCollectionExtensions
 
         services.AddHttpClient("agent-tools")
             .ConfigurePrimaryHttpMessageHandler(PublicNetworkHandler.Create);
+
+        // Integrations (docs/plugins.md). Their HTTP client isn't SSRF-guarded like agent-tools:
+        // integration endpoints are chosen by the user when connecting, never by an agent.
+        services.AddHttpClient("integrations", c => c.Timeout = TimeSpan.FromSeconds(60));
+        services.Configure<SecretsOptions>(configuration.GetSection(SecretsOptions.SectionName));
+        services.AddSingleton<SecretProtector>();
+        services.AddSingleton<AgentRuntime.Integrations.ISecretStore, PostgresSecretStore>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, McpPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, HttpApiPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SlackPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TwilioSmsPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, EmailSmtpPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TelegramPlugin>();
+        services.AddPluginsFromDirectory(configuration["Plugins:Directory"] ?? "./plugins");
         RegisterLlmProvider(services, configuration);
 
         services.AddSingleton<ITool, WebSearchTool>();

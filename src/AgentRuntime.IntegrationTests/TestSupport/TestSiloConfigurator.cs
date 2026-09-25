@@ -43,6 +43,10 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
             services.AddSingleton<ITool, FilesystemReadTool>();
             services.AddSingleton<ITool, FilesystemWriteTool>();
             services.AddSingleton<ITool, FilesystemListTool>();
+
+            // Integrations: a hermetic vault and a test plugin covering tools, notifications and inbound.
+            services.AddSingleton<AgentRuntime.Integrations.ISecretStore, InMemorySecretStore>();
+            services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, FakeCrmPlugin>();
         }
     }
 }

@@ -3,6 +3,7 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using AgentRuntime.Durability;
 using AgentRuntime.Events;
+using AgentRuntime.Integrations;
 using AgentRuntime.LLM;
 using AgentRuntime.Messaging;
 using AgentRuntime.Simulation;
@@ -40,6 +41,7 @@ public sealed class AgentGrain(
     IOptions<DurabilityOptions> durabilityOptions,
     IAgentOrchestrator orchestrator,
     IOptions<SimulationOptions> simulationOptions,
+    IntegrationService integrations,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -64,6 +66,15 @@ public sealed class AgentGrain(
         if (!IsInitialized) return;
 
         _turnReminderRegistered = await this.GetReminder(TurnReminder) is not null;
+
+        // Upgrade: workspace agents created before connections existed get the permission to use
+        // their workspace's connections (a runtime decision about the runtime's own grants).
+        if (S.InWorkspace && S.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions) &&
+            !S.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+        {
+            S.GrantedPermissions |= ToolPermission.Integrations;
+            await state.WriteStateAsync();
+        }
 
         // Interrupted work from a previous activation (a crash, or this silo being replaced):
         // pick it up now rather than waiting for the reminder's next tick.
@@ -612,7 +623,17 @@ public sealed class AgentGrain(
                 continue;
             }
 
-            var sideEffects = toolRegistry.TryGet(call.Name, out var tool) ? tool.Definition.SideEffects : ToolSideEffects.ReadOnly;
+            // Connection tools (MCP servers, APIs, messaging) are resolved through the workspace; the
+            // side-effect class the plugin declared drives crash recovery exactly like built-ins.
+            ConnectionToolTarget? connectionTool = null;
+            if (s.WorkspaceId is { } toolWorkspace && ConnectionNames.IsConnectionTool(call.Name) &&
+                s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+            {
+                connectionTool = await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name);
+            }
+
+            var sideEffects = connectionTool?.SideEffects
+                              ?? (toolRegistry.TryGet(call.Name, out var tool) ? tool.Definition.SideEffects : ToolSideEffects.ReadOnly);
             if (sideEffects == ToolSideEffects.NonIdempotent)
             {
                 // Journal the intent first, so a crash mid-call is detected rather than repeated.
@@ -623,17 +644,20 @@ public sealed class AgentGrain(
             await PublishAsync(RuntimeEventType.AgentToolCalled, $"Agent '{s.Name}' is calling tool '{call.Name}'.",
                 new Dictionary<string, string> { ["tool"] = call.Name, ["arguments"] = call.ArgumentsJson });
 
-            var result = await toolRegistry.ExecuteAsync(
-                new ToolExecutionRequest
-                {
-                    ToolName = call.Name,
-                    AgentId = AgentId,
-                    TaskId = s.TaskId,
-                    ArgumentsJson = call.ArgumentsJson,
-                    IdempotencyKey = $"{AgentId}:{call.Id}"
-                },
-                s.AllowedTools,
-                s.GrantedPermissions);
+            var toolRequest = new ToolExecutionRequest
+            {
+                ToolName = call.Name,
+                AgentId = AgentId,
+                TaskId = s.TaskId,
+                ArgumentsJson = call.ArgumentsJson,
+                IdempotencyKey = $"{AgentId}:{call.Id}",
+                GrantedPermissions = s.GrantedPermissions
+            };
+            var result = connectionTool is not null
+                ? await integrations.ExecuteToolAsync(s.WorkspaceId!, connectionTool, toolRequest)
+                : ConnectionNames.IsConnectionTool(call.Name) && s.InWorkspace
+                ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
+                : await toolRegistry.ExecuteAsync(toolRequest, s.AllowedTools, s.GrantedPermissions);
 
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
             s.InFlightToolCallIds.Remove(call.Id);
@@ -932,6 +956,23 @@ public sealed class AgentGrain(
                   "Other agents may exist concurrently; use find_agents to discover them."
         };
 
+        // A workspace's connection tools are looked up per call, so a newly connected service (or
+        // a tool the user just switched off) takes effect on the agents' very next step.
+        IReadOnlyList<ConnectionToolDescriptor> connectionTools = [];
+        if (s.WorkspaceId is { } workspaceId && s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+        {
+            connectionTools = await GrainFactory.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools();
+            if (connectionTools.Count > 0)
+            {
+                context = context with
+                {
+                    AvailableTools = context.AvailableTools
+                        .Concat(connectionTools.Select(t => new ToolDefinitionSummary(t.Name, t.Description)))
+                        .ToList()
+                };
+            }
+        }
+
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
         // Residents and standing agents see only their recent past (notes and memory carry anything
@@ -947,6 +988,7 @@ public sealed class AgentGrain(
                 toolRegistry.TryGet(name, out var t);
                 return new LlmToolDefinition { Name = t.Definition.Name, Description = t.Definition.Description, JsonSchema = t.Definition.JsonSchema };
             })
+            .Concat(connectionTools.Select(t => new LlmToolDefinition { Name = t.Name, Description = t.Description, JsonSchema = t.JsonSchema }))
             .ToList();
 
         return await llm.CompleteAsync(new LlmCompletionRequest

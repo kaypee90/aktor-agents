@@ -25,6 +25,7 @@ public static class ServiceCollectionExtensions
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
         services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
+        services.Configure<Integrations.IntegrationsOptions>(configuration.GetSection(Integrations.IntegrationsOptions.SectionName));
         services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
 
@@ -55,6 +56,12 @@ public static class ServiceCollectionExtensions
         // Workspaces: long-running environments with triggers and a user channel.
         services.AddWorkspaceTools();
         services.TryAddSingleton<Workspaces.IWorkspaceArchive, Workspaces.NullWorkspaceArchive>();
+
+        // Integrations: plugins (IAgentPlugin) are registered by the host — built-ins by the
+        // infrastructure layer, third-party ones loaded from the plugins folder. ISecretStore must
+        // also come from the host (encrypted, durable); there is deliberately no default.
+        services.AddSingleton<Integrations.PluginCatalog>();
+        services.AddSingleton<Integrations.IntegrationService>();
 
         services.AddSingleton<IAgentPromptBuilder, AgentPromptBuilder>();
         services.AddSingleton<ISystemPromptSection, RoleSection>();

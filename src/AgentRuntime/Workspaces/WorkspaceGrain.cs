@@ -4,6 +4,7 @@ using System.Text.Json;
 using AgentRuntime.Agents;
 using AgentRuntime.Contracts;
 using AgentRuntime.Events;
+using AgentRuntime.Integrations;
 using AgentRuntime.Messaging;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Logging;
@@ -19,9 +20,16 @@ public sealed class WorkspaceGrain(
     IEventPublisher events,
     IWorkspaceArchive archive,
     IOptions<WorkspaceOptions> options,
+    PluginCatalog plugins,
+    IntegrationService integrations,
+    ISecretStore secretStore,
+    IOptions<IntegrationsOptions> integrationOptions,
+    IOptions<Durability.DurabilityOptions> durabilityOptions,
     ILogger<WorkspaceGrain> logger) : Grain, IWorkspaceGrain, IRemindable
 {
     private const string TriggerReminderPrefix = "trigger-";
+    private const string OutboxReminder = "notify-outbox";
+    private readonly IntegrationsOptions _integrations = integrationOptions.Value;
     private const int ActionResultCacheSize = 2000;
 
     private readonly WorkspaceOptions _opts = options.Value;
@@ -125,7 +133,10 @@ public sealed class WorkspaceGrain(
 
     // ---- Conversation -------------------------------------------------------
 
-    public async Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId)
+    public Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId) =>
+        PostUserMessageCoreAsync(text, toAgentId, clientMessageId, "You");
+
+    private async Task<ChatEntry> PostUserMessageCoreAsync(string text, string? toAgentId, string? clientMessageId, string authorName)
     {
         if (!Exists) throw new InvalidOperationException("No such workspace.");
         if (S.Status == WorkspaceStatus.Archived) throw new InvalidOperationException("This workspace is archived.");
@@ -151,7 +162,7 @@ public sealed class WorkspaceGrain(
             target = toAgentId;
         }
 
-        var chat = AppendChat(ChatAuthorKind.User, "user", "You", body);
+        var chat = AppendChat(ChatAuthorKind.User, "user", authorName, body);
         if (dedupeKey is not null) Remember(dedupeKey, WorkspaceActionResult.Ok("delivered"));
         await SaveAsync();
 
@@ -183,10 +194,13 @@ public sealed class WorkspaceGrain(
         var level = urgency?.ToLowerInvariant() is "warning" or "urgent" ? urgency.ToLowerInvariant() : "info";
         var author = await Registry.GetAsync(agentId);
         var chat = AppendChat(ChatAuthorKind.Agent, agentId, author?.Role ?? agentId, body, level);
-        var result = WorkspaceActionResult.Ok("The user has been notified.",
-            JsonSerializer.Serialize(new { delivered = true, message_seq = chat.Seq }, ToolJson.Options));
+        var channels = QueueNotifications(chat);
+        var result = WorkspaceActionResult.Ok(
+            channels.Count == 0 ? "The user has been notified in the workspace chat." : $"The user has been notified (chat, {string.Join(", ", channels)}).",
+            JsonSerializer.Serialize(new { delivered = true, message_seq = chat.Seq, channels }, ToolJson.Options));
         Remember(idempotencyKey, result);
         await SaveAsync();
+        await KickOutboxAsync();
 
         await PublishAsync(RuntimeEventType.WorkspaceMessage, $"{chat.AuthorName}: {Truncate(body, 120)}", ChatData(chat), agentId);
         await ArchiveAsync();
@@ -305,6 +319,12 @@ public sealed class WorkspaceGrain(
 
     public async Task ReceiveReminder(string reminderName, TickStatus status)
     {
+        if (reminderName == OutboxReminder)
+        {
+            await ProcessNotificationOutbox();
+            return;
+        }
+
         if (!reminderName.StartsWith(TriggerReminderPrefix, StringComparison.Ordinal)) return;
 
         var triggerId = reminderName[TriggerReminderPrefix.Length..];
@@ -437,6 +457,318 @@ public sealed class WorkspaceGrain(
         if (reminder is not null) await this.UnregisterReminder(reminder);
     }
 
+    // ---- Integrations: connections -------------------------------------------
+
+    public async Task<ConnectionResult> AddConnection(ConnectionRequest request)
+    {
+        if (!Exists) return ConnectionResult.Fail("No such workspace.");
+        if (S.Status == WorkspaceStatus.Archived) return ConnectionResult.Fail("This workspace is archived.");
+        if (S.Connections.Count >= _integrations.MaxConnectionsPerWorkspace)
+        {
+            return ConnectionResult.Fail($"A workspace can have at most {_integrations.MaxConnectionsPerWorkspace} connections.");
+        }
+
+        var plugin = plugins.Get(request.PluginId);
+        if (plugin is null) return ConnectionResult.Fail($"No plugin '{request.PluginId}' is installed.");
+
+        var name = ConnectionNames.Slug(string.IsNullOrWhiteSpace(request.Name) ? plugin.Manifest.Id : request.Name);
+        if (S.Connections.Values.Any(c => c.Name == name))
+        {
+            return ConnectionResult.Fail($"This workspace already has a connection named '{name}'.");
+        }
+
+        // Only fields the plugin declares are kept, and each lands on the right side of the line:
+        // secrets in the vault, settings in state.
+        var settings = new Dictionary<string, string>();
+        var secretValues = new Dictionary<string, string>();
+        foreach (var field in plugin.Manifest.Settings)
+        {
+            var source = field.Secret ? request.Secrets : request.Settings;
+            source.TryGetValue(field.Key, out var value);
+            if (string.IsNullOrWhiteSpace(value)) value = field.Secret ? null : field.DefaultValue;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                if (field.Required) return ConnectionResult.Fail($"'{field.Label}' is required.");
+                continue;
+            }
+
+            if (field.Secret) secretValues[field.Key] = value.Trim();
+            else settings[field.Key] = value.Trim();
+        }
+
+        var definition = new ConnectionDefinition
+        {
+            ConnectionId = DeterministicId.FromOrNew("conn-", null),
+            PluginId = plugin.Manifest.Id,
+            Name = name,
+            Settings = settings,
+            SecretKeys = secretValues.Keys.ToList(),
+            SupportsTools = plugin is Plugins.IToolProviderPlugin,
+            SupportsNotifications = plugin is Plugins.INotificationChannelPlugin,
+            SupportsInbound = plugin is Plugins.IInboundChannelPlugin,
+            InboundSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant(),
+            AllowedSenders = request.AllowedSenders.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct().ToList()
+        };
+        definition.NotifyLevel = request.NotifyLevel ?? (definition.SupportsNotifications ? NotifyLevel.Warning : NotifyLevel.Off);
+
+        var scope = ConnectionNames.Scope(S.WorkspaceId, definition.ConnectionId);
+        foreach (var (key, value) in secretValues)
+        {
+            await secretStore.PutAsync(scope, key, value);
+        }
+
+        var (check, tools) = await integrations.InspectAsync(S.WorkspaceId, definition);
+        if (!check.Ok)
+        {
+            await secretStore.DeleteScopeAsync(scope);
+            return ConnectionResult.Fail(check.Message);
+        }
+
+        definition.Tools = tools;
+        S.Connections[definition.ConnectionId] = definition;
+
+        var parts = new List<string> { $"Connected {plugin.Manifest.Name} as '{name}'." };
+        if (tools.Count > 0) parts.Add($"{tools.Count(t => t.Enabled)} of {tools.Count} tools enabled for your agents.");
+        if (definition.SupportsNotifications) parts.Add($"Notifications: {definition.NotifyLevel.ToString().ToLowerInvariant()}.");
+        if (definition.SupportsInbound)
+        {
+            parts.Add(definition.AllowedSenders.Count == 0
+                ? "Inbound messages are ignored until you add allowed senders."
+                : $"Accepting commands from {string.Join(", ", definition.AllowedSenders)}.");
+        }
+
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", string.Join(" ", parts));
+        await SaveAsync();
+        await ChangedAsync($"connection {name} added");
+        return ConnectionResult.Ok(ToView(definition), check.Message);
+    }
+
+    public async Task<ConnectionResult> UpdateConnection(string connectionId, ConnectionUpdate update)
+    {
+        if (!Exists || !S.Connections.TryGetValue(connectionId, out var c)) return ConnectionResult.Fail("No such connection.");
+
+        if (update.NotifyLevel is { } level)
+        {
+            c.NotifyLevel = c.SupportsNotifications ? level : NotifyLevel.Off;
+        }
+
+        if (update.EnabledTools is { } enabled)
+        {
+            var set = enabled.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in c.Tools) t.Enabled = set.Contains(t.ExposedName) || set.Contains(t.LocalName);
+        }
+
+        if (update.AllowedSenders is { } senders)
+        {
+            c.AllowedSenders = senders.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct().ToList();
+        }
+
+        await SaveAsync();
+        await ChangedAsync($"connection {c.Name} updated");
+        return ConnectionResult.Ok(ToView(c), "Updated.");
+    }
+
+    public async Task<ConnectionResult> RefreshConnectionTools(string connectionId)
+    {
+        if (!Exists || !S.Connections.TryGetValue(connectionId, out var c)) return ConnectionResult.Fail("No such connection.");
+
+        var (check, tools) = await integrations.InspectAsync(S.WorkspaceId, c);
+        c.LastError = check.Ok ? null : check.Message;
+        if (check.Ok) c.Tools = tools;
+        await SaveAsync();
+        await ChangedAsync($"connection {c.Name} refreshed");
+        return check.Ok ? ConnectionResult.Ok(ToView(c), $"{tools.Count} tools.") : ConnectionResult.Fail(check.Message);
+    }
+
+    public async Task RemoveConnection(string connectionId)
+    {
+        if (!Exists || !S.Connections.Remove(connectionId, out var c)) return;
+
+        S.NotificationOutbox.RemoveAll(d => d.ConnectionId == connectionId);
+        await secretStore.DeleteScopeAsync(ConnectionNames.Scope(S.WorkspaceId, connectionId));
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Connection '{c.Name}' removed; its secrets were deleted.");
+        await SaveAsync();
+        await ChangedAsync($"connection {c.Name} removed");
+    }
+
+    public Task<IReadOnlyList<ConnectionView>> ListConnections() =>
+        Task.FromResult<IReadOnlyList<ConnectionView>>(S.Connections.Values.Select(ToView).ToList());
+
+    public Task<IReadOnlyList<ConnectionToolDescriptor>> GetConnectionTools()
+    {
+        if (!Exists || S.Status != WorkspaceStatus.Active) return Task.FromResult<IReadOnlyList<ConnectionToolDescriptor>>([]);
+
+        return Task.FromResult<IReadOnlyList<ConnectionToolDescriptor>>(S.Connections.Values
+            .SelectMany(c => c.Tools.Where(t => t.Enabled).Select(t => new ConnectionToolDescriptor
+            {
+                Name = t.ExposedName,
+                Description = $"[{c.Name}, {c.PluginId}] {t.Description}",
+                JsonSchema = t.JsonSchema,
+                SideEffects = t.SideEffects
+            }))
+            .ToList());
+    }
+
+    public Task<ConnectionToolTarget?> ResolveConnectionTool(string exposedName)
+    {
+        foreach (var c in S.Connections.Values)
+        {
+            var tool = c.Tools.FirstOrDefault(t => t.Enabled && t.ExposedName == exposedName);
+            if (tool is not null)
+            {
+                return Task.FromResult<ConnectionToolTarget?>(new ConnectionToolTarget { Connection = c, LocalName = tool.LocalName, SideEffects = tool.SideEffects });
+            }
+        }
+
+        return Task.FromResult<ConnectionToolTarget?>(null);
+    }
+
+    public async Task<InboundResponseDto> HandleInbound(string connectionId, string token, InboundRequestDto request)
+    {
+        if (!Exists || !S.Connections.TryGetValue(connectionId, out var c) || !c.SupportsInbound ||
+            !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(c.InboundSecret), Encoding.UTF8.GetBytes(token ?? string.Empty)))
+        {
+            return new InboundResponseDto { StatusCode = 404 };
+        }
+
+        if (S.Status == WorkspaceStatus.Archived) return new InboundResponseDto { StatusCode = 409 };
+
+        Plugins.InboundResult parsed;
+        try
+        {
+            parsed = await integrations.ParseInboundAsync(S.WorkspaceId, c, request);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Inbound message for connection {Connection} could not be parsed", c.Name);
+            return new InboundResponseDto { StatusCode = 400 };
+        }
+
+        if (parsed.Rejected) return new InboundResponseDto { StatusCode = 403 };
+
+        var reply = new InboundResponseDto { Body = parsed.ResponseBody, ContentType = parsed.ResponseContentType };
+        if (!parsed.IsMessage || string.IsNullOrWhiteSpace(parsed.Text)) return reply;
+
+        // Only the owner's own numbers/accounts may command the agents. Anyone else who learns
+        // the number gets a normal empty reply and no reaction.
+        if (parsed.SenderId is null || !c.AllowedSenders.Contains(parsed.SenderId, StringComparer.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Ignored inbound message from unauthorized sender {Sender} on connection {Connection}", parsed.SenderId, c.Name);
+            await PublishAsync(RuntimeEventType.WorkspaceChanged, $"Ignored a message from an unapproved sender on '{c.Name}'.");
+            return reply;
+        }
+
+        var dedupe = parsed.MessageId is null ? null : $"{c.ConnectionId}:{parsed.MessageId}";
+        await PostUserMessageCoreAsync(parsed.Text, null, dedupe, $"You (via {c.Name})");
+        return reply;
+    }
+
+    // ---- Integrations: notification outbox -----------------------------------
+
+    /// <summary>Queues a chat entry for every channel whose level covers its urgency. Only agent
+    /// notices and explicit runtime warnings are forwarded — never system entries that may carry
+    /// secrets (webhook and inbound URLs).</summary>
+    private List<string> QueueNotifications(ChatEntry entry)
+    {
+        var names = new List<string>();
+        foreach (var c in S.Connections.Values.Where(c => c.SupportsNotifications && Covers(c.NotifyLevel, entry.Urgency)))
+        {
+            S.NotificationOutbox.Add(new NotificationDelivery
+            {
+                DeliveryId = $"{S.WorkspaceId}-n{entry.Seq}-{c.ConnectionId}",
+                ConnectionId = c.ConnectionId,
+                AuthorName = entry.AuthorName,
+                Text = entry.Text,
+                Urgency = entry.Urgency
+            });
+            names.Add(c.Name);
+        }
+
+        return names;
+    }
+
+    private static bool Covers(NotifyLevel level, string urgency) => level switch
+    {
+        NotifyLevel.All => true,
+        NotifyLevel.Warning => urgency is "warning" or "urgent",
+        NotifyLevel.Urgent => urgency == "urgent",
+        _ => false
+    };
+
+    private async Task KickOutboxAsync()
+    {
+        if (S.NotificationOutbox.Count == 0) return;
+
+        // The reminder is the safety net: if this process dies before delivering, the outbox is
+        // retried on a live silo.
+        var period = durabilityOptions.Value.RecoveryReminderPeriod;
+        await this.RegisterOrUpdateReminder(OutboxReminder, period, period);
+        await this.AsReference<IWorkspaceGrain>().ProcessNotificationOutbox();
+    }
+
+    public async Task ProcessNotificationOutbox()
+    {
+        if (!Exists) return;
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var delivery in S.NotificationOutbox.Where(d => d.NextAttemptAt <= now).ToList())
+        {
+            if (!S.Connections.TryGetValue(delivery.ConnectionId, out var c))
+            {
+                S.NotificationOutbox.Remove(delivery);
+                continue;
+            }
+
+            var result = await integrations.SendNotificationAsync(S.WorkspaceId, S.Name, c, delivery);
+            if (result.Delivered)
+            {
+                S.NotificationOutbox.Remove(delivery);
+            }
+            else
+            {
+                delivery.Attempts++;
+                c.LastError = result.Error;
+                if (!result.Retryable || delivery.Attempts >= _integrations.NotificationMaxAttempts)
+                {
+                    S.NotificationOutbox.Remove(delivery);
+                    AppendChat(ChatAuthorKind.System, "system", "Workspace",
+                        $"Couldn't deliver a notification through '{c.Name}' after {delivery.Attempts} attempt(s): {result.Error}", "warning");
+                }
+                else
+                {
+                    delivery.NextAttemptAt = now.AddSeconds(Math.Min(1800, _integrations.NotificationRetryBaseSeconds * Math.Pow(2, delivery.Attempts - 1)));
+                }
+            }
+
+            // Saved after every delivery, so a crash mid-way doesn't resend the ones already sent.
+            await SaveAsync();
+        }
+
+        if (S.NotificationOutbox.Count == 0)
+        {
+            var reminder = await this.GetReminder(OutboxReminder);
+            if (reminder is not null) await this.UnregisterReminder(reminder);
+        }
+    }
+
+    private ConnectionView ToView(ConnectionDefinition c) => new()
+    {
+        ConnectionId = c.ConnectionId,
+        PluginId = c.PluginId,
+        Name = c.Name,
+        Settings = new Dictionary<string, string>(c.Settings),
+        SecretKeys = c.SecretKeys.ToList(),
+        NotifyLevel = c.NotifyLevel,
+        Tools = c.Tools.Select(t => new ConnectionToolView { Name = t.ExposedName, Description = t.Description, SideEffects = t.SideEffects, Enabled = t.Enabled }).ToList(),
+        CreatedAt = c.CreatedAt,
+        LastError = c.LastError,
+        AllowedSenders = c.AllowedSenders.ToList(),
+        InboundPath = c.SupportsInbound ? integrations.InboundPath(S.WorkspaceId, c) : null,
+        SupportsTools = c.SupportsTools,
+        SupportsNotifications = c.SupportsNotifications,
+        SupportsInbound = c.SupportsInbound
+    };
+
     // ---- Budget -------------------------------------------------------------
 
     public Task<BudgetDecision> CheckBudget()
@@ -467,9 +799,11 @@ public sealed class WorkspaceGrain(
         if (!Exists || S.BudgetNoticeDay == today) return;
 
         S.BudgetNoticeDay = today;
-        AppendChat(ChatAuthorKind.System, "system", "Workspace",
+        var notice = AppendChat(ChatAuthorKind.System, "system", "Workspace",
             $"Agents are paused for today: {reason}. They continue after midnight UTC, or raise the daily budget.", "warning");
+        QueueNotifications(notice);
         await SaveAsync();
+        await KickOutboxAsync();
         await ChangedAsync("budget reached");
     }
 
@@ -563,7 +897,9 @@ public sealed class WorkspaceGrain(
             TokensToday = S.UsageDay == today ? S.TokensToday : 0,
             CostToday = S.UsageDay == today ? S.CostToday : 0,
             TotalTokens = S.TotalTokens,
-            TotalCostUsd = S.TotalCostUsd
+            TotalCostUsd = S.TotalCostUsd,
+            Connections = S.Connections.Values.Select(ToView).ToList(),
+            PendingNotifications = S.NotificationOutbox.Count
         };
     }
 

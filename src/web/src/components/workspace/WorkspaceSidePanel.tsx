@@ -8,8 +8,9 @@ import { STATUS_STYLES } from "@/lib/status";
 import { AgentGraph } from "../AgentGraph";
 import { BotIcon } from "../BotIcon";
 import { EventStream } from "../EventStream";
+import { IntegrationsPanel } from "./IntegrationsPanel";
 
-type Tab = "agents" | "triggers" | "graph" | "events";
+type Tab = "agents" | "triggers" | "integrations" | "graph" | "events";
 
 function describeSchedule(t: TriggerView) {
   if (t.kind === "Webhook") return "on webhook";
@@ -47,6 +48,7 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
   const tabs: [Tab, string][] = [
     ["agents", `Agents (${workspace.agents.length})`],
     ["triggers", `Triggers (${workspace.triggers.length})`],
+    ["integrations", `Integrations${workspace.connections?.length ? ` (${workspace.connections.length})` : ""}`],
     ["graph", "Graph"],
     ["events", "Events"],
   ];
@@ -88,6 +90,8 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
         )}
 
         {tab === "triggers" && <Triggers workspace={workspace} onChanged={onChanged} />}
+
+        {tab === "integrations" && <IntegrationsPanel workspaceId={workspace.workspace_id} onChanged={onChanged} />}
 
         {tab === "graph" && (
           <div className="h-full min-h-[400px]">

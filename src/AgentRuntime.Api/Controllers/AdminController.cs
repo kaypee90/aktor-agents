@@ -66,6 +66,7 @@ public sealed class AdminController(
         await db.MemoryEntries.ExecuteDeleteAsync(ct);
         await db.Worlds.ExecuteDeleteAsync(ct);
         await db.Workspaces.ExecuteDeleteAsync(ct);
+        await db.Secrets.ExecuteDeleteAsync(ct);
 
         await databaseSandbox.ResetAsync(ct);
 

@@ -59,6 +59,8 @@ export interface WorkspaceSnapshot {
   cost_today: number;
   total_tokens: number;
   total_cost_usd: number;
+  connections?: ConnectionView[];
+  pending_notifications?: number;
 }
 
 export interface WorkspaceListItem {
@@ -72,4 +74,50 @@ export interface WorkspaceListItem {
   total_cost_usd: number;
   created_at: string;
   updated_at: string;
+}
+
+// ---- Integrations (phase 3) ----
+
+export type NotifyLevel = "Off" | "Urgent" | "Warning" | "All";
+export type SideEffects = "ReadOnly" | "Idempotent" | "NonIdempotent";
+
+export interface PluginSetting {
+  key: string;
+  label: string;
+  description: string | null;
+  secret: boolean;
+  required: boolean;
+  placeholder: string | null;
+  default_value: string | null;
+  options: string[] | null;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  category: string;
+  setup_help: string | null;
+  provides_tools: boolean;
+  supports_notifications: boolean;
+  supports_inbound: boolean;
+  settings: PluginSetting[];
+}
+
+export interface ConnectionView {
+  connection_id: string;
+  plugin_id: string;
+  name: string;
+  settings: Record<string, string>;
+  secret_keys: string[];
+  notify_level: NotifyLevel;
+  tools: { name: string; description: string; side_effects: SideEffects; enabled: boolean }[];
+  created_at: string;
+  last_error: string | null;
+  allowed_senders: string[];
+  inbound_path: string | null;
+  supports_tools: boolean;
+  supports_notifications: boolean;
+  supports_inbound: boolean;
 }

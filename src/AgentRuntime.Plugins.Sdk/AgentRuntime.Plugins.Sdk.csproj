@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The only package a third-party plugin needs to reference: tool and plugin contracts, with no
+       dependency on Orleans or the rest of the runtime. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>AktorAgents.Plugins.Sdk</PackageId>
+    <Description>Contracts for building Aktor Agents plugins: tools, notification channels and inbound channels.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -187,6 +187,12 @@ public sealed class AgentOrchestrator(
         }
 
         var childPermissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | InferPermissionsForTools(childTools);
+        if (policy is not null)
+        {
+            // Workspace agents may use the workspace's connections if their parent could: the
+            // user connected those services for this workspace's agents.
+            childPermissions |= parentSnapshot.GrantedPermissions & (ToolPermission.WorkspaceActions | ToolPermission.Integrations);
+        }
 
         // Validate and register atomically in one registry turn so concurrent spawns from
         // different parents can't both pass the total/active-agent limit checks.
@@ -399,7 +405,8 @@ public sealed class AgentOrchestrator(
     {
         var agentId = WorkspaceIds.CoordinatorId(workspaceId);
         var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
-                          | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.WorkspaceActions;
+                          | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.WorkspaceActions
+                          | ToolPermission.Integrations;
         // The coordinator never completes: it lives as long as the workspace, so no complete_task.
         var tools = FilterToolsByPermission(
             AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"])

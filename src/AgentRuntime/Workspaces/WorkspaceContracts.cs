@@ -181,6 +181,12 @@ public sealed class WorkspaceState
     [Id(20)] public Dictionary<string, RateWindow> WebhookRate { get; set; } = [];
 
     [Id(21)] public DateTimeOffset UpdatedAt { get; set; }
+
+    // ---- Integrations (phase 3) ----
+    [Id(22)] public Dictionary<string, Integrations.ConnectionDefinition> Connections { get; set; } = [];
+    /// <summary>Notifications owed to channels (SMS, Slack, ...). Saved with the chat entry that
+    /// caused them and removed once delivered, so a crash neither loses nor forgets them.</summary>
+    [Id(23)] public List<Integrations.NotificationDelivery> NotificationOutbox { get; set; } = [];
 }
 
 [GenerateSerializer]
@@ -216,6 +222,8 @@ public sealed record WorkspaceSnapshot
     [Id(13)] public decimal CostToday { get; init; }
     [Id(14)] public long TotalTokens { get; init; }
     [Id(15)] public decimal TotalCostUsd { get; init; }
+    [Id(16)] public List<Integrations.ConnectionView> Connections { get; init; } = [];
+    [Id(17)] public int PendingNotifications { get; init; }
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

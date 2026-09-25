@@ -49,7 +49,7 @@ public sealed record ToolExecutionRequest
     /// spawned agent id, an API idempotency header) so a replayed call can't take effect twice.</summary>
     public string IdempotencyKey { get; init; } = string.Empty;
 
-    /// <summary>The calling agent's runtime-granted permissions, stamped by <see cref="ToolRegistry"/>
+    /// <summary>The calling agent's runtime-granted permissions, stamped by the runtime's tool registry
     /// so tools with permission-dependent modes (e.g. read vs write) can enforce them.</summary>
     public ToolPermission GrantedPermissions { get; init; } = ToolPermission.None;
 

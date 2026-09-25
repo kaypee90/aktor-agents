@@ -38,6 +38,14 @@ services:
       Llm__DisableThinking: ${LLM_DISABLE_THINKING:-true}
       Tools__SearchProvider: ${SEARCH_PROVIDER:-Tavily}
       Tools__SearchApiKey: ${SEARCH_API_KEY:-}
+      # Integrations (docs/plugins.md). The vault key encrypts connection secrets: set
+      # SECRETS_MASTER_KEY (openssl rand -base64 32) in production; otherwise one is generated
+      # into the api-keys volume on first start — back that volume up.
+      Secrets__MasterKey: ${SECRETS_MASTER_KEY:-}
+      Secrets__KeyFile: /app/keys/secrets-master.key
+      Integrations__PublicBaseUrl: ${PUBLIC_BASE_URL:-}
+      Integrations__AllowStdioMcp: ${ALLOW_STDIO_MCP:-false}
+      Plugins__Directory: /app/plugins
       Cors__AllowedOrigins__0: "http://localhost:3000"
     # Makes host.docker.internal resolve on Linux Docker too (Docker Desktop already provides it),
     # so the API can reach an Ollama server running on the host.
@@ -48,6 +56,9 @@ services:
       # daemon ("Docker outside of Docker") rather than needing Docker-in-Docker.
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-workspace:/app/workspace
+      - api-keys:/app/keys
+      # Drop third-party plugin DLLs here (trusted code only).
+      - ./plugins:/app/plugins:ro
 
   web:
     build:
@@ -75,4 +86,5 @@ services:
 volumes:
   postgres-data:
   agent-workspace:
+  api-keys:
   ollama-data:

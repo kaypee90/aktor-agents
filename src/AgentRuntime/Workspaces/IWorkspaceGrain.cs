@@ -75,6 +75,37 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task<WorkspaceSnapshot?> GetSnapshot();
 
+    // ---- Integrations ----
+
+    /// <summary>Installs a plugin as a connection: secrets go to the vault, the plugin validates
+    /// the connection and lists its tools. The only time secret values pass through the grain,
+    /// and they're never stored in its state.</summary>
+    Task<Integrations.ConnectionResult> AddConnection(Integrations.ConnectionRequest request);
+
+    Task<Integrations.ConnectionResult> UpdateConnection(string connectionId, Integrations.ConnectionUpdate update);
+
+    Task<Integrations.ConnectionResult> RefreshConnectionTools(string connectionId);
+
+    Task RemoveConnection(string connectionId);
+
+    /// <summary>The owner's view, including inbound paths (which contain a secret).</summary>
+    [AlwaysInterleave]
+    Task<IReadOnlyList<Integrations.ConnectionView>> ListConnections();
+
+    /// <summary>Enabled connection tools, for an agent's LLM call. Empty unless the workspace is active.</summary>
+    [AlwaysInterleave]
+    Task<IReadOnlyList<Integrations.ConnectionToolDescriptor>> GetConnectionTools();
+
+    [AlwaysInterleave]
+    Task<Integrations.ConnectionToolTarget?> ResolveConnectionTool(string exposedName);
+
+    /// <summary>A message arriving through a connection (an SMS reply, a Telegram message).</summary>
+    Task<Integrations.InboundResponseDto> HandleInbound(string connectionId, string token, Integrations.InboundRequestDto request);
+
+    /// <summary>Delivers due notifications. One-way so notify_user never waits on an SMS provider.</summary>
+    [OneWay]
+    Task ProcessNotificationOutbox();
+
     /// <summary>Posts the once-a-day "budget reached" notice (called one-way from CheckBudget,
     /// which must not write state itself).</summary>
     [OneWay]

@@ -23,3 +23,12 @@ src/AgentRuntime.Api/workspace/
 .vscode/
 *.swp
 .DS_Store
+
+# Generated secrets-vault key (Secrets:KeyFile) — never commit it.
+/keys/
+src/AgentRuntime.Api/keys/
+*.key
+
+# Third-party plugin binaries dropped into ./plugins (the folder's README is kept).
+/plugins/*
+!/plugins/README.md

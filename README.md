@@ -359,6 +359,19 @@ Open **Workspaces** in the dashboard (`/workspaces`) and describe what you want.
 
 See [docs/workspaces.md](docs/workspaces.md).
 
+## 10b-3. Integrations and plugins
+
+In a workspace's **Integrations** tab you can connect services, and you can add your own plugins.
+- **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Slack,
+  SMS (Twilio), email (SMTP) and Telegram.
+- **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`).
+- **Notifications:** `notify_user` reaches you on your channels by urgency.
+- **Commands back:** you can reply by SMS or Telegram to give instructions.
+- **Secrets** are encrypted in a vault and never reach agents.
+- **Your own plugins:** build against `AgentRuntime.Plugins.Sdk` and drop the DLL into `./plugins`.
+
+See [docs/plugins.md](docs/plugins.md) and [samples/ExamplePlugin](samples/ExamplePlugin).
+
 ## 10c. Durable execution
 
 Agents survive crashes, restarts and outages, and resume exactly where they stopped:

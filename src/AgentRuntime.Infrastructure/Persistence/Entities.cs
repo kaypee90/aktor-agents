@@ -135,3 +135,12 @@ public sealed class WorkspaceRecord
     public DateTimeOffset UpdatedAt { get; set; }
     public string SnapshotJson { get; set; } = "{}";
 }
+
+/// <summary>An encrypted connection secret (see Secrets/SecretProtector). Never plaintext.</summary>
+public sealed class SecretRecord
+{
+    public required string Scope { get; set; }
+    public required string Key { get; set; }
+    public required byte[] Ciphertext { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}

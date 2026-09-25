@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A minimal third-party plugin. Build it and copy bin/Release/net10.0/ExamplePlugin.dll into
+       the server's plugins folder (./plugins, mounted at /app/plugins in Docker). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Published as the AktorAgents.Plugins.Sdk package; referenced by path in this repo.
+         Private=false: the host already has the SDK, so don't copy it next to the plugin. -->
+    <ProjectReference Include="..\..\src\AgentRuntime.Plugins.Sdk\AgentRuntime.Plugins.Sdk.csproj" Private="false" />
+    <!-- Host-provided libraries (DI, HttpClientFactory, logging): compile against them, don't ship them. -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+</Project>
