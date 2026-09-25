@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using AgentRuntime.Agents;
+using AgentRuntime.Api.Platform;
 using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
@@ -14,11 +15,12 @@ public sealed record CreateTaskRequest(string Goal, ResourceBudget? Budget);
 
 [ApiController]
 [Route("api/tasks")]
-public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions) : ControllerBase
+public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions, TenantAccess access) : ControllerBase
 {
     /// <summary>Submits a high-level human goal (CLAUDE.md section 1). This is the only manual step —
     /// everything after this is autonomous.</summary>
     [HttpPost]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> Create([FromBody] CreateTaskRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Goal))
@@ -27,7 +29,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         }
 
         var taskId = Guid.NewGuid().ToString("n");
-        var rootAgentId = await orchestrator.CreateRootAgentAsync(taskId, request.Goal, request.Budget, ct);
+        var rootAgentId = await orchestrator.CreateRootAgentAsync(taskId, request.Goal, request.Budget, access.TenantId, ct);
 
         return CreatedAtAction(nameof(Get), new { id = taskId }, new { task_id = taskId, root_agent_id = rootAgentId });
     }
@@ -35,7 +37,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == id, ct);
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == id && t.TenantId == access.TenantId, ct);
         if (task is null) return NotFound();
 
         AgentSnapshot? rootSnapshot = task.RootAgentId is null
@@ -57,17 +59,20 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var tasks = await db.Tasks.AsNoTracking().OrderByDescending(t => t.CreatedAt).Take(100).ToListAsync(ct);
+        var tasks = await db.Tasks.AsNoTracking().Where(t => t.TenantId == access.TenantId).OrderByDescending(t => t.CreatedAt).Take(100).ToListAsync(ct);
         return Ok(tasks.Select(t => new { task_id = t.TaskId, goal = t.Goal, status = t.Status, created_at = t.CreatedAt }));
     }
 
     [HttpPost("{id}/pause")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> Pause(string id, CancellationToken ct) => await ForEachAgentInTask(id, orchestrator.PauseAsync, ct);
 
     [HttpPost("{id}/resume")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> Resume(string id, CancellationToken ct) => await ForEachAgentInTask(id, orchestrator.ResumeAsync, ct);
 
     [HttpPost("{id}/cancel")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> Cancel(string id, CancellationToken ct) => await ForEachAgentInTask(id, orchestrator.StopAsync, ct);
 
     /// <summary>The aggregated final result (CLAUDE.md section 52): the root's own summary plus
@@ -76,7 +81,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}/result")]
     public async Task<IActionResult> Result(string id, CancellationToken ct)
     {
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == id, ct);
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == id && t.TenantId == access.TenantId, ct);
         if (task is null) return NotFound();
 
         if (task.ResultJson is null)
@@ -91,6 +96,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}/artifacts")]
     public async Task<IActionResult> Artifacts(string id, CancellationToken ct)
     {
+        if (!await access.TaskAsync(id, ct)) return NotFound();
         var artifacts = await db.Artifacts.AsNoTracking()
             .Where(a => a.TaskId == id)
             .OrderBy(a => a.CreatedAt)
@@ -113,6 +119,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}/artifacts/{artifactId}/content")]
     public async Task<IActionResult> ArtifactContent(string id, string artifactId, CancellationToken ct)
     {
+        if (!await access.TaskAsync(id, ct)) return NotFound();
         var artifact = await db.Artifacts.AsNoTracking()
             .FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId, ct);
         if (artifact is null) return NotFound();
@@ -134,6 +141,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}/artifacts.zip")]
     public async Task<IActionResult> ArtifactsZip(string id, CancellationToken ct)
     {
+        if (!await access.TaskAsync(id, ct)) return NotFound();
         var locations = await db.Artifacts.AsNoTracking()
             .Where(a => a.TaskId == id)
             .Select(a => a.Location)
@@ -170,8 +178,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet("{id}/events")]
     public async Task<IActionResult> Events(string id, [FromQuery] int limit = 200, CancellationToken ct = default)
     {
+        if (!await access.ScopeAsync(id, ct)) return NotFound();
         var events = await db.Events.AsNoTracking()
-            .Where(e => e.TaskId == id)
+            .Where(e => e.TaskId == id && e.TenantId == access.TenantId)
             .OrderBy(e => e.Timestamp)
             .Take(Math.Clamp(limit, 1, 1000))
             .ToListAsync(ct);

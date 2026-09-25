@@ -6,6 +6,8 @@ namespace AgentRuntime.Infrastructure.Persistence;
 /// </summary>
 public sealed class TaskRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string TaskId { get; set; }
     public required string Goal { get; set; }
     public string Status { get; set; } = "Running";
@@ -18,6 +20,8 @@ public sealed class TaskRecord
 
 public sealed class AgentRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string AgentId { get; set; }
     public string? ParentAgentId { get; set; }
     public required string RootAgentId { get; set; }
@@ -41,6 +45,8 @@ public sealed class AgentRecord
 
 public sealed class MessageRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string MessageId { get; set; }
     public required string FromAgentId { get; set; }
     public required string ToAgentId { get; set; }
@@ -55,6 +61,8 @@ public sealed class MessageRecord
 
 public sealed class EventRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public long Id { get; set; }
     public required string EventId { get; set; }
     public required string Type { get; set; }
@@ -70,6 +78,8 @@ public sealed class EventRecord
 
 public sealed class ArtifactRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string ArtifactId { get; set; }
     public required string Type { get; set; }
     public required string Location { get; set; }
@@ -81,6 +91,8 @@ public sealed class ArtifactRecord
 
 public sealed class MemoryEntity
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string MemoryId { get; set; }
     public required string AgentId { get; set; }
     public required string Kind { get; set; }
@@ -91,6 +103,8 @@ public sealed class MemoryEntity
 
 public sealed class ToolCallRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public long Id { get; set; }
     public required string AgentId { get; set; }
     public string TaskId { get; set; } = string.Empty;
@@ -105,6 +119,8 @@ public sealed class ToolCallRecord
 /// stays inspectable after the in-memory world grain is gone (e.g. after a restart).</summary>
 public sealed class WorldRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string WorldId { get; set; }
     public required string Name { get; set; }
     public string Seed { get; set; } = string.Empty;
@@ -123,6 +139,8 @@ public sealed class WorldRecord
 /// The live state (conversation, triggers, ledger) is the workspace grain's durable state.</summary>
 public sealed class WorkspaceRecord
 {
+    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
+    public string TenantId { get; set; } = "default";
     public required string WorkspaceId { get; set; }
     public required string Name { get; set; }
     public string Goal { get; set; } = string.Empty;
@@ -172,4 +190,91 @@ public sealed class AuditHeadRecord
     public required string Scope { get; set; }
     public long Seq { get; set; }
     public required string Hash { get; set; }
+}
+
+// ---- Platform: organizations, people, access, billing (docs/platform.md) ----
+
+/// <summary>An organization: the unit of isolation, membership and billing.</summary>
+public sealed class TenantRecord
+{
+    public required string TenantId { get; set; }
+    public required string Name { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public string PlanId { get; set; } = string.Empty;
+    public string SubscriptionStatus { get; set; } = "none";
+    public string? StripeCustomerId { get; set; }
+    public string? StripeSubscriptionId { get; set; }
+    public DateTimeOffset? CurrentPeriodEnd { get; set; }
+}
+
+public sealed class UserRecord
+{
+    public required string UserId { get; set; }
+    /// <summary>Lower-cased and trimmed; unique.</summary>
+    public required string Email { get; set; }
+    public string Name { get; set; } = string.Empty;
+    /// <summary>PBKDF2 (see Identity/PasswordHasher); never the password.</summary>
+    public required string PasswordHash { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastLoginAt { get; set; }
+}
+
+public sealed class MembershipRecord
+{
+    public required string TenantId { get; set; }
+    public required string UserId { get; set; }
+    public required string Role { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>A signed-in browser. Only a hash of the cookie's token is stored.</summary>
+public sealed class SessionRecord
+{
+    public required string TokenHash { get; set; }
+    public required string UserId { get; set; }
+    /// <summary>The organization the session is currently working in.</summary>
+    public required string TenantId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset LastSeenAt { get; set; }
+}
+
+/// <summary>A key for the API/SDK, bound to one organization and a role. Only a hash of the
+/// secret is stored; the full key is shown once, when it's created.</summary>
+public sealed class ApiKeyRecord
+{
+    public required string KeyId { get; set; }
+    public required string TenantId { get; set; }
+    public required string Name { get; set; }
+    /// <summary>The first characters of the key, for recognising it in lists.</summary>
+    public required string Prefix { get; set; }
+    public required string SecretHash { get; set; }
+    public required string Role { get; set; }
+    public string CreatedByUserId { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+}
+
+public sealed class InvitationRecord
+{
+    public required string InvitationId { get; set; }
+    public required string TenantId { get; set; }
+    public required string Email { get; set; }
+    public required string Role { get; set; }
+    public required string TokenHash { get; set; }
+    public string InvitedByUserId { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? AcceptedAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+}
+
+/// <summary>Billing-provider webhook events already applied, so a redelivery is a no-op.</summary>
+public sealed class BillingEventRecord
+{
+    public required string EventId { get; set; }
+    public required string Type { get; set; }
+    public DateTimeOffset ReceivedAt { get; set; }
 }

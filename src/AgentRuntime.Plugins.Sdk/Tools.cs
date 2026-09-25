@@ -44,6 +44,10 @@ public sealed record ToolExecutionRequest
     public required string TaskId { get; init; }
     public required string ArgumentsJson { get; init; }
 
+    /// <summary>The calling agent's organization, stamped by the runtime. Tools that keep data
+    /// (memory, scratch databases) must scope it by this.</summary>
+    public string TenantId { get; init; } = "default";
+
     /// <summary>Stable across retries and crash recovery of the same tool call
     /// (<c>{agentId}:{toolCallId}</c>). Tools with side effects pass it on (as a message id, a
     /// spawned agent id, an API idempotency header) so a replayed call can't take effect twice.</summary>

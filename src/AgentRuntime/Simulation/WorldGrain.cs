@@ -87,6 +87,7 @@ public sealed class WorldGrain(
         S.TickIntervalSeconds = settings.TickIntervalSeconds;
         S.MaxTicks = settings.MaxTicks;
         S.MaxDurationMinutes = settings.MaxDurationMinutes;
+        S.TenantId = Tenancy.TenantIds.Normalize(settings.TenantId);
         S.CreatedAt = DateTimeOffset.UtcNow;
 
         foreach (var loc in blueprint.Locations)
@@ -725,6 +726,7 @@ public sealed class WorldGrain(
         var result = await orchestrator.CreateResidentAsync(new ResidentCreationRequest
         {
             WorldId = S.WorldId,
+            TenantId = S.TenantId,
             WorldName = S.Name,
             WorldDescription = S.Description,
             Name = name,
@@ -944,6 +946,7 @@ public sealed class WorldGrain(
         return new WorldSnapshot
         {
             WorldId = S.WorldId,
+            TenantId = Tenancy.TenantIds.Normalize(S.TenantId),
             Name = S.Name,
             Description = S.Description,
             Seed = S.Seed,
@@ -1037,6 +1040,7 @@ public sealed class WorldGrain(
         {
             Type = type,
             TaskId = S.WorldId,
+            TenantId = Tenancy.TenantIds.Normalize(S.TenantId),
             AgentId = agentId,
             TargetAgentId = targetAgentId,
             Summary = summary,

@@ -83,6 +83,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<int>("TokensUsed")
                         .HasColumnType("integer");
 
@@ -99,7 +105,57 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TaskId");
 
+                    b.HasIndex("TenantId");
+
                     b.ToTable("Agents");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.ApiKeyRecord", b =>
+                {
+                    b.Property<string>("KeyId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SecretHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("KeyId");
+
+                    b.HasIndex("TenantId");
+
+                    b.ToTable("ApiKeys");
                 });
 
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.ArtifactRecord", b =>
@@ -125,6 +181,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<string>("TaskId")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -232,6 +294,23 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("AuditEntries");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.BillingEventRecord", b =>
+                {
+                    b.Property<string>("EventId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("EventId");
+
+                    b.ToTable("BillingEvents");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.EventRecord", b =>
                 {
                     b.Property<long>("Id")
@@ -267,6 +346,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<string>("TaskId")
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
@@ -282,7 +367,78 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Timestamp");
 
+                    b.HasIndex("TenantId", "Timestamp");
+
                     b.ToTable("Events");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.InvitationRecord", b =>
+                {
+                    b.Property<string>("InvitationId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InvitedByUserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("InvitationId");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("Invitations");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.MembershipRecord", b =>
+                {
+                    b.Property<string>("TenantId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TenantId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Memberships");
                 });
 
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.MemoryEntity", b =>
@@ -305,6 +461,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<string>("Value")
                         .IsRequired()
                         .HasColumnType("text");
@@ -313,7 +475,7 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Kind");
 
-                    b.HasIndex("AgentId", "Key");
+                    b.HasIndex("TenantId", "AgentId", "Key");
 
                     b.ToTable("MemoryEntries");
                 });
@@ -349,6 +511,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<string>("TaskId")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
 
                     b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
@@ -388,6 +556,35 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Secrets");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SessionRecord", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Sessions");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TaskRecord", b =>
                 {
                     b.Property<string>("TaskId")
@@ -416,9 +613,53 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.HasKey("TaskId");
 
+                    b.HasIndex("TenantId", "CreatedAt");
+
                     b.ToTable("Tasks");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TenantRecord", b =>
+                {
+                    b.Property<string>("TenantId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("CurrentPeriodEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlanId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StripeCustomerId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StripeSubscriptionId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SubscriptionStatus")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TenantId");
+
+                    b.HasIndex("StripeCustomerId");
+
+                    b.ToTable("Tenants");
                 });
 
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.ToolCallRecord", b =>
@@ -447,6 +688,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
@@ -459,6 +706,37 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.HasIndex("AgentId");
 
                     b.ToTable("ToolCalls");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.UserRecord", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("LastLoginAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.WorkspaceRecord", b =>
@@ -488,6 +766,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<decimal>("TotalCostUsd")
                         .HasColumnType("numeric");
 
@@ -502,7 +786,7 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WorkspaceId");
 
-                    b.HasIndex("CreatedAt");
+                    b.HasIndex("TenantId", "CreatedAt");
 
                     b.ToTable("Workspaces");
                 });
@@ -543,6 +827,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("default");
+
                     b.Property<int>("Tick")
                         .HasColumnType("integer");
 
@@ -551,7 +841,7 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.HasKey("WorldId");
 
-                    b.HasIndex("CreatedAt");
+                    b.HasIndex("TenantId", "CreatedAt");
 
                     b.ToTable("Worlds");
                 });

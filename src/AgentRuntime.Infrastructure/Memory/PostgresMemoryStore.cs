@@ -18,7 +18,7 @@ public sealed class PostgresMemoryStore(IDbContextFactory<AgentDbContext> dbCont
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var existing = await db.MemoryEntries
-            .FirstOrDefaultAsync(m => m.AgentId == record.AgentId && m.Key == record.Key, cancellationToken);
+            .FirstOrDefaultAsync(m => m.TenantId == record.TenantId && m.AgentId == record.AgentId && m.Key == record.Key, cancellationToken);
 
         if (existing is not null)
         {
@@ -30,6 +30,7 @@ public sealed class PostgresMemoryStore(IDbContextFactory<AgentDbContext> dbCont
             db.MemoryEntries.Add(new MemoryEntity
             {
                 MemoryId = record.MemoryId,
+                TenantId = record.TenantId,
                 AgentId = record.AgentId,
                 Kind = record.Kind.ToString(),
                 Key = record.Key,
@@ -41,11 +42,11 @@ public sealed class PostgresMemoryStore(IDbContextFactory<AgentDbContext> dbCont
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<MemoryRecord?> ReadAsync(string agentId, string key, CancellationToken cancellationToken = default)
+    public async Task<MemoryRecord?> ReadAsync(string tenantId, string agentId, string key, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var entity = await db.MemoryEntries
-            .Where(m => m.Key == key && (m.AgentId == agentId || m.Kind == nameof(MemoryKind.Shared)))
+            .Where(m => m.TenantId == tenantId && m.Key == key && (m.AgentId == agentId || m.Kind == nameof(MemoryKind.Shared)))
             .OrderByDescending(m => m.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -53,10 +54,10 @@ public sealed class PostgresMemoryStore(IDbContextFactory<AgentDbContext> dbCont
     }
 
     public async Task<IReadOnlyList<MemoryRecord>> SearchAsync(
-        string query, MemoryKind? kind = null, string? agentId = null, CancellationToken cancellationToken = default)
+        string tenantId, string query, MemoryKind? kind = null, string? agentId = null, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var q = db.MemoryEntries.AsQueryable();
+        var q = db.MemoryEntries.Where(m => m.TenantId == tenantId);
 
         if (kind is { } k) q = q.Where(m => m.Kind == k.ToString());
         if (agentId is not null) q = q.Where(m => m.AgentId == agentId);
@@ -72,6 +73,7 @@ public sealed class PostgresMemoryStore(IDbContextFactory<AgentDbContext> dbCont
     private static MemoryRecord ToRecord(MemoryEntity e) => new()
     {
         MemoryId = e.MemoryId,
+        TenantId = e.TenantId,
         AgentId = e.AgentId,
         Kind = Enum.Parse<MemoryKind>(e.Kind),
         Key = e.Key,

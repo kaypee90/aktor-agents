@@ -19,6 +19,7 @@ public sealed class WorldsController(
     AgentDbContext db,
     IOptions<SimulationOptions> options,
     IOptions<LlmOptions> llmOptions,
+    AgentRuntime.Api.Platform.TenantAccess access,
     ILogger<WorldsController> logger) : ControllerBase
 {
     private SimulationLimits Limits => options.Value.LimitsFor(llmOptions.Value.IsLocal);
@@ -31,6 +32,7 @@ public sealed class WorldsController(
         int? MaxDurationMinutes);
 
     [HttpPost]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Create([FromBody] CreateWorldRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Seed))
@@ -47,7 +49,8 @@ public sealed class WorldsController(
             Seed = request.Seed.Trim(),
             TickIntervalSeconds = Math.Clamp(request.TickIntervalSeconds ?? l.DefaultTickIntervalSeconds, l.MinTickIntervalSeconds, 600),
             MaxTicks = Math.Clamp(request.MaxTicks ?? l.DefaultMaxTicks, 1, l.MaxTicks),
-            MaxDurationMinutes = Math.Clamp(request.MaxDurationMinutes ?? l.DefaultMaxDurationMinutes, 1, l.MaxDurationMinutes)
+            MaxDurationMinutes = Math.Clamp(request.MaxDurationMinutes ?? l.DefaultMaxDurationMinutes, 1, l.MaxDurationMinutes),
+            TenantId = access.TenantId
         };
 
         WorldBlueprint blueprint;
@@ -102,6 +105,7 @@ public sealed class WorldsController(
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var worlds = await db.Worlds.AsNoTracking()
+            .Where(w => w.TenantId == access.TenantId)
             .OrderByDescending(w => w.CreatedAt)
             .Take(50)
             .Select(w => new
@@ -125,7 +129,7 @@ public sealed class WorldsController(
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
-        if (!WorldIds.IsWorld(id)) return NotFound();
+        if (!await access.WorldAsync(id)) return NotFound();
 
         var snapshot = await grainFactory.GetGrain<IWorldGrain>(id).GetSnapshot();
         if (snapshot is not null) return Ok(snapshot);
@@ -146,25 +150,28 @@ public sealed class WorldsController(
     }
 
     [HttpPost("{id}/pause")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Pause(string id)
     {
-        if (!WorldIds.IsWorld(id)) return NotFound();
+        if (!await access.WorldAsync(id)) return NotFound();
         await grainFactory.GetGrain<IWorldGrain>(id).Pause();
         return NoContent();
     }
 
     [HttpPost("{id}/resume")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Resume(string id)
     {
-        if (!WorldIds.IsWorld(id)) return NotFound();
+        if (!await access.WorldAsync(id)) return NotFound();
         await grainFactory.GetGrain<IWorldGrain>(id).Resume();
         return NoContent();
     }
 
     [HttpPost("{id}/end")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> End(string id)
     {
-        if (!WorldIds.IsWorld(id)) return NotFound();
+        if (!await access.WorldAsync(id)) return NotFound();
         await grainFactory.GetGrain<IWorldGrain>(id).End("ended by the operator");
         return NoContent();
     }

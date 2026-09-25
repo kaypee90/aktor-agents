@@ -28,6 +28,7 @@ public static class ServiceCollectionExtensions
         services.Configure<Integrations.IntegrationsOptions>(configuration.GetSection(Integrations.IntegrationsOptions.SectionName));
         services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
+        services.Configure<Tenancy.BillingOptions>(configuration.GetSection(Tenancy.BillingOptions.SectionName));
 
         services.AddSingleton<InMemoryEventBus>();
         services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<InMemoryEventBus>());

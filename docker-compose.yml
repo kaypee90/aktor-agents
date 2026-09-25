@@ -50,6 +50,15 @@ services:
       Integrations__AllowStdioMcp: ${ALLOW_STDIO_MCP:-false}
       Plugins__Directory: /app/plugins
       Cors__AllowedOrigins__0: "http://localhost:3000"
+      # Platform (docs/platform.md): accounts, organizations and billing.
+      Auth__Mode: ${AUTH_MODE:-accounts}
+      Auth__AllowSignup: ${AUTH_ALLOW_SIGNUP:-true}
+      Auth__PlatformAdmins__0: ${PLATFORM_ADMIN_EMAIL:-}
+      Billing__Provider: ${BILLING_PROVIDER:-none}
+      Billing__DefaultPlan: ${BILLING_DEFAULT_PLAN:-unlimited}
+      Billing__Stripe__SecretKey: ${STRIPE_SECRET_KEY:-}
+      Billing__Stripe__WebhookSecret: ${STRIPE_WEBHOOK_SECRET:-}
+      Billing__Stripe__AppBaseUrl: ${APP_BASE_URL:-http://localhost:3000}
     # Makes host.docker.internal resolve on Linux Docker too (Docker Desktop already provides it),
     # so the API can reach an Ollama server running on the host.
     extra_hosts:

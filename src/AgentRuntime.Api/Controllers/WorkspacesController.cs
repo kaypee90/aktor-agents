@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AgentRuntime.Api.Platform;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Workspaces;
 using Microsoft.AspNetCore.Mvc;
@@ -12,7 +13,8 @@ namespace AgentRuntime.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/workspaces")]
-public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db) : ControllerBase
+[AgentRuntime.Api.Platform.WorkspaceAccess]
+public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db, AgentRuntime.Api.Platform.TenantAccess access) : ControllerBase
 {
     public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
@@ -26,9 +28,19 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateWorkspaceBody body)
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Create([FromBody] CreateWorkspaceBody body, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(body.Goal)) return BadRequest(new { error = "goal is required" });
+
+        // The organization's plan limits how many workspaces can be live at once.
+        var caller = HttpContext.Caller();
+        var plan = await grains.GetGrain<AgentRuntime.Tenancy.ITenantGrain>(caller.TenantId).GetPlan();
+        if (plan.MaxWorkspaces > 0 &&
+            await db.Workspaces.CountAsync(w => w.TenantId == caller.TenantId && w.Status != "Archived", ct) >= plan.MaxWorkspaces)
+        {
+            return StatusCode(402, new { error = $"The {plan.Name} plan allows {plan.MaxWorkspaces} active workspaces. Archive one or upgrade." });
+        }
 
         var id = WorkspaceIds.New();
         await Workspace(id).Create(new WorkspaceCreationRequest
@@ -36,7 +48,9 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             Name = string.IsNullOrWhiteSpace(body.Name) ? "Workspace" : body.Name,
             Goal = body.Goal,
             DailyTokenLimit = body.DailyTokenLimit,
-            DailyCostLimitUsd = body.DailyCostLimitUsd
+            DailyCostLimitUsd = body.DailyCostLimitUsd,
+            TenantId = caller.TenantId,
+            OwnerId = caller.ActorId
         });
         return Ok(new { workspace_id = id });
     }
@@ -44,6 +58,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct) =>
         Ok(await db.Workspaces.AsNoTracking()
+            .Where(w => w.TenantId == access.TenantId)
             .OrderByDescending(w => w.CreatedAt)
             .Take(100)
             .Select(w => new
@@ -70,6 +85,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     }
 
     [HttpPost("{id}/messages")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> PostMessage(string id, [FromBody] MessageBody body)
     {
         if (!WorkspaceIds.IsWorkspace(id) || await Workspace(id).GetSnapshot() is null) return NotFound();
@@ -90,6 +106,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     /// <summary>Creates a trigger as the user. For a webhook, the response includes its secret
     /// path — the only time (besides the workspace chat) it is shown.</summary>
     [HttpPost("{id}/triggers")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> AddTrigger(string id, [FromBody] TriggerBody body)
     {
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
@@ -125,6 +142,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     }
 
     [HttpDelete("{id}/triggers/{triggerId}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> RemoveTrigger(string id, string triggerId)
     {
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
@@ -133,6 +151,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     }
 
     [HttpPut("{id}/budget")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Budget(string id, [FromBody] BudgetBody body)
     {
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
@@ -141,12 +160,15 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     }
 
     [HttpPost("{id}/pause")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Pause(string id) { await Workspace(id).Pause(); return NoContent(); }
 
     [HttpPost("{id}/resume")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Resume(string id) { await Workspace(id).Resume(); return NoContent(); }
 
     [HttpPost("{id}/archive")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Archive(string id) { await Workspace(id).Archive(); return NoContent(); }
 }
 
@@ -157,6 +179,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
 /// </summary>
 [ApiController]
 [Route("api/hooks")]
+[Microsoft.AspNetCore.Authorization.AllowAnonymous]
 public sealed class HooksController(IGrainFactory grains, Microsoft.Extensions.Options.IOptions<WorkspaceOptions> options) : ControllerBase
 {
     private static readonly string[] DeliveryIdHeaders =

@@ -11,11 +11,12 @@ namespace AgentRuntime.Api.Controllers;
 
 /// <summary>
 /// Administrative controls outside the normal per-task human controls in CLAUDE.md section 32 —
-/// specifically, wiping all runtime state to start over. Not gated behind auth in this prototype;
-/// a production deployment would restrict this to an operator role.
+/// specifically, wiping all runtime state to start over. Operators only (Auth:PlatformAdmins, or
+/// everyone when auth is disabled): a reset wipes every organization's work.
 /// </summary>
 [ApiController]
 [Route("api/admin")]
+[Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.PlatformAdmin)]
 public sealed class AdminController(
     IAgentOrchestrator orchestrator,
     AgentDbContext db,

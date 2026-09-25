@@ -129,6 +129,7 @@ public sealed class AgentGrain(
         s.Budget = request.Budget;
         s.Depth = request.Depth;
         s.TaskId = request.TaskId;
+        s.TenantId = Tenancy.TenantIds.Normalize(request.TenantId);
         s.WorldId = request.WorldId;
         s.WorkspaceId = request.WorkspaceId;
         s.Standing = request.Standing;
@@ -485,6 +486,15 @@ public sealed class AgentGrain(
                 }
             }
 
+            // The organization's plan, enforced by the runtime: over quota, the turn stays open and
+            // resumes by itself when the quota renews or the plan changes.
+            var quota = await Tenant.CheckQuota();
+            if (!quota.Allowed)
+            {
+                await ParkForQuotaAsync(quota.Reason ?? "the organization's plan limit is reached");
+                return;
+            }
+
             s.TurnIteration++;
             s.TransitionTo(AgentStatus.Thinking);
             await state.WriteStateAsync();
@@ -507,6 +517,10 @@ public sealed class AgentGrain(
             {
                 await GrainFactory.GetGrain<IWorkspaceGrain>(usageWorkspace).RecordUsage(AgentId, response.InputTokens + response.OutputTokens, callCost);
             }
+
+            // Metered before the step is saved: if we crash in between, the call is made (and
+            // billed by the provider) again, so it's counted again.
+            await Tenant.RecordUsage(new Tenancy.UsageDelta { Tokens = response.InputTokens + response.OutputTokens, CostUsd = callCost, LlmCalls = 1 });
 
             AppendTranscript(new AgentTranscriptEntry
             {
@@ -703,6 +717,7 @@ public sealed class AgentGrain(
                 ToolName = call.Name,
                 AgentId = AgentId,
                 TaskId = s.TaskId,
+                TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
                 ArgumentsJson = call.ArgumentsJson,
                 IdempotencyKey = $"{AgentId}:{call.Id}",
                 GrantedPermissions = s.GrantedPermissions
@@ -714,6 +729,7 @@ public sealed class AgentGrain(
                 : await toolRegistry.ExecuteAsync(toolRequest, s.AllowedTools, s.GrantedPermissions);
 
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
+            if (!s.IsResident) await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
             s.InFlightToolCallIds.Remove(call.Id);
             AppendToolResult(call, result);
             // Audited before the result is saved: if we crash in between, the replayed call is
@@ -767,6 +783,26 @@ public sealed class AgentGrain(
     /// the approver and kept in the audit log as the stated reason.</summary>
     private string? AssistantNoteFor(TranscriptToolCall call) =>
         S.Transcript.LastOrDefault(e => e.Role == "assistant" && e.ToolCalls?.Any(c => c.Id == call.Id) == true)?.Content;
+
+    /// <summary>Out of plan quota: the turn stays open (like an approval) and the recovery reminder
+    /// re-checks it, so the agent carries on by itself when the quota renews; the tenant grain
+    /// wakes it at once if the plan is upgraded.</summary>
+    private async Task ParkForQuotaAsync(string reason)
+    {
+        var s = S;
+        var wasParked = s.CurrentTask?.StartsWith("Paused: ", StringComparison.Ordinal) == true;
+        s.CurrentTask = $"Paused: {reason}.";
+        if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
+        await state.WriteStateAsync();
+        await Tenant.ParkForQuota(AgentId);
+        if (!wasParked)
+        {
+            await UpdateRegistryStatusAsync(s.Status);
+            await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' is paused: {reason}.");
+        }
+
+        await EnsureTurnReminderAsync();
+    }
 
     /// <summary>Stops the turn at this call until a human decides. The call has no result yet, so
     /// the turn stays in progress: the next wake (the decision, or the recovery reminder after a
@@ -1186,6 +1222,8 @@ public sealed class AgentGrain(
             {
                 await GrainFactory.GetGrain<IWorkspaceGrain>(ws).RecordUsage(AgentId, usage.InputTokens + usage.OutputTokens, cost);
             }
+
+            await Tenant.RecordUsage(new Tenancy.UsageDelta { Tokens = usage.InputTokens + usage.OutputTokens, CostUsd = cost, LlmCalls = 1 });
         }
 
         await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' compacted {start} older transcript entries into a summary.");
@@ -1282,10 +1320,13 @@ public sealed class AgentGrain(
             AgentId = AgentId,
             ParentAgentId = s.ParentAgentId,
             TaskId = s.TaskId,
+            TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
             Summary = summary,
             Data = data ?? new Dictionary<string, string>()
         });
     }
+
+    private Tenancy.ITenantGrain Tenant => GrainFactory.GetGrain<Tenancy.ITenantGrain>(Tenancy.TenantIds.Normalize(S.TenantId));
 
     private static AgentSnapshot ToSnapshot(AgentState s) => new()
     {
@@ -1311,6 +1352,7 @@ public sealed class AgentGrain(
         FailureReason = s.FailureReason,
         WorldId = s.WorldId,
         WorkspaceId = s.WorkspaceId,
-        Standing = s.Standing
+        Standing = s.Standing,
+        TenantId = Tenancy.TenantIds.Normalize(s.TenantId)
     };
 }

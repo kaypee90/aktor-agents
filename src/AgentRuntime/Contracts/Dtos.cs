@@ -25,6 +25,7 @@ public sealed record AgentInitializationRequest
     [Id(16)] public string? WorkspaceId { get; init; }
     [Id(17)] public bool Standing { get; init; }
     [Id(18)] public int ContextWindow { get; init; }
+    [Id(19)] public string TenantId { get; init; } = string.Empty;
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -59,6 +60,7 @@ public sealed record FindAgentsQuery
     [Id(0)] public List<string>? Capabilities { get; init; }
     [Id(1)] public AgentStatus? Status { get; init; }
     [Id(2)] public string? RootAgentId { get; init; }
+    [Id(3)] public string? TenantId { get; init; }
 }
 
 [GenerateSerializer]
@@ -72,6 +74,7 @@ public sealed record AgentDirectoryEntry
     [Id(5)] public string? ParentAgentId { get; init; }
     [Id(6)] public int Depth { get; init; }
     [Id(7)] public string RootAgentId { get; init; } = string.Empty;
+    [Id(8)] public string TenantId { get; init; } = string.Empty;
 }
 
 [GenerateSerializer]
@@ -133,6 +136,7 @@ public sealed record AgentSnapshot
     [Id(20)] public string? WorldId { get; init; }
     [Id(21)] public string? WorkspaceId { get; init; }
     [Id(22)] public bool Standing { get; init; }
+    [Id(23)] public string TenantId { get; init; } = string.Empty;
 }
 
 [GenerateSerializer]

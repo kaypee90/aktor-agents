@@ -1,4 +1,6 @@
 using AgentRuntime.Agents;
+using AgentRuntime.Api.Platform;
+using Microsoft.AspNetCore.Authorization;
 using AgentRuntime.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,12 +9,12 @@ namespace AgentRuntime.Api.Controllers;
 
 [ApiController]
 [Route("api/agents")]
-public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbContext db) : ControllerBase
+public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbContext db, TenantAccess access) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var agents = await orchestrator.GetAllAgentsAsync(ct);
+        var agents = await orchestrator.FindAgentsAsync(new AgentRuntime.Contracts.FindAgentsQuery { TenantId = access.TenantId }, ct);
         return Ok(agents.Select(a => new
         {
             agent_id = a.AgentId,
@@ -30,12 +32,13 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
         var snapshot = await orchestrator.GetSnapshotAsync(id, ct);
-        return snapshot is null ? NotFound() : Ok(snapshot);
+        return snapshot is null || !AgentRuntime.Tenancy.TenantIds.Same(snapshot.TenantId, access.TenantId) ? NotFound() : Ok(snapshot);
     }
 
     [HttpGet("{id}/children")]
     public async Task<IActionResult> Children(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         var children = await orchestrator.ListChildrenAsync(id, ct);
         return Ok(children);
     }
@@ -43,6 +46,7 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     [HttpGet("{id}/messages")]
     public async Task<IActionResult> Messages(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         var messages = await db.Messages.AsNoTracking()
             .Where(m => m.FromAgentId == id || m.ToAgentId == id)
             .OrderBy(m => m.Timestamp)
@@ -55,6 +59,7 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     [HttpGet("{id}/tool-calls")]
     public async Task<IActionResult> ToolCalls(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         var calls = await db.ToolCalls.AsNoTracking()
             .Where(t => t.AgentId == id)
             .OrderBy(t => t.Timestamp)
@@ -65,22 +70,28 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     }
 
     [HttpPost("{id}/pause")]
+    [Authorize(Policies.Member)]
     public async Task<IActionResult> Pause(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         await orchestrator.PauseAsync(id, ct);
         return NoContent();
     }
 
     [HttpPost("{id}/resume")]
+    [Authorize(Policies.Member)]
     public async Task<IActionResult> Resume(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         await orchestrator.ResumeAsync(id, ct);
         return NoContent();
     }
 
     [HttpPost("{id}/terminate")]
+    [Authorize(Policies.Member)]
     public async Task<IActionResult> Terminate(string id, CancellationToken ct)
     {
+        if (!await access.AgentAsync(id)) return NotFound();
         await orchestrator.StopAsync(id, ct);
         return NoContent();
     }

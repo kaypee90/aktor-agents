@@ -177,9 +177,13 @@ sandboxing).
 - Dashboard: http://localhost:3000
 
 This runs with `LLM_PROVIDER=Mock` by default, so it works immediately with no API key.
+Open the dashboard and create an account: the first one owns everything already on the server.
+Set `PLATFORM_ADMIN_EMAIL` to that email to be the operator, who can reset the server (see
+[docs/platform.md](docs/platform.md)).
 `./run.sh -d` runs detached; extra arguments pass through to `docker compose up`.
 
-**Starting over**: `./reset.sh` (or the "Reset all" button in the dashboard header) deletes every
+**Starting over**: `./reset.sh` (operators only; it asks for your email and password, or reads
+`AKTOR_EMAIL`/`AKTOR_PASSWORD`), or the "Reset all" button in the dashboard header, deletes every
 task, agent, message, event, tool call, and artifact and clears the live agent registry, without
 tearing the containers down. See §11.
 
@@ -403,6 +407,21 @@ see around it or change it.
   hash-chained per workspace, so an edited or deleted record is detected.
 
 See [docs/safety.md](docs/safety.md).
+
+## 10b-6. The platform: organizations, API keys, SDK and billing
+
+One server hosts many organizations, and the runtime (not only the API) keeps them apart:
+- **Isolation.** Agents inherit their organization and can only message, discover or share
+  memory with agents of the same one. Each organization gets its own SQL scratch schema.
+- **Access.** People sign in with email and password and have a role: Viewer, Member, Admin or
+  Owner. Scripts use API keys (`Authorization: Bearer ak_…`) and the
+  [TypeScript SDK](sdk/typescript/README.md). The API is described at `/openapi/v1.json`.
+- **Plans and usage.** Plans set monthly token and spend quotas plus workspace, agent and member
+  limits. Usage is metered per organization. An agent over quota pauses mid-turn and carries on
+  when the quota renews or the plan is upgraded (optionally through Stripe Checkout).
+
+The first account created on a server takes over existing data. Set `AUTH_MODE=disabled` for a
+single-user machine. See [docs/platform.md](docs/platform.md).
 
 ## 10c. Durable execution
 

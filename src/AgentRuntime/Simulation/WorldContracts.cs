@@ -75,6 +75,7 @@ public sealed record WorldSettings
     [Id(1)] public int TickIntervalSeconds { get; init; }
     [Id(2)] public int MaxTicks { get; init; }
     [Id(3)] public int MaxDurationMinutes { get; init; }
+    [Id(4)] public string TenantId { get; init; } = string.Empty;
 }
 
 // ---- Live world state ------------------------------------------------------
@@ -178,6 +179,7 @@ public sealed class WorldState
     /// <summary>Recent action results by idempotency key (bounded), for replay deduplication.</summary>
     [Id(23)] public Dictionary<string, WorldActionResult> ActionResults { get; set; } = [];
     [Id(24)] public List<string> ActionResultOrder { get; set; } = [];
+    [Id(25)] public string TenantId { get; set; } = string.Empty;
 }
 
 // ---- Actions ----------------------------------------------------------------
@@ -280,6 +282,7 @@ public sealed record WorldSnapshot
     [Id(18)] public WorldTotals Totals { get; init; } = new();
     [Id(19)] public string EnergyCosts { get; init; } = string.Empty;
     [Id(20)] public int MaxEnergy { get; init; }
+    [Id(21)] public string TenantId { get; init; } = string.Empty;
 }
 
 /// <summary>What the world asks the runtime for when a resident is born (genesis or bring_new_agent).</summary>
@@ -295,6 +298,7 @@ public sealed record ResidentCreationRequest
     public string? Relationships { get; init; }
     public string? ParentAgentId { get; init; }
     public int MaxDurationMinutes { get; init; }
+    public string TenantId { get; init; } = string.Empty;
 }
 
 /// <summary>Durable copy of world snapshots (CLAUDE.md section 39: Postgres is the source of truth

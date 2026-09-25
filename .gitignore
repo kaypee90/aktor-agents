@@ -32,3 +32,6 @@ src/AgentRuntime.Api/keys/
 # Third-party plugin binaries dropped into ./plugins (the folder's README is kept).
 /plugins/*
 !/plugins/README.md
+
+# SDK build output
+sdk/typescript/dist/

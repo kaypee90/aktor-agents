@@ -18,6 +18,9 @@ public sealed record RuntimeEvent
     public string? TaskId { get; init; }
     public string? CorrelationId { get; init; }
 
+    /// <summary>The organization the event belongs to; the live stream only shows a viewer their own.</summary>
+    public string? TenantId { get; init; }
+
     /// <summary>Short human-readable summary, e.g. "Spawning database specialist".</summary>
     public string Summary { get; init; } = string.Empty;
 

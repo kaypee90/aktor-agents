@@ -45,6 +45,20 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SecretProtector>();
         services.AddSingleton<AgentRuntime.Integrations.ISecretStore, PostgresSecretStore>();
         services.AddSingleton<AgentRuntime.Safety.IAuditLog, Persistence.PostgresAuditLog>();
+
+        // Platform: accounts and access (docs/platform.md), and billing if a provider is configured.
+        services.Configure<Identity.AuthOptions>(configuration.GetSection(Identity.AuthOptions.SectionName));
+        services.AddSingleton<Identity.IdentityService>();
+        if (string.Equals(configuration["Billing:Provider"], "stripe", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<Billing.IBillingProvider, Billing.StripeBillingProvider>();
+        }
+        else
+        {
+            services.AddSingleton<Billing.IBillingProvider, Billing.NoBillingProvider>();
+        }
+
+        services.AddSingleton<Billing.BillingService>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, McpPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, HttpApiPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SlackPlugin>();

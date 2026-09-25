@@ -46,6 +46,8 @@ public sealed record WorkspaceCreationRequest
     [Id(2)] public int? DailyTokenLimit { get; init; }
     [Id(3)] public decimal? DailyCostLimitUsd { get; init; }
     [Id(4)] public string OwnerId { get; init; } = "local";
+    /// <summary>The organization that owns the workspace (set by the API from the caller, never by an agent).</summary>
+    [Id(5)] public string TenantId { get; init; } = string.Empty;
 }
 
 [GenerateSerializer]
@@ -230,6 +232,7 @@ public sealed class WorkspaceState
     /// <summary>Tool call key → approval id, so a call re-checked after a restart finds its approval.</summary>
     [Id(27)] public Dictionary<string, string> ApprovalByCallKey { get; set; } = [];
     [Id(28)] public int NextApprovalNumber { get; set; } = 1;
+    [Id(29)] public string TenantId { get; set; } = string.Empty;
 }
 
 [GenerateSerializer]
@@ -272,6 +275,7 @@ public sealed record WorkspaceSnapshot
     [Id(19)] public Safety.WorkspaceSafetyPolicy SafetyPolicy { get; init; } = new();
     /// <summary>Pending first, then the most recent decided ones.</summary>
     [Id(20)] public List<Safety.ApprovalRecord> Approvals { get; init; } = [];
+    [Id(21)] public string TenantId { get; init; } = string.Empty;
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

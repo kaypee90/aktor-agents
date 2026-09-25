@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { AccountMenu } from "@/components/platform/AccountMenu";
+import { useAuth } from "@/components/platform/AuthProvider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getTask, listAgents, resetAll, subscribeToEvents } from "@/lib/api";
 import type { AgentListItem, RuntimeEvent, TaskSummary } from "@/lib/types";
@@ -15,6 +17,7 @@ const MAX_EVENTS = 500;
 const POLL_INTERVAL_MS = 2000;
 
 export default function Home() {
+  const { me } = useAuth();
   const [taskId, setTaskId] = useState<string | null>(null);
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -115,6 +118,7 @@ export default function Home() {
         >
           World simulation →
         </Link>
+        {me?.user?.platform_admin && (
         <button
           onClick={handleReset}
           disabled={resetting}
@@ -123,6 +127,8 @@ export default function Home() {
         >
           {resetting ? "Resetting…" : "Reset all"}
         </button>
+        )}
+        <AccountMenu />
         </div>
       </header>
 

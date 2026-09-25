@@ -105,6 +105,10 @@ public sealed class AgentState
     /// ContextCompactor). Shown to the LLM so long-lived agents keep continuity cheaply.</summary>
     [Id(42)] public string? ContextSummary { get; set; }
 
+    /// <summary>The organization this agent belongs to, set by the runtime at creation and
+    /// inherited by every agent it spawns (docs/platform.md).</summary>
+    [Id(43)] public string TenantId { get; set; } = string.Empty;
+
     /// <summary>Routine event handling that can use the fast model tier.</summary>
     public bool UsesFastTier => IsResident || (Standing && Role != "Coordinator");
 

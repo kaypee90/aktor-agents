@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AccountMenu } from "@/components/platform/AccountMenu";
 import { useCallback, useEffect, useState } from "react";
 import { getWorkspace, listWorkspaces, subscribeToEvents } from "@/lib/api";
 import type { RuntimeEvent } from "@/lib/types";
@@ -114,6 +115,7 @@ export default function WorkspacesPage() {
           <Link href="/" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Tasks</Link>
           <Link href="/simulation" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Simulation</Link>
           <span className="rounded bg-neutral-100 px-2 py-1 font-medium dark:bg-neutral-800">Workspaces</span>
+          <AccountMenu />
         </nav>
       </header>
 

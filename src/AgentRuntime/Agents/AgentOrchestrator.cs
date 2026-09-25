@@ -4,6 +4,7 @@ using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
 using AgentRuntime.Simulation;
+using AgentRuntime.Tenancy;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Options;
@@ -31,9 +32,13 @@ public sealed class AgentOrchestrator(
 
     private IAgentRegistryGrain Registry => grainFactory.GetGrain<IAgentRegistryGrain>(0);
 
+    private ITenantGrain Tenant(string tenantId) => grainFactory.GetGrain<ITenantGrain>(tenantId);
+
     public async Task<string> CreateRootAgentAsync(
-        string taskId, string goal, ResourceBudget? budget = null, CancellationToken cancellationToken = default)
+        string taskId, string goal, ResourceBudget? budget = null, string? tenantId = null, CancellationToken cancellationToken = default)
     {
+        var tenant = TenantIds.Normalize(tenantId);
+        var plan = await Tenant(tenant).GetPlan();
         var agentId = $"root-{Guid.NewGuid().ToString("n")[..8]}";
         var effectiveBudget = budget ?? _defaultBudget.ToBudget();
         // "filesystem" so the root can write a final consolidated report before completing
@@ -52,12 +57,15 @@ public sealed class AgentOrchestrator(
             Capabilities = ["orchestration"],
             ParentAgentId = null,
             Depth = 0,
-            RootAgentId = agentId
-        });
+            RootAgentId = agentId,
+            TenantId = tenant
+        }, tenantMaxActive: plan.MaxActiveAgents);
         if (!validation.Allowed)
         {
             throw new InvalidOperationException($"Cannot create root agent: {validation.RejectionReason}");
         }
+
+        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
         var grain = grainFactory.GetGrain<IAgentGrain>(agentId);
         await grain.Initialize(new AgentInitializationRequest
@@ -74,6 +82,7 @@ public sealed class AgentOrchestrator(
             Budget = effectiveBudget,
             Depth = 0,
             TaskId = taskId,
+            TenantId = tenant,
             AutoStart = true
         });
 
@@ -82,6 +91,7 @@ public sealed class AgentOrchestrator(
             Type = RuntimeEventType.TaskCreated,
             AgentId = agentId,
             TaskId = taskId,
+            TenantId = tenant,
             Summary = $"Task created: {goal}",
             Data = new Dictionary<string, string> { ["goal"] = goal, ["rootAgentId"] = agentId }
         }, cancellationToken);
@@ -119,6 +129,8 @@ public sealed class AgentOrchestrator(
 
         var parentGrain = grainFactory.GetGrain<IAgentGrain>(parentAgentId);
         var parentSnapshot = await parentGrain.GetSnapshot();
+        // A child always belongs to its parent's organization; nothing in the request can change it.
+        var tenant = TenantIds.Normalize(parentSnapshot.TenantId);
 
         // The per-agent MaxChildren budget (CLAUDE.md section 24) is separate from, and usually
         // tighter than, the global MaxChildrenPerAgent limit the registry enforces.
@@ -205,8 +217,9 @@ public sealed class AgentOrchestrator(
             Capabilities = request.Capabilities,
             ParentAgentId = parentAgentId,
             Depth = parentEntry.Depth + 1,
-            RootAgentId = parentSnapshot.RootAgentId
-        }, request.Role);
+            RootAgentId = parentSnapshot.RootAgentId,
+            TenantId = tenant
+        }, request.Role, (await Tenant(tenant).GetPlan()).MaxActiveAgents);
         if (!validation.Allowed)
         {
             return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId, validation.RejectionReason ?? "Spawn rejected.", cancellationToken);
@@ -218,6 +231,7 @@ public sealed class AgentOrchestrator(
             AgentId = parentAgentId,
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
+            TenantId = tenant,
             Summary = $"Agent '{parentAgentId}' requested a new '{request.Role}' agent."
         }, cancellationToken);
 
@@ -240,8 +254,10 @@ public sealed class AgentOrchestrator(
             AutoStart = true,
             WorkspaceId = parentSnapshot.WorkspaceId,
             Standing = policy is not null && request.Standing,
-            ContextWindow = policy is not null && request.Standing ? policy.StandingContextWindow : 0
+            ContextWindow = policy is not null && request.Standing ? policy.StandingContextWindow : 0,
+            TenantId = tenant
         });
+        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
         await events.PublishAsync(new RuntimeEvent
         {
@@ -249,6 +265,7 @@ public sealed class AgentOrchestrator(
             AgentId = parentAgentId,
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
+            TenantId = tenant,
             Summary = $"Spawned '{request.Role}' agent {childId}."
         }, cancellationToken);
 
@@ -283,9 +300,23 @@ public sealed class AgentOrchestrator(
 
         // GetGrain would otherwise silently activate an empty agent for a typo'd/hallucinated id
         // and report the message as delivered.
-        if (await Registry.GetAsync(message.ToAgentId) is null)
+        var recipient = await Registry.GetAsync(message.ToAgentId);
+        if (recipient is null)
         {
             return new AgentMessageAck { MessageId = message.MessageId, Accepted = false, RejectionReason = $"No such agent '{message.ToAgentId}'." };
+        }
+
+        // Agents only ever reach agents of their own organization; another tenant's agent is
+        // indistinguishable from one that doesn't exist. (Messages from the user are addressed by
+        // the API, which has already checked the workspace belongs to them.)
+        var tenant = TenantIds.Normalize(recipient.TenantId);
+        if (message.FromAgentId != "user")
+        {
+            var sender = await Registry.GetAsync(message.FromAgentId);
+            if (sender is not null && !TenantIds.Same(sender.TenantId, recipient.TenantId))
+            {
+                return new AgentMessageAck { MessageId = message.MessageId, Accepted = false, RejectionReason = $"No such agent '{message.ToAgentId}'." };
+            }
         }
 
         var target = grainFactory.GetGrain<IAgentGrain>(message.ToAgentId);
@@ -296,6 +327,7 @@ public sealed class AgentOrchestrator(
             AgentId = message.FromAgentId,
             TargetAgentId = message.ToAgentId,
             TaskId = message.TaskId,
+            TenantId = tenant,
             CorrelationId = message.CorrelationId,
             Summary = $"{message.FromAgentId} -> {message.ToAgentId}: {message.MessageType}",
             Data = new Dictionary<string, string>
@@ -342,6 +374,7 @@ public sealed class AgentOrchestrator(
         // through SendMessageAsync, so it needs SendMessages.
         var permissions = ToolPermission.WorldActions | ToolPermission.SendMessages | ToolPermission.SpawnAgents;
         var tools = FilterToolsByPermission(WorldToolCatalog.ToolNames, permissions);
+        var tenant = TenantIds.Normalize(request.TenantId);
 
         var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
         {
@@ -352,8 +385,9 @@ public sealed class AgentOrchestrator(
             Capabilities = ["resident"],
             ParentAgentId = request.ParentAgentId,
             Depth = 0,
-            RootAgentId = request.WorldId
-        });
+            RootAgentId = request.WorldId,
+            TenantId = tenant
+        }, tenantMaxActive: (await Tenant(tenant).GetPlan()).MaxActiveAgents);
         if (!validation.Allowed)
         {
             return new SpawnAgentResult { AgentId = string.Empty, Status = "rejected", RejectionReason = validation.RejectionReason };
@@ -382,8 +416,10 @@ public sealed class AgentOrchestrator(
             Depth = validation.AllowedDepth,
             TaskId = request.WorldId,
             WorldId = request.WorldId,
-            Metadata = metadata
+            Metadata = metadata,
+            TenantId = tenant
         });
+        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
         if (request.ParentAgentId is not null)
         {
@@ -393,6 +429,7 @@ public sealed class AgentOrchestrator(
                 AgentId = request.ParentAgentId,
                 TargetAgentId = agentId,
                 TaskId = request.WorldId,
+                TenantId = tenant,
                 Summary = $"Resident {request.ParentAgentId} brought '{request.Name}' ({agentId}) into the world."
             }, cancellationToken);
         }
@@ -401,9 +438,10 @@ public sealed class AgentOrchestrator(
     }
 
     public async Task<string> CreateWorkspaceCoordinatorAsync(
-        string workspaceId, string workspaceName, string goal, WorkspacePolicy policy, CancellationToken cancellationToken = default)
+        string workspaceId, string workspaceName, string goal, WorkspacePolicy policy, string? tenantId = null, CancellationToken cancellationToken = default)
     {
         var agentId = WorkspaceIds.CoordinatorId(workspaceId);
+        var tenant = TenantIds.Normalize(tenantId);
         var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
                           | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.WorkspaceActions
                           | ToolPermission.Integrations;
@@ -422,8 +460,9 @@ public sealed class AgentOrchestrator(
             Goal = goal,
             Status = AgentStatus.Created,
             Capabilities = ["coordination"],
-            RootAgentId = agentId
-        });
+            RootAgentId = agentId,
+            TenantId = tenant
+        }, tenantMaxActive: (await Tenant(tenant).GetPlan()).MaxActiveAgents);
         if (!validation.Allowed)
         {
             throw new InvalidOperationException($"Cannot create the workspace coordinator: {validation.RejectionReason}");
@@ -442,6 +481,7 @@ public sealed class AgentOrchestrator(
             Budget = policy.StandingBudget,
             TaskId = workspaceId,
             WorkspaceId = workspaceId,
+            TenantId = tenant,
             Standing = true,
             ContextWindow = policy.StandingContextWindow,
             InitialContext = "This is the user's first request for the workspace. Set up whatever standing agents, " +
@@ -449,6 +489,7 @@ public sealed class AgentOrchestrator(
                              "call wait_for_events.",
             AutoStart = true
         });
+        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
         return agentId;
     }
@@ -471,11 +512,13 @@ public sealed class AgentOrchestrator(
     private async Task<SpawnAgentResult> RejectSpawnAsync(
         string parentAgentId, string? taskId, string reason, CancellationToken cancellationToken)
     {
+        var parent = await Registry.GetAsync(parentAgentId);
         await events.PublishAsync(new RuntimeEvent
         {
             Type = RuntimeEventType.AgentSpawnRequested,
             AgentId = parentAgentId,
             TaskId = taskId,
+            TenantId = TenantIds.Normalize(parent?.TenantId),
             Summary = $"Spawn rejected: {reason}"
         }, cancellationToken);
 

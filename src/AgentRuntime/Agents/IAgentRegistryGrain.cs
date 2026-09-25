@@ -16,14 +16,16 @@ public interface IAgentRegistryGrain : IGrainWithIntegerKey
     /// discipline: a model that reacts to a tool failure by spawning another copy of itself would
     /// otherwise fan out unboundedly, burning through both the token budget and, with a real
     /// provider, its rate limit.</summary>
-    Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null);
+    /// <remarks>Total and active agent limits count the agent's own organization only, and
+    /// <paramref name="tenantMaxActive"/> (its plan's limit, 0 = none) applies on top.</remarks>
+    Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null, string? tenantId = null, int tenantMaxActive = 0);
 
     Task RegisterAsync(AgentDirectoryEntry entry);
 
     /// <summary>Validates (as <see cref="ValidateSpawnAsync"/>) and, if allowed, registers the entry
     /// in the same grain turn with its depth set to the validated depth. Validating and registering
     /// in separate calls lets two concurrent spawns both pass the total/active limit checks.</summary>
-    Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null);
+    Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0);
 
     Task UpdateStatusAsync(string agentId, AgentStatus status);
 

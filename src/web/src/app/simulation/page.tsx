@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { AccountMenu } from "@/components/platform/AccountMenu";
 import { useCallback, useEffect, useState } from "react";
 import { getWorld, listWorlds, subscribeToEvents } from "@/lib/api";
 import type { RuntimeEvent } from "@/lib/types";
@@ -138,6 +139,7 @@ export default function SimulationPage() {
             ))}
             {worldId && !worlds.some((w) => w.world_id === worldId) && <option value={worldId}>{worldId}</option>}
           </select>
+          <AccountMenu />
         </nav>
       </header>
 

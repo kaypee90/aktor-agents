@@ -17,6 +17,7 @@ public sealed class EfWorkspaceArchive(IDbContextFactory<AgentDbContext> dbFacto
             db.Workspaces.Add(record);
         }
 
+        record.TenantId = AgentRuntime.Tenancy.TenantIds.Normalize(snapshot.TenantId);
         record.Name = snapshot.Name;
         record.Goal = snapshot.Goal;
         record.Status = snapshot.Status.ToString();

@@ -19,7 +19,7 @@ public sealed class ReadMemoryTool(IMemoryStore memory) : ITool
         var args = JsonSerializer.Deserialize<KeyArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid read_memory arguments.");
 
-        var record = await memory.ReadAsync(request.AgentId, args.Key, request.CancellationToken);
+        var record = await memory.ReadAsync(request.TenantId, request.AgentId, args.Key, request.CancellationToken);
         return record is null
             ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { found = false }, ToolJson.Options))
             : ToolExecutionResult.Ok(JsonSerializer.Serialize(new { found = true, value = record.Value }, ToolJson.Options));
@@ -57,6 +57,7 @@ public sealed class WriteMemoryTool(IMemoryStore memory) : ITool
         await memory.WriteAsync(new MemoryRecord
         {
             AgentId = request.AgentId,
+            TenantId = request.TenantId,
             Kind = args.Shared ? MemoryKind.Shared : MemoryKind.Working,
             Key = args.Key,
             Value = args.Value
@@ -83,7 +84,7 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
         var args = JsonSerializer.Deserialize<QueryArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid search_knowledge arguments.");
 
-        var results = await memory.SearchAsync(args.Query, MemoryKind.Shared, cancellationToken: request.CancellationToken);
+        var results = await memory.SearchAsync(request.TenantId, args.Query, MemoryKind.Shared, cancellationToken: request.CancellationToken);
         return ToolExecutionResult.Ok(JsonSerializer.Serialize(new
         {
             results = results.Select(r => new { r.AgentId, r.Key, r.Value })

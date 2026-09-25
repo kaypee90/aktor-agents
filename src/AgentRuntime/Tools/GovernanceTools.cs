@@ -112,7 +112,8 @@ public sealed class FindAgentsTool(IAgentOrchestrator orchestrator) : ITool
         {
             Capabilities = args.Capabilities,
             Status = status,
-            RootAgentId = caller?.RootAgentId
+            RootAgentId = caller?.RootAgentId ?? request.AgentId,
+            TenantId = request.TenantId
         });
 
         var trimmed = results
@@ -203,7 +204,8 @@ public sealed class GetAgentStatusTool(IAgentOrchestrator orchestrator) : ITool
                    ?? throw new ArgumentException("Invalid get_agent_status arguments.");
 
         var snapshot = await orchestrator.GetSnapshotAsync(args.AgentId);
-        if (snapshot is null)
+        // Another organization's agent is reported exactly like one that doesn't exist.
+        if (snapshot is null || !Tenancy.TenantIds.Same(snapshot.TenantId, request.TenantId))
         {
             return ToolExecutionResult.Fail($"No such agent '{args.AgentId}'.");
         }
@@ -235,6 +237,12 @@ public sealed class ListChildrenTool(IAgentOrchestrator orchestrator) : ITool
     {
         var args = JsonSerializer.Deserialize<ChildrenArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? new ChildrenArgs(request.AgentId);
+        var target = await orchestrator.GetSnapshotAsync(args.AgentId);
+        if (target is null || !Tenancy.TenantIds.Same(target.TenantId, request.TenantId))
+        {
+            return ToolExecutionResult.Fail($"No such agent '{args.AgentId}'.");
+        }
+
         var children = await orchestrator.ListChildrenAsync(args.AgentId);
         return ToolExecutionResult.Ok(JsonSerializer.Serialize(new { children }, ToolJson.Options));
     }

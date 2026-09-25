@@ -109,6 +109,7 @@ public sealed class FilesystemWriteTool(IOptions<ToolsOptions> options, IEventPu
             Type = RuntimeEventType.ArtifactCreated,
             AgentId = request.AgentId,
             TaskId = request.TaskId,
+            TenantId = request.TenantId,
             Summary = $"Agent '{request.AgentId}' created artifact '{args.Path}'.",
             Data = new Dictionary<string, string>
             {

@@ -64,6 +64,11 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task<WorkspacePolicy> GetPolicy();
 
+    /// <summary>The owning organization, or null if the workspace doesn't exist. The API checks it
+    /// on every request, so another tenant's workspace looks like one that doesn't exist.</summary>
+    [AlwaysInterleave]
+    Task<string?> GetTenantId();
+
     Task UpdateBudget(int? dailyTokenLimit, decimal? dailyCostLimitUsd);
 
     Task Pause();

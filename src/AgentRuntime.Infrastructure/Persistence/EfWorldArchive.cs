@@ -25,6 +25,7 @@ public sealed class EfWorldArchive(IDbContextFactory<AgentDbContext> dbFactory) 
             db.Worlds.Add(record);
         }
 
+        record.TenantId = AgentRuntime.Tenancy.TenantIds.Normalize(snapshot.TenantId);
         record.Name = snapshot.Name;
         record.Seed = snapshot.Seed;
         record.Status = snapshot.Status.ToString();

@@ -42,6 +42,7 @@ public sealed class PluginsController(PluginCatalog catalog) : ControllerBase
 /// encrypted vault; no endpoint ever returns them.</summary>
 [ApiController]
 [Route("api/workspaces/{workspaceId}/connections")]
+[AgentRuntime.Api.Platform.WorkspaceAccess]
 public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
 {
     public sealed record AddBody(string PluginId, string Name, Dictionary<string, string>? Settings, Dictionary<string, string>? Secrets,
@@ -55,6 +56,7 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
         WorkspaceIds.IsWorkspace(workspaceId) ? Ok(await Workspace(workspaceId).ListConnections()) : NotFound();
 
     [HttpPost]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Add(string workspaceId, [FromBody] AddBody body)
     {
         if (!WorkspaceIds.IsWorkspace(workspaceId)) return NotFound();
@@ -78,6 +80,7 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
     }
 
     [HttpPatch("{connectionId}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Update(string workspaceId, string connectionId, [FromBody] UpdateBody body)
     {
         if (!WorkspaceIds.IsWorkspace(workspaceId)) return NotFound();
@@ -94,6 +97,7 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
     }
 
     [HttpPost("{connectionId}/refresh")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Refresh(string workspaceId, string connectionId)
     {
         var result = await Workspace(workspaceId).RefreshConnectionTools(connectionId);
@@ -101,6 +105,7 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
     }
 
     [HttpDelete("{connectionId}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Remove(string workspaceId, string connectionId)
     {
         await Workspace(workspaceId).RemoveConnection(connectionId);
@@ -115,6 +120,7 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
 /// </summary>
 [ApiController]
 [Route("api/channels")]
+[Microsoft.AspNetCore.Authorization.AllowAnonymous]
 public sealed class ChannelsController(IGrainFactory grains) : ControllerBase
 {
     private const int MaxBodyBytes = 64 * 1024;

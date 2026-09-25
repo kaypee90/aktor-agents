@@ -39,7 +39,7 @@ public sealed partial class DatabaseQueryTool(AgentDatabaseSandbox sandbox) : IT
         var args = JsonSerializer.Deserialize<SqlArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid database_query arguments.");
 
-        if (sandbox.ConnectionString is not { } connectionString)
+        if (await sandbox.ConnectionStringForAsync(request.TenantId, request.CancellationToken) is not { } connectionString)
         {
             return ToolExecutionResult.Fail("database_query is not available (the sandbox database role isn't configured).");
         }

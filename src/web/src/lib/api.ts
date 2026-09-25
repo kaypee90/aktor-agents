@@ -13,12 +13,21 @@ import type {
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5080";
 
+/** Fired when the API says the session is gone; the auth gate sends the user to sign in. */
+export const UNAUTHORIZED_EVENT = "aktor:unauthorized";
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
     cache: "no-store",
+    // The session is an HttpOnly cookie on the API's origin.
+    credentials: "include",
   });
+
+  if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -125,7 +134,7 @@ export function subscribeToEvents(
   const url = new URL(`${API_BASE}/ws/events`);
   if (taskId) url.searchParams.set("taskId", taskId);
 
-  const source = new EventSource(url.toString());
+  const source = new EventSource(url.toString(), { withCredentials: true });
   source.onmessage = (e) => {
     try {
       onEvent(JSON.parse(e.data));
@@ -279,3 +288,101 @@ export function apiErrorMessage(err: unknown): string {
     return text;
   }
 }
+
+// ---- Platform: accounts, organization, API keys, billing (docs/platform.md) ----
+
+
+export function getMe() {
+  return apiFetch<import("./platformTypes").Me>("/api/auth/me");
+}
+
+export function signIn(email: string, password: string) {
+  return apiFetch<{ user_id: string; tenant_id: string }>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+}
+
+export function signUp(input: { email: string; password: string; name?: string; organization?: string; invitation?: string }) {
+  return apiFetch<{ user_id: string; tenant_id: string }>("/api/auth/signup", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function signOut() {
+  return apiFetch<void>("/api/auth/logout", { method: "POST" });
+}
+
+export function switchOrganization(tenantId: string) {
+  return apiFetch<void>("/api/auth/switch", { method: "POST", body: JSON.stringify({ tenant_id: tenantId }) });
+}
+
+export function changePassword(currentPassword: string, newPassword: string) {
+  return apiFetch<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
+}
+
+export function peekInvitation(token: string) {
+  return apiFetch<{ organization: string; email: string; role: string }>(`/api/auth/invitations/${encodeURIComponent(token)}`);
+}
+
+export function acceptInvitation(token: string) {
+  return apiFetch<{ tenant_id: string }>("/api/auth/invitations/accept", { method: "POST", body: JSON.stringify({ invitation: token }) });
+}
+
+export function getOrganization() {
+  return apiFetch<import("./platformTypes").Organization>("/api/organization");
+}
+
+export function renameOrganization(name: string) {
+  return apiFetch<void>("/api/organization", { method: "PATCH", body: JSON.stringify({ name }) });
+}
+
+export function listMembers() {
+  return apiFetch<import("./platformTypes").Member[]>("/api/organization/members");
+}
+
+export function setMemberRole(userId: string, role: import("./platformTypes").Role) {
+  return apiFetch<void>(`/api/organization/members/${userId}/role`, { method: "PUT", body: JSON.stringify({ role }) });
+}
+
+export function removeMember(userId: string) {
+  return apiFetch<void>(`/api/organization/members/${userId}`, { method: "DELETE" });
+}
+
+export function listInvitations() {
+  return apiFetch<import("./platformTypes").Invitation[]>("/api/organization/invitations");
+}
+
+export function inviteMember(email: string, role: import("./platformTypes").Role) {
+  return apiFetch<import("./platformTypes").Invitation & { token: string }>("/api/organization/invitations", {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export function revokeInvitation(invitationId: string) {
+  return apiFetch<void>(`/api/organization/invitations/${invitationId}`, { method: "DELETE" });
+}
+
+export function listApiKeys() {
+  return apiFetch<import("./platformTypes").ApiKey[]>("/api/api-keys");
+}
+
+export function createApiKey(name: string, role: import("./platformTypes").Role, expiresInDays?: number) {
+  return apiFetch<{ key_id: string; name: string; role: string; key: string }>("/api/api-keys", {
+    method: "POST",
+    body: JSON.stringify({ name, role, expires_in_days: expiresInDays }),
+  });
+}
+
+export function revokeApiKey(keyId: string) {
+  return apiFetch<void>(`/api/api-keys/${keyId}`, { method: "DELETE" });
+}
+
+export function getBilling() {
+  return apiFetch<import("./platformTypes").BillingView>("/api/billing");
+}
+
+export function startCheckout(planId: string) {
+  return apiFetch<{ url: string }>("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan_id: planId }) });
+}
+
+export function openBillingPortal() {
+  return apiFetch<{ url: string }>("/api/billing/portal", { method: "POST" });
+}
+

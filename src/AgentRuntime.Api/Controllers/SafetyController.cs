@@ -1,3 +1,4 @@
+using AgentRuntime.Api.Platform;
 using AgentRuntime.Safety;
 using AgentRuntime.Workspaces;
 using Microsoft.AspNetCore.Mvc;
@@ -7,17 +8,22 @@ namespace AgentRuntime.Api.Controllers;
 /// <summary>A workspace's safety policy, its approval requests and its audit log (docs/safety.md).</summary>
 [ApiController]
 [Route("api/workspaces/{workspaceId}")]
+[AgentRuntime.Api.Platform.WorkspaceAccess]
 public sealed class SafetyController(IGrainFactory grains, IAuditLog audit) : ControllerBase
 {
     public sealed record DecisionBody(bool Approve, string? Reason);
 
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
 
+    /// <summary>Who decided, for the chat and the audit log: the person's email, or the API key.</summary>
+    private string Who() => HttpContext.Caller() is var c && c.Email is { } email ? email : c.ActorId == "local" ? "user" : c.ActorId;
+
     [HttpGet("policy")]
     public async Task<IActionResult> GetPolicy(string workspaceId) =>
         WorkspaceIds.IsWorkspace(workspaceId) ? Ok(await Workspace(workspaceId).GetSafetyPolicy()) : NotFound();
 
     [HttpPut("policy")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> PutPolicy(string workspaceId, [FromBody] WorkspaceSafetyPolicy policy)
     {
         if (!WorkspaceIds.IsWorkspace(workspaceId) || await Workspace(workspaceId).GetSnapshot() is null) return NotFound();
@@ -26,7 +32,7 @@ public sealed class SafetyController(IGrainFactory grains, IAuditLog audit) : Co
             return BadRequest(new { error = "Every rule needs a tool pattern (use * for any tool)." });
         }
 
-        await Workspace(workspaceId).UpdateSafetyPolicy(policy, "user");
+        await Workspace(workspaceId).UpdateSafetyPolicy(policy, Who());
         return Ok(await Workspace(workspaceId).GetSafetyPolicy());
     }
 
@@ -45,10 +51,11 @@ public sealed class SafetyController(IGrainFactory grains, IAuditLog audit) : Co
     }
 
     [HttpPost("approvals/{approvalId}/decision")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Decide(string workspaceId, string approvalId, [FromBody] DecisionBody body)
     {
         if (!WorkspaceIds.IsWorkspace(workspaceId)) return NotFound();
-        var result = await Workspace(workspaceId).DecideApproval(approvalId, body.Approve, body.Reason, "user", "api");
+        var result = await Workspace(workspaceId).DecideApproval(approvalId, body.Approve, body.Reason, Who(), HttpContext.Caller().IsApiKey ? "api" : "dashboard");
         return result.Success ? Ok(new { message = result.Message }) : BadRequest(new { error = result.Message });
     }
 

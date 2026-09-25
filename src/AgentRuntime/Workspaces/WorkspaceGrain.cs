@@ -57,6 +57,7 @@ public sealed partial class WorkspaceGrain(
         s.Name = Clip(request.Name, 100, "Workspace");
         s.Goal = Clip(request.Goal, _opts.MaxMessageLength, string.Empty);
         s.OwnerId = request.OwnerId;
+        s.TenantId = Tenancy.TenantIds.Normalize(request.TenantId);
         s.CreatedAt = DateTimeOffset.UtcNow;
         s.DailyTokenLimit = Math.Max(1_000, request.DailyTokenLimit ?? _opts.DefaultDailyTokenLimit);
         s.DailyCostLimitUsd = Math.Max(0.01m, request.DailyCostLimitUsd ?? _opts.DefaultDailyCostLimitUsd);
@@ -68,12 +69,14 @@ public sealed partial class WorkspaceGrain(
         await SaveAsync();
 
         // The coordinator's first turn is the workspace goal itself.
-        await orchestrator.CreateWorkspaceCoordinatorAsync(s.WorkspaceId, s.Name, s.Goal, BuildPolicy());
+        await orchestrator.CreateWorkspaceCoordinatorAsync(s.WorkspaceId, s.Name, s.Goal, BuildPolicy(), s.TenantId);
 
         await PublishAsync(RuntimeEventType.WorkspaceCreated, $"Workspace '{s.Name}' created.",
             new Dictionary<string, string> { ["name"] = s.Name, ["coordinator"] = s.CoordinatorAgentId });
         await ArchiveAsync();
     }
+
+    public Task<string?> GetTenantId() => Task.FromResult(Exists ? Tenancy.TenantIds.Normalize(S.TenantId) : null);
 
     public async Task Pause()
     {
@@ -1286,6 +1289,7 @@ public sealed partial class WorkspaceGrain(
         return new WorkspaceSnapshot
         {
             WorkspaceId = S.WorkspaceId,
+            TenantId = Tenancy.TenantIds.Normalize(S.TenantId),
             Name = S.Name,
             Goal = S.Goal,
             Status = S.Status,
@@ -1442,6 +1446,7 @@ public sealed partial class WorkspaceGrain(
         {
             Type = type,
             TaskId = S.WorkspaceId,
+            TenantId = Tenancy.TenantIds.Normalize(S.TenantId),
             AgentId = agentId,
             Summary = summary,
             Data = data ?? new Dictionary<string, string>()

@@ -44,9 +44,11 @@ public sealed class PersistenceEventSubscriber(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
+        var tenant = AgentRuntime.Tenancy.TenantIds.Normalize(evt.TenantId);
 
         db.Events.Add(new EventRecord
         {
+            TenantId = tenant,
             EventId = evt.EventId,
             Type = evt.Type.ToString(),
             Timestamp = evt.Timestamp,
@@ -64,6 +66,7 @@ public sealed class PersistenceEventSubscriber(
             case RuntimeEventType.TaskCreated when evt.TaskId is not null:
                 db.Tasks.Add(new TaskRecord
                 {
+                    TenantId = tenant,
                     TaskId = evt.TaskId,
                     Goal = evt.Data.GetValueOrDefault("goal", evt.Summary),
                     RootAgentId = evt.Data.GetValueOrDefault("rootAgentId", evt.AgentId),
@@ -88,6 +91,7 @@ public sealed class PersistenceEventSubscriber(
                 if (await db.Messages.AnyAsync(m => m.MessageId == messageId, ct)) break;
                 db.Messages.Add(new MessageRecord
                 {
+                    TenantId = tenant,
                     MessageId = messageId,
                     FromAgentId = evt.AgentId ?? string.Empty,
                     ToAgentId = evt.TargetAgentId ?? string.Empty,
@@ -103,6 +107,7 @@ public sealed class PersistenceEventSubscriber(
             case RuntimeEventType.AgentToolCompleted:
                 db.ToolCalls.Add(new ToolCallRecord
                 {
+                    TenantId = tenant,
                     AgentId = evt.AgentId ?? string.Empty,
                     TaskId = evt.TaskId ?? string.Empty,
                     ToolName = evt.Data.GetValueOrDefault("tool", "unknown"),
@@ -116,6 +121,7 @@ public sealed class PersistenceEventSubscriber(
             case RuntimeEventType.ArtifactCreated:
                 db.Artifacts.Add(new ArtifactRecord
                 {
+                    TenantId = tenant,
                     ArtifactId = evt.Data.GetValueOrDefault("artifactId", Guid.NewGuid().ToString("n")),
                     Type = evt.Data.GetValueOrDefault("type", "Document"),
                     Location = evt.Data.GetValueOrDefault("location", string.Empty),
@@ -144,6 +150,7 @@ public sealed class PersistenceEventSubscriber(
             db.Agents.Add(new AgentRecord
             {
                 AgentId = snapshot.AgentId,
+                TenantId = AgentRuntime.Tenancy.TenantIds.Normalize(snapshot.TenantId),
                 ParentAgentId = snapshot.ParentAgentId,
                 RootAgentId = snapshot.RootAgentId,
                 TaskId = snapshot.TaskId,

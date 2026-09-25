@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
+using AgentRuntime.Api.Platform;
 using AgentRuntime.Configuration;
 using AgentRuntime.Events;
 using AgentRuntime.Infrastructure;
@@ -25,7 +27,28 @@ builder.Services.AddControllers().AddJsonOptions(o =>
     o.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
+{
+    doc.Info.Title = "Aktor Agents API";
+    doc.Info.Description = "Authenticate with an API key: 'Authorization: Bearer ak_…' (Settings → API keys). See docs/platform.md.";
+    return Task.CompletedTask;
+}));
+
+// Platform: every request is authenticated (session cookie or API key) and scoped to one
+// organization (docs/platform.md). Secret-URL endpoints (webhooks, channels) opt out explicitly.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<TenantAccess>();
+builder.Services.AddAuthentication(AktorAuthenticationHandler.SchemeName)
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AktorAuthenticationHandler>(AktorAuthenticationHandler.SchemeName, null);
+builder.Services.AddAuthorization(Policies.Add);
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    // Password guessing: a few attempts per minute per client address.
+    o.AddPolicy("auth", http => RateLimitPartition.GetFixedWindowLimiter(
+        http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 
 builder.Services.AddAgentRuntimeCore(builder.Configuration);
 builder.Services.AddAgentRuntimeInfrastructure(builder.Configuration);
@@ -41,7 +64,9 @@ builder.Services.AddCors(options =>
     options.AddDefaultPolicy(policy => policy
         .WithOrigins(allowedOrigins)
         .AllowAnyHeader()
-        .AllowAnyMethod());
+        .AllowAnyMethod()
+        // The dashboard signs in with a cookie, so its origin may send credentials.
+        .AllowCredentials());
 });
 
 builder.Services.AddOpenTelemetry()
@@ -64,24 +89,28 @@ var app = builder.Build();
 
 await app.MigrateDatabaseAsync();
 
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+// The API description is public: it's what SDKs and integrators build against.
+app.MapOpenApi().AllowAnonymous();
 
 app.UseCors();
+app.UseAuthentication();
+app.UseRateLimiter();
+app.UseAuthorization();
 app.MapControllers();
 
 // Real-time event stream (CLAUDE.md sections 29, 31, 46) via Server-Sent Events.
 app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, string? taskId, CancellationToken ct) =>
 {
+    // Each viewer sees their own organization's events only.
+    var tenant = http.Caller().TenantId;
     http.Response.Headers.ContentType = "text/event-stream";
     http.Response.Headers.CacheControl = "no-cache";
     http.Response.Headers["X-Accel-Buffering"] = "no";
 
     await foreach (var evt in stream.Subscribe(ct))
     {
-        if (taskId is not null && !string.Equals(evt.TaskId, taskId, StringComparison.Ordinal))
+        if (!AgentRuntime.Tenancy.TenantIds.Same(evt.TenantId, tenant) ||
+            (taskId is not null && !string.Equals(evt.TaskId, taskId, StringComparison.Ordinal)))
         {
             continue;
         }

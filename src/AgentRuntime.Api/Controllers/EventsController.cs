@@ -1,3 +1,4 @@
+using AgentRuntime.Api.Platform;
 using AgentRuntime.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,12 +8,12 @@ namespace AgentRuntime.Api.Controllers;
 /// <summary>Historical event queries. The live feed is served separately over SSE at /ws/events.</summary>
 [ApiController]
 [Route("api/events")]
-public sealed class EventsController(AgentDbContext db) : ControllerBase
+public sealed class EventsController(AgentDbContext db, TenantAccess access) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? taskId, [FromQuery] int limit = 200, CancellationToken ct = default)
     {
-        var query = db.Events.AsNoTracking().AsQueryable();
+        var query = db.Events.AsNoTracking().Where(e => e.TenantId == access.TenantId);
         if (!string.IsNullOrWhiteSpace(taskId))
         {
             query = query.Where(e => e.TaskId == taskId);

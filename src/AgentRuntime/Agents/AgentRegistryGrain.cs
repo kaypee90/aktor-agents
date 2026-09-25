@@ -19,10 +19,19 @@ public sealed class AgentRegistryGrain(
 {
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
 
-    public Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null)
+    public Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null, string? tenantId = null, int tenantMaxActive = 0)
     {
-        var totalAgents = state.State.Agents.Count;
-        var activeAgents = state.State.Agents.Values.Count(a => IsActive(a.Status));
+        // Limits are per organization: one tenant filling up can't stop another from working.
+        var tenant = Tenancy.TenantIds.Normalize(tenantId);
+        var tenantAgents = state.State.Agents.Values.Where(a => Tenancy.TenantIds.Normalize(a.TenantId) == tenant).ToList();
+        var totalAgents = tenantAgents.Count;
+        var activeAgents = tenantAgents.Count(a => IsActive(a.Status));
+
+        if (tenantMaxActive > 0 && activeAgents >= tenantMaxActive)
+        {
+            return Task.FromResult(SpawnValidationResult.Reject(
+                $"The organization's plan allows {tenantMaxActive} active agents and all are in use. Reuse an existing agent, or finish some work first."));
+        }
 
         if (totalAgents >= _limits.MaxTotalAgents)
         {
@@ -40,6 +49,11 @@ public sealed class AgentRegistryGrain(
         if (parentAgentId is not null)
         {
             if (!state.State.Agents.TryGetValue(parentAgentId, out var parent))
+            {
+                return Task.FromResult(SpawnValidationResult.Reject($"Unknown parent agent '{parentAgentId}'."));
+            }
+
+            if (tenantId is not null && !Tenancy.TenantIds.Same(parent.TenantId, tenantId))
             {
                 return Task.FromResult(SpawnValidationResult.Reject($"Unknown parent agent '{parentAgentId}'."));
             }
@@ -82,7 +96,7 @@ public sealed class AgentRegistryGrain(
             entry.AgentId, entry.ParentAgentId, entry.Depth);
     }
 
-    public async Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null)
+    public async Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0)
     {
         // Idempotent for replays: re-registering the same id (a spawn retried after a crash, with
         // an id derived from its idempotency key) succeeds without counting against any limit.
@@ -91,7 +105,7 @@ public sealed class AgentRegistryGrain(
             return SpawnValidationResult.Allow(existing.Depth);
         }
 
-        var validation = await ValidateSpawnAsync(entry.ParentAgentId, role);
+        var validation = await ValidateSpawnAsync(entry.ParentAgentId, role, entry.TenantId, tenantMaxActive);
         if (!validation.Allowed)
         {
             return validation;
@@ -125,6 +139,11 @@ public sealed class AgentRegistryGrain(
         if (query.Status is { } status)
         {
             results = results.Where(a => a.Status == status);
+        }
+
+        if (query.TenantId is { } tenantId)
+        {
+            results = results.Where(a => Tenancy.TenantIds.Same(a.TenantId, tenantId));
         }
 
         if (query.RootAgentId is { } rootId)
