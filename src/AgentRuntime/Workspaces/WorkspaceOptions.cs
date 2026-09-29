@@ -26,6 +26,11 @@ public sealed class WorkspaceOptions
 
     public int MaxAgentsPerWorkspace { get; set; } = 25;
 
+    /// <summary>Agents one agent may spawn for a single request (a user message or an event).
+    /// Bounds the cost of a model misjudging a small request as a big one; work that turns out
+    /// bigger continues through partial results handed back to the parent.</summary>
+    public int MaxSpawnsPerRequest { get; set; } = 3;
+
     // ---- Triggers ----
     public int MaxTriggersPerWorkspace { get; set; } = 50;
     /// <summary>Shortest schedule interval. Short intervals on an LLM-backed agent burn tokens fast.</summary>

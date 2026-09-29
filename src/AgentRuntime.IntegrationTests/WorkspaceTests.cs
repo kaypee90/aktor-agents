@@ -67,7 +67,7 @@ public sealed class WorkspaceTests : IAsyncLifetime
                 if (input.Contains("Your goal:"))
                 {
                     return Respond(tokensPerCall,
-                        Call("spawn_agent", new { role = "Stock Monitor", goal = "Watch stock levels", standing = true }),
+                        Call("spawn_agent", new { role = "Stock Monitor", goal = "Watch stock levels", standing = true, why_not_myself = "Ongoing monitoring." }),
                         Call("notify_user", new { text = "I've set up a Stock Monitor." }));
                 }
 

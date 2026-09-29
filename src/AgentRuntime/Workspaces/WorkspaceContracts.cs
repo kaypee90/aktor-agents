@@ -175,6 +175,11 @@ public sealed record WorkspacePolicy
     [Id(2)] public int StandingContextWindow { get; init; }
     [Id(3)] public int MaxAgents { get; init; }
     [Id(4)] public WorkspaceStatus Status { get; init; }
+    /// <summary>Agents one agent may spawn per outside request (a user message or an event).</summary>
+    [Id(5)] public int MaxSpawnsPerRequest { get; init; }
+    /// <summary>What's left of the workspace's shared daily budget, told to agents when they spawn.</summary>
+    [Id(6)] public long TokensLeftToday { get; init; }
+    [Id(7)] public decimal CostLeftTodayUsd { get; init; }
 }
 
 [GenerateSerializer]
@@ -248,6 +253,8 @@ public sealed record WorkspaceAgentView
     [Id(7)] public decimal CostUsd { get; init; }
     [Id(8)] public string? CurrentTask { get; init; }
     [Id(9)] public long CachedInputTokens { get; init; }
+    [Id(10)] public DateTimeOffset? CreatedAt { get; init; }
+    [Id(11)] public DateTimeOffset? CompletedAt { get; init; }
 }
 
 [GenerateSerializer]

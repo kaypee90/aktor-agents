@@ -12,6 +12,17 @@ export interface ChatEntry {
   urgency: "info" | "warning" | "urgent";
 }
 
+/** A file an agent saved with filesystem_write; `versions` counts how many times it was written. */
+export interface WorkspaceFile {
+  artifact_id: string;
+  path: string;
+  file_name: string;
+  size_bytes: number;
+  versions: number;
+  created_by_agent: string;
+  updated_at: string;
+}
+
 export interface TriggerView {
   trigger_id: string;
   kind: TriggerKind;
@@ -47,6 +58,8 @@ export interface WorkspaceAgentView {
   cost_usd: number;
   current_task: string | null;
   cached_input_tokens: number;
+  created_at: string | null;
+  completed_at: string | null;
 }
 
 export interface WorkspaceSnapshot {

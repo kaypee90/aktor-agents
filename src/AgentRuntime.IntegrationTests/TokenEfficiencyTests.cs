@@ -67,7 +67,7 @@ public sealed class TokenEfficiencyTests : IAsyncLifetime
             {
                 if (last.Role == ChatRole.Tool) return Respond(null, Call("wait_for_events", new { summary = "ok" }));
                 return input.Contains("Your goal:")
-                    ? Respond(null, Call("spawn_agent", new { role = "Stock Monitor", goal = "Watch stock", standing = true }))
+                    ? Respond(null, Call("spawn_agent", new { role = "Stock Monitor", goal = "Watch stock", standing = true, why_not_myself = "Ongoing monitoring." }))
                     : Respond(null, Call("wait_for_events", new { summary = "ok" }));
             }
 

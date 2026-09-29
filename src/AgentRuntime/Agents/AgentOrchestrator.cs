@@ -162,6 +162,26 @@ public sealed class AgentOrchestrator(
                     $"This workspace already runs {live} agents (limit {policy.MaxAgents}). Reuse an existing agent (find_agents) instead.", cancellationToken);
             }
 
+            // One request, a handful of agents at most. A model that misjudges a small request
+            // as a big one is stopped here, not by its own restraint.
+            if (parentSnapshot.SpawnsThisRequest >= policy.MaxSpawnsPerRequest)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    $"You have already started {parentSnapshot.SpawnsThisRequest} agents for this request, the most allowed. " +
+                    "Do the rest yourself, hand it to an agent you already have (find_agents, send_message), or tell the user what's left.",
+                    cancellationToken);
+            }
+
+            // Workers come from a plan: plan_request decides whether splitting this request pays
+            // off and how many workers it needs. Standing agents (ongoing work) don't need one.
+            if (!request.Standing && parentSnapshot.PlannedWorkersLeft <= 0)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    "No workers are planned for this request. If you haven't yet, call plan_request to break the request into " +
+                    "parts: it says whether workers are worth it and how many. If your plan said to do it yourself, or its " +
+                    "workers are already started, do the remaining work yourself.", cancellationToken);
+            }
+
             childBudget = request.Standing ? policy.StandingBudget : policy.WorkerBudget;
         }
         else
@@ -198,7 +218,17 @@ public sealed class AgentOrchestrator(
             childTools = childTools.Union(WorkspaceToolCatalog.ToolNames, StringComparer.OrdinalIgnoreCase).ToList();
         }
 
-        var childPermissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | InferPermissionsForTools(childTools);
+        // A workspace worker can't spawn (its budget allows no children): leave the tool out
+        // rather than offer it and reject every call.
+        var childMaySpawn = policy is null || request.Standing;
+        if (!childMaySpawn)
+        {
+            childTools = childTools.Where(t => !t.Equals("spawn_agent", StringComparison.OrdinalIgnoreCase) &&
+                                               !t.Equals(PlanRequestTool.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
+        var childPermissions = (childMaySpawn ? ToolPermission.SpawnAgents : ToolPermission.None)
+                               | ToolPermission.SendMessages | InferPermissionsForTools(childTools);
         if (policy is not null)
         {
             // Workspace agents may use the workspace's connections if their parent could: the
@@ -232,7 +262,9 @@ public sealed class AgentOrchestrator(
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
             TenantId = tenant,
-            Summary = $"Agent '{parentAgentId}' requested a new '{request.Role}' agent."
+            Summary = $"Agent '{parentAgentId}' requested a new '{request.Role}' agent." +
+                      (request.Justification is null ? string.Empty : $" Why not itself: {request.Justification}"),
+            Data = JustificationData(request)
         }, cancellationToken);
 
         var childGrain = grainFactory.GetGrain<IAgentGrain>(childId);
@@ -266,11 +298,30 @@ public sealed class AgentOrchestrator(
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
             TenantId = tenant,
-            Summary = $"Spawned '{request.Role}' agent {childId}."
+            Summary = $"Spawned '{request.Role}' agent {childId}.",
+            Data = JustificationData(request)
         }, cancellationToken);
 
-        return new SpawnAgentResult { AgentId = childId, Status = "created", GrantedBudget = policy is null ? childBudget : null };
+        return new SpawnAgentResult
+        {
+            AgentId = childId,
+            Status = "created",
+            GrantedBudget = policy is null ? childBudget : null,
+            Note = policy is null ? null : SpawnCostNote(childBudget, request.Standing, policy, parentSnapshot.SpawnsThisRequest + 1)
+        };
     }
+
+    private static Dictionary<string, string> JustificationData(SpawnAgentRequest request) =>
+        request.Justification is null ? [] : new Dictionary<string, string> { ["justification"] = request.Justification };
+
+    /// <summary>Tells the spawner what it just committed: the new agent is paid from the budget the
+    /// whole workspace shares, which is what makes an unnecessary agent visible as a cost.</summary>
+    private static string SpawnCostNote(ResourceBudget budget, bool standing, WorkspacePolicy policy, int spawnsThisRequest) =>
+        (standing
+            ? $"This standing agent may spend up to {budget.MaxTokens:N0} tokens / ${budget.MaxCostUsd:F2} per day"
+            : $"This worker may spend up to {budget.MaxTokens:N0} tokens / ${budget.MaxCostUsd:F2}") +
+        $", paid from the workspace's shared daily budget ({policy.TokensLeftToday:N0} tokens / ${policy.CostLeftTodayUsd:F2} left today). " +
+        $"Agents started for this request: {spawnsThisRequest} of {policy.MaxSpawnsPerRequest}.";
 
     public async Task<AgentMessageAck> SendMessageAsync(AgentMessage message, CancellationToken cancellationToken = default)
     {
@@ -484,9 +535,9 @@ public sealed class AgentOrchestrator(
             TenantId = tenant,
             Standing = true,
             ContextWindow = policy.StandingContextWindow,
-            InitialContext = "This is the user's first request for the workspace. Set up whatever standing agents, " +
-                             "schedules or webhooks it needs, tell the user what you've set up with notify_user, then " +
-                             "call wait_for_events.",
+            InitialContext = "This is the user's first request for the workspace. Handle it the cheapest way that works: " +
+                             "do it yourself if you can, and set up a standing agent, schedule, watch or webhook only if it " +
+                             "is ongoing. Tell the user what you did with notify_user, then call wait_for_events.",
             AutoStart = true
         });
         await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });

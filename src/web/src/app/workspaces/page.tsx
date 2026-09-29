@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { AccountMenu } from "@/components/platform/AccountMenu";
 import { useCallback, useEffect, useState } from "react";
-import { getWorkspace, listWorkspaces, subscribeToEvents } from "@/lib/api";
+import { getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
 import type { RuntimeEvent } from "@/lib/types";
 import type { WorkspaceListItem, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
 import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm";
-import { WorkspaceChat } from "@/components/workspace/WorkspaceChat";
+import { WorkspaceChatWidget, readChatOpen, rememberChatOpen } from "@/components/workspace/WorkspaceChatWidget";
 import { WorkspaceHeader } from "@/components/workspace/WorkspaceHeader";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
+import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
 const POLL_MS = 2000;
 const MAX_EVENTS = 500;
@@ -40,6 +41,12 @@ export default function WorkspacesPage() {
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Shared by the chat widget and the team view, which keeps the agents clear of the open chat.
+  const [chatOpen, setChatOpen] = useState(readChatOpen);
+  const changeChatOpen = useCallback((open: boolean) => {
+    setChatOpen(open);
+    rememberChatOpen(open);
+  }, []);
 
   const reloadList = useCallback(() => listWorkspaces().then(setWorkspaces).catch(() => {}), []);
 
@@ -89,6 +96,23 @@ export default function WorkspacesPage() {
     }
     poll();
     return () => { cancelled = true; clearTimeout(timer); };
+  }, [workspaceId]);
+
+  // Recent history first, so the team view and events show what just happened after a reload;
+  // live events that arrived meanwhile are kept, and duplicates dropped.
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    getWorkspaceHistory(workspaceId)
+      .then((history) => {
+        if (cancelled) return;
+        setEvents((live) => {
+          const seen = new Set(history.map((e) => e.event_id));
+          return [...history, ...live.filter((e) => !seen.has(e.event_id))].slice(-MAX_EVENTS);
+        });
+      })
+      .catch(() => { /* History is a convenience; live events still arrive. */ });
+    return () => { cancelled = true; };
   }, [workspaceId]);
 
   useEffect(() => {
@@ -158,8 +182,9 @@ export default function WorkspacesPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <WorkspaceHeader workspace={workspace} onChanged={refresh} />
             <div className="flex min-h-0 flex-1">
-              <div className="min-w-0 flex-1 border-r border-neutral-200 dark:border-neutral-800">
-                <WorkspaceChat workspace={workspace} onSent={refresh} onSelectAgent={setSelectedAgent} />
+              <div className="relative min-w-0 flex-1 border-r border-neutral-200 dark:border-neutral-800">
+                <WorkspaceTeamView workspace={workspace} events={events} selectedId={selectedAgent} onSelect={setSelectedAgent} chatOpen={chatOpen} />
+                <WorkspaceChatWidget workspace={workspace} open={chatOpen} onOpenChange={changeChatOpen} onSent={refresh} onSelectAgent={setSelectedAgent} />
               </div>
               {selectedAgent && (
                 <div className="w-96 shrink-0 border-r border-neutral-200 dark:border-neutral-800">

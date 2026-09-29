@@ -11,6 +11,9 @@ namespace AgentRuntime.IntegrationTests.TestSupport;
 public static class ScriptedLlmProviderRegistry
 {
     public static Func<LlmCompletionRequest, LlmCompletionResponse>? Current { get; set; }
+
+    /// <summary>Takes precedence over <see cref="Current"/>: lets an eval pass calls to a real model.</summary>
+    public static Func<LlmCompletionRequest, CancellationToken, Task<LlmCompletionResponse>>? CurrentAsync { get; set; }
 }
 
 public sealed class ScriptedLlmProvider : ILLMProvider
@@ -19,6 +22,8 @@ public sealed class ScriptedLlmProvider : ILLMProvider
 
     public Task<LlmCompletionResponse> CompleteAsync(LlmCompletionRequest request, CancellationToken cancellationToken = default)
     {
+        if (ScriptedLlmProviderRegistry.CurrentAsync is { } live) return live(request, cancellationToken);
+
         var script = ScriptedLlmProviderRegistry.Current
             ?? throw new InvalidOperationException("No script registered for this test.");
         return Task.FromResult(script(request));

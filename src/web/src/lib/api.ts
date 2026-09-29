@@ -218,6 +218,45 @@ export function workspaceAction(id: string, action: "pause" | "resume" | "archiv
   return apiFetch<void>(`/api/workspaces/${id}/${action}`, { method: "POST" });
 }
 
+/** A workspace's recent events from the database, oldest first and shaped like live events, so
+ * the team view shows recent activity straight after a reload. */
+export async function getWorkspaceHistory(id: string, limit = 300): Promise<import("./types").RuntimeEvent[]> {
+  const rows = await apiFetch<EventRecordDto[]>(`/api/events?taskId=${encodeURIComponent(id)}&limit=${limit}`);
+  return rows.map(({ data_json, ...row }) => {
+    let data: Record<string, string> = {};
+    try {
+      data = JSON.parse(data_json) as Record<string, string>;
+    } catch {
+      // Unreadable data: keep the event without it.
+    }
+    return {
+      event_id: row.event_id,
+      type: row.type,
+      timestamp: row.timestamp,
+      agent_id: row.agent_id,
+      parent_agent_id: row.parent_agent_id,
+      target_agent_id: row.target_agent_id,
+      task_id: row.task_id,
+      correlation_id: row.correlation_id,
+      summary: row.summary,
+      data,
+    };
+  });
+}
+
+/** Files the workspace's agents saved, one entry per file, newest first. */
+export function getWorkspaceFiles(id: string) {
+  return apiFetch<import("./workspaceTypes").WorkspaceFile[]>(`/api/workspaces/${id}/files`);
+}
+
+export function workspaceFileUrl(id: string, artifactId: string) {
+  return `${API_BASE}/api/workspaces/${id}/files/${artifactId}/content`;
+}
+
+export function workspaceFilesZipUrl(id: string) {
+  return `${API_BASE}/api/workspaces/${id}/files.zip`;
+}
+
 
 // ---- Safety ----
 

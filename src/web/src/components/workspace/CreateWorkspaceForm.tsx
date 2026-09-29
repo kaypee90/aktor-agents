@@ -65,11 +65,11 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       <div className="grid grid-cols-2 gap-3 text-xs">
         <label className="space-y-1">
           <span className="text-neutral-500">Daily token budget</span>
-          <input type="number" min={1000} step={1000} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 1000)} className={input} />
+          <input type="number" min={1000} step={1} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 1000)} className={input} />
         </label>
         <label className="space-y-1">
           <span className="text-neutral-500">Daily cost budget (USD)</span>
-          <input type="number" min={0.01} step={0.5} value={dollars} onChange={(e) => setDollars(Number(e.target.value) || 0.01)} className={input} />
+          <input type="number" min={0.01} step={0.01} value={dollars} onChange={(e) => setDollars(Number(e.target.value) || 0.01)} className={input} />
         </label>
       </div>
       <p className="text-[11px] text-neutral-500">

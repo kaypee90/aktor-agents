@@ -1249,11 +1249,16 @@ public sealed partial class WorkspaceGrain(
             MaxTokens = _opts.WorkerTokens,
             MaxToolCalls = _opts.WorkerToolCalls,
             MaxCostUsd = _opts.WorkerCostUsd,
-            MaxChildren = 3,
+            // Workers do their one job themselves. Work that turns out bigger goes back to whoever
+            // spawned them as a partial result, rather than growing a tree of helpers.
+            MaxChildren = 0,
             MaxDurationSeconds = _opts.WorkerMaxDurationSeconds
         },
         StandingContextWindow = _opts.StandingContextWindow,
         MaxAgents = _opts.MaxAgentsPerWorkspace,
+        MaxSpawnsPerRequest = _opts.MaxSpawnsPerRequest,
+        TokensLeftToday = Math.Max(0, S.DailyTokenLimit - (S.UsageDay == Today() ? S.TokensToday : 0)),
+        CostLeftTodayUsd = Math.Max(0, S.DailyCostLimitUsd - (S.UsageDay == Today() ? S.CostToday : 0)),
         Status = S.Status
     };
 
@@ -1281,7 +1286,9 @@ public sealed partial class WorkspaceGrain(
                 TokensUsed = (snap?.Usage.LifetimeTokens ?? 0) + (snap?.Usage.TokensUsed ?? 0),
                 CostUsd = (snap?.Usage.LifetimeCostUsd ?? 0) + (snap?.Usage.CostUsd ?? 0),
                 CurrentTask = snap?.CurrentTask,
-                CachedInputTokens = snap?.Usage.CachedInputTokens ?? 0
+                CachedInputTokens = snap?.Usage.CachedInputTokens ?? 0,
+                CreatedAt = snap?.CreatedAt,
+                CompletedAt = snap?.CompletedAt
             };
         }));
 

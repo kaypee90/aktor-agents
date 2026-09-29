@@ -25,6 +25,16 @@ public sealed class RuntimeLimitsOptions
     /// </summary>
     public int MinChildTokens { get; set; } = 20_000;
     public int MinChildToolCalls { get; set; } = 5;
+
+    /// <summary>
+    /// Share of any lifetime budget (tokens, tool calls, cost, time) after which an agent is told
+    /// to start finishing. Near the end it gets one last call to report, and if even that doesn't
+    /// fit the runtime reports for it: the parent always gets a result, never a bare failure.
+    /// </summary>
+    public double WrapUpAtFraction { get; set; } = 0.75;
+
+    /// <summary>Output cap for that last call; it also sizes the budget kept back for it.</summary>
+    public int FinalStepMaxOutputTokens { get; set; } = 1024;
 }
 
 public sealed class DefaultBudgetOptions

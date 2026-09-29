@@ -1,17 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { API_BASE, addWorkspaceTrigger, deleteWorkspaceTrigger } from "@/lib/api";
-import type { AgentListItem, AgentStatus, RuntimeEvent } from "@/lib/types";
-import type { TriggerView, WorkspaceSnapshot } from "@/lib/workspaceTypes";
+import { useEffect, useState } from "react";
+import { API_BASE, addWorkspaceTrigger, deleteWorkspaceTrigger, getWorkspaceFiles } from "@/lib/api";
+import type { AgentStatus, RuntimeEvent } from "@/lib/types";
+import type { TriggerView, WorkspaceFile, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { STATUS_STYLES } from "@/lib/status";
-import { AgentGraph } from "../AgentGraph";
 import { BotIcon } from "../BotIcon";
 import { EventStream } from "../EventStream";
+import { FilesPanel } from "./FilesPanel";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
 
-type Tab = "agents" | "triggers" | "integrations" | "safety" | "graph" | "events";
+type Tab = "agents" | "files" | "triggers" | "integrations" | "safety" | "events";
 
 function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
@@ -32,32 +32,26 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
   onChanged: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("agents");
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
 
-  const graphAgents: AgentListItem[] = useMemo(() => {
-    const byId = new Map(workspace.agents.map((a) => [a.agent_id, a]));
-    const depth = (id: string, seen = 0): number => {
-      const p = byId.get(id)?.parent_agent_id;
-      return p && byId.has(p) && seen < 20 ? 1 + depth(p, seen + 1) : 0;
-    };
-    return workspace.agents.map((a) => ({
-      agent_id: a.agent_id,
-      role: a.role,
-      goal: a.goal,
-      status: (a.status as AgentStatus) ?? "Idle",
-      capabilities: [],
-      parent_agent_id: a.parent_agent_id,
-      root_agent_id: workspace.coordinator_agent_id,
-      depth: depth(a.agent_id),
-    }));
-  }, [workspace.agents, workspace.coordinator_agent_id]);
+  // Reload the file list whenever an agent saves a file (and once on open).
+  const fileWrites = events.filter((e) => e.type === "ArtifactCreated").length;
+  useEffect(() => {
+    let cancelled = false;
+    getWorkspaceFiles(workspace.workspace_id)
+      .then((list) => { if (!cancelled) setFiles(list); })
+      .catch(() => { /* API briefly unavailable: the next write retries */ });
+    return () => { cancelled = true; };
+  }, [workspace.workspace_id, fileWrites]);
+
 
   const pendingApprovals = workspace.approvals?.filter((a) => a.status === "Pending").length ?? 0;
   const tabs: [Tab, string][] = [
     ["agents", `Agents (${workspace.agents.length})`],
+    ["files", `Files${files.length ? ` (${files.length})` : ""}`],
     ["triggers", `Triggers (${workspace.triggers.length})`],
     ["integrations", `Integrations${workspace.connections?.length ? ` (${workspace.connections.length})` : ""}`],
     ["safety", `Safety${pendingApprovals ? ` (${pendingApprovals})` : ""}`],
-    ["graph", "Graph"],
     ["events", "Events"],
   ];
 
@@ -97,17 +91,13 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
           </ul>
         )}
 
+        {tab === "files" && <FilesPanel workspace={workspace} files={files} />}
+
         {tab === "triggers" && <Triggers workspace={workspace} onChanged={onChanged} />}
 
         {tab === "integrations" && <IntegrationsPanel workspaceId={workspace.workspace_id} onChanged={onChanged} />}
 
         {tab === "safety" && <SafetyPanel workspace={workspace} onChanged={onChanged} />}
-
-        {tab === "graph" && (
-          <div className="h-full min-h-[400px]">
-            <AgentGraph agents={graphAgents} selectedId={null} onSelect={onSelectAgent} />
-          </div>
-        )}
 
         {tab === "events" && <EventStream events={events} />}
       </div>

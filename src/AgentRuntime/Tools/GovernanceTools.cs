@@ -33,8 +33,9 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
     {
         Name = "spawn_agent",
         SideEffects = ToolSideEffects.Idempotent,
-        Description = "Create a new specialized sub-agent to work on part of your goal in parallel or with " +
-                      "different expertise. The runtime enforces depth/child/total-agent limits.",
+        Description = "Create a new agent for a substantial part of your goal that can run in parallel with your " +
+                      "own work, or that needs expertise or tools you don't have. Not for small or sequential steps: " +
+                      "do those yourself. Every agent costs a full prompt per step, and the runtime limits spawning.",
         RequiredPermissions = ToolPermission.SpawnAgents,
         JsonSchema = """
         {
@@ -44,9 +45,10 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
             "goal": { "type": "string", "description": "The specific goal the new agent should pursue" },
             "capabilities": { "type": "array", "items": { "type": "string" } },
             "initial_context": { "type": "string" },
-            "standing": { "type": "boolean", "description": "Workspaces only: a long-lived agent (monitor, responder) that waits for events instead of finishing" }
+            "standing": { "type": "boolean", "description": "Workspaces only: a long-lived agent (monitor, responder) that waits for events instead of finishing" },
+            "why_not_myself": { "type": "string", "description": "One sentence: why you can't reasonably do this yourself (work that runs in parallel, expertise or tools you lack, or too big for your budget)" }
           },
-          "required": ["role", "goal"]
+          "required": ["role", "goal", "why_not_myself"]
         }
         """
     };
@@ -56,21 +58,32 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
         var args = JsonSerializer.Deserialize<SpawnArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid spawn_agent arguments.");
 
+        // Having to say why is the point: it makes the agent weigh doing the work itself first.
+        if (string.IsNullOrWhiteSpace(args.WhyNotMyself) || args.WhyNotMyself.Trim().Length < MinJustificationLength)
+        {
+            return ToolExecutionResult.Fail(
+                "spawn_agent needs why_not_myself: one sentence on why you can't do this yourself. If you can't give a " +
+                "concrete reason (work that runs in parallel, expertise or tools you lack, too big for your budget), do it yourself.");
+        }
+
         var result = await orchestrator.SpawnAgentAsync(request.AgentId, new SpawnAgentRequest
         {
             Role = args.Role,
             Goal = args.Goal,
             Capabilities = args.Capabilities ?? [],
             InitialContext = args.InitialContext,
-            Standing = args.Standing ?? false
+            Standing = args.Standing ?? false,
+            Justification = args.WhyNotMyself.Trim()
         }, ToolJson.NullIfEmptyKey(request.IdempotencyKey));
 
         return result.Success
-            ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { agent_id = result.AgentId, status = result.Status, granted_budget = result.GrantedBudget }, ToolJson.Options))
+            ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { agent_id = result.AgentId, status = result.Status, granted_budget = result.GrantedBudget, note = result.Note }, ToolJson.Options))
             : ToolExecutionResult.Fail(result.RejectionReason ?? "Spawn rejected.");
     }
 
-    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext, bool? Standing);
+    private const int MinJustificationLength = 10;
+
+    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext, bool? Standing, string? WhyNotMyself);
 }
 
 public sealed class FindAgentsTool(IAgentOrchestrator orchestrator) : ITool

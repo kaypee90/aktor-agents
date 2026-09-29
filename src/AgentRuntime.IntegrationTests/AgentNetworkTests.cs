@@ -35,11 +35,13 @@ public sealed class AgentNetworkTests : IAsyncLifetime
     private IAgentGrain Grain(string id) => _cluster.GrainFactory.GetGrain<IAgentGrain>(id);
     private IAgentRegistryGrain Registry => _cluster.GrainFactory.GetGrain<IAgentRegistryGrain>(0);
 
+    private const string WhyNotMyself = "Needs its own specialist working in parallel.";
+
     private static ToolCall Spawn(string role, string goal) => new()
     {
         Id = "call_" + Guid.NewGuid().ToString("n")[..8],
         Name = "spawn_agent",
-        ArgumentsJson = JsonSerializer.Serialize(new { role, goal })
+        ArgumentsJson = JsonSerializer.Serialize(new { role, goal, why_not_myself = WhyNotMyself })
     };
 
     private static ToolCall Complete(string summary) => new()
@@ -519,7 +521,7 @@ public sealed class AgentNetworkTests : IAsyncLifetime
                 {
                     Id = "call_spawn",
                     Name = "spawn_agent",
-                    ArgumentsJson = JsonSerializer.Serialize(new { role = "Python Developer", goal = "write code", capabilities = new[] { "python", "game development" } })
+                    ArgumentsJson = JsonSerializer.Serialize(new { role = "Python Developer", goal = "write code", capabilities = new[] { "python", "game development" }, why_not_myself = WhyNotMyself })
                 });
         };
 

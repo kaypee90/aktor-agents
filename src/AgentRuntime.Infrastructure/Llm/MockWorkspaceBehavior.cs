@@ -70,7 +70,8 @@ internal static partial class MockWorkspaceBehavior
                     role = "Monitor Agent",
                     goal = text,
                     standing = true,
-                    capabilities = new[] { "research" }
+                    capabilities = new[] { "research" },
+                    why_not_myself = "The request is ongoing: a standing agent watches for it."
                 }));
             }
 

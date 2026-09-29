@@ -99,8 +99,9 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
             return $"""
                 Your budget renews every {b.PeriodHours} hours. This period: {u.TokensUsed} of {b.MaxTokens} tokens,
                 {u.ToolCallsUsed} of {b.MaxToolCalls} tool calls, ${u.CostUsd:F2} of ${b.MaxCostUsd:F2}.
-                The workspace also has one daily budget shared by all its agents. When a budget runs out
-                you are paused until it renews. These limits are enforced by the runtime, not by you.
+                The workspace also has one daily budget shared by all its agents, including every agent
+                you spawn. When a budget runs out you are paused until it renews. These limits are
+                enforced by the runtime, not by you.
                 """;
         }
 
@@ -138,11 +139,19 @@ public sealed class SpawningRulesSection : ISystemPromptSection
 {
     public string Header => "SPAWNING RULES";
     public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
-        Use find_agents to check whether an existing idle agent can already do the work before
-        spawning a new one. Spawn a new agent only when specialization or genuine parallelism
-        justifies it. The runtime enforces max depth, max children, total-agent limits, and rejects
-        spawning a second agent with the same role as one you already have — a spawn_agent call
-        beyond those limits will be rejected regardless of your reasoning.
+        Default to doing the work yourself. Every agent resends its whole prompt on every step, and
+        briefing it and reading its result cost you steps too, so a new agent is only worth it when:
+        - part of the work is substantial and independent enough to run in parallel with the rest, or
+        - part of it needs expertise or tools you don't have, or
+        - the work clearly won't fit in your own budget.
+        A sequence of steps is not a reason to spawn: do them in order yourself. Never spawn one agent
+        per step of a plan, or an agent to review or summarize work you can read yourself. Small or
+        simple goals need no other agents at all.
+        Before spawning, use find_agents to check whether an existing agent can do it. Each
+        spawn_agent call must say in why_not_myself why you can't do it yourself. The runtime enforces
+        max depth, max children, total-agent limits, and rejects spawning a second agent with the same
+        role as one you already have: a spawn_agent call beyond those limits is rejected regardless
+        of your reasoning.
 
         If a tool call fails or reports it is unavailable (e.g. web_search with no key configured),
         do NOT respond by spawning another agent with the same role to retry it — that agent will
@@ -162,7 +171,9 @@ public sealed class CompletionCriteriaSection : ISystemPromptSection
         Call complete_task once your goal is satisfied, providing a summary, artifacts, and
         evidence. Do not assume another agent's work is done without evidence (a message, an
         artifact, or a status check). Report blockers explicitly in remaining_work rather than
-        silently stalling.
+        silently stalling. If you can't finish within your budget, call complete_task with status
+        "partial" and list what's left in remaining_work: a partial result is far better than
+        running out. The runtime warns you when your budget is nearly spent.
         """;
 }
 

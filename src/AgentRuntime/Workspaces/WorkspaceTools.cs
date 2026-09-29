@@ -75,8 +75,10 @@ public sealed class CreateScheduleTool(IGrainFactory grains) : WorkspaceToolBase
     {
         Name = "create_schedule",
         Description = "Wake an agent (yourself by default) on a schedule, with an instruction for what to do each time. " +
-                      "Use every_minutes for intervals or cron (5 fields, UTC) for times of day. Prefer the longest " +
-                      "interval that meets the need: every wake-up costs tokens.",
+                      "Only for work the user asked to repeat or keep up: one-off work is done once, never scheduled. " +
+                      "One schedule can cover several items; don't create one per item. Use every_minutes for intervals " +
+                      "or cron (5 fields, UTC) for times of day. Prefer the longest interval that meets the need: every " +
+                      "wake-up costs tokens.",
         RequiredPermissions = ToolPermission.WorkspaceActions,
         SideEffects = ToolSideEffects.Idempotent,
         JsonSchema = """
@@ -295,7 +297,7 @@ public sealed class WaitForEventsTool : ITool
 public static class WorkspaceToolCatalog
 {
     public static readonly string[] ToolNames =
-        ["notify_user", "create_schedule", "create_watch", "create_webhook", "list_triggers", "delete_trigger", "wait_for_events"];
+        ["notify_user", "create_schedule", "create_watch", "create_webhook", "list_triggers", "delete_trigger", "wait_for_events", PlanRequestTool.Name];
 
     public static IServiceCollection AddWorkspaceTools(this IServiceCollection services)
     {
@@ -306,6 +308,7 @@ public static class WorkspaceToolCatalog
         services.AddSingleton<ITool>(sp => new ListTriggersTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool>(sp => new DeleteTriggerTool(sp.GetRequiredService<IGrainFactory>()));
         services.AddSingleton<ITool, WaitForEventsTool>();
+        services.AddSingleton<ITool, PlanRequestTool>();
         return services;
     }
 }

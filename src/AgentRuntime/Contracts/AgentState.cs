@@ -109,6 +109,27 @@ public sealed class AgentState
     /// inherited by every agent it spawns (docs/platform.md).</summary>
     [Id(43)] public string TenantId { get; set; } = string.Empty;
 
+    // ---- Running out of budget (see Resources/BudgetGuard) ----
+
+    /// <summary>How far the agent is into finishing up because its budget is nearly spent.</summary>
+    [Id(44)] public WrapUpStage WrapUp { get; set; }
+
+    /// <summary>Input tokens the provider reported for the latest LLM call: the best estimate of
+    /// what the next call costs, since each call resends the prompt and the whole history.</summary>
+    [Id(45)] public int LastLlmInputTokens { get; set; }
+
+    /// <summary>Agents spawned since the last outside request (a user message or an environment
+    /// event). Workspaces cap it, so one request can't fan out into a crowd of agents.</summary>
+    [Id(46)] public int SpawnsThisRequest { get; set; }
+
+    /// <summary>Workers this agent may still start for the current request, as its plan_request
+    /// set out. Reset with <see cref="SpawnsThisRequest"/>: each request is planned on its own.</summary>
+    [Id(47)] public int PlannedWorkersLeft { get; set; }
+
+    /// <summary>Task agents with a budget for their whole life (not standing agents, whose budget
+    /// renews, nor simulation residents): these wrap up instead of failing when it runs out.</summary>
+    public bool HasLifetimeBudget => !IsResident && !Standing && Budget.PeriodHours <= 0;
+
     /// <summary>Routine event handling that can use the fast model tier.</summary>
     public bool UsesFastTier => IsResident || (Standing && Role != "Coordinator");
 

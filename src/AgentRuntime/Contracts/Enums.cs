@@ -19,6 +19,18 @@ public enum AgentStatus
     TimedOut
 }
 
+/// <summary>An agent finishing up because its budget is nearly spent (see Resources/BudgetGuard).</summary>
+public enum WrapUpStage
+{
+    None,
+    /// <summary>Told to start finishing.</summary>
+    Warned,
+    /// <summary>Its next LLM call is the last one, and only complete_task may run.</summary>
+    FinalStep,
+    /// <summary>The last call was made; if it didn't report, the runtime reports for it.</summary>
+    FinalStepTaken
+}
+
 public enum MessageType
 {
     TaskRequest,

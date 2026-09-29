@@ -75,7 +75,7 @@ public sealed class TenancyTests : IAsyncLifetime
         if (text.StartsWith("remember ")) return Respond(Call("write_memory", new { key = "fact", value = Arg("remember "), shared = true }));
         if (text.StartsWith("search ")) return Respond(Call("search_knowledge", new { query = Arg("search ") }));
         if (text.StartsWith("find")) return Respond(Call("find_agents", new { }));
-        if (text.StartsWith("spawn")) return Respond(Call("spawn_agent", new { role = "Helper", goal = "Help out.", capabilities = new[] { "research" }, standing = true }));
+        if (text.StartsWith("spawn")) return Respond(Call("spawn_agent", new { role = "Helper", goal = "Help out.", capabilities = new[] { "research" }, standing = true, why_not_myself = "Ongoing help requests." }));
         if (text.StartsWith("step")) return Respond(Call("notify_user", new { text = "stepped" }));
         return Respond(Call("wait_for_events", new { summary = "ready" }));
     }

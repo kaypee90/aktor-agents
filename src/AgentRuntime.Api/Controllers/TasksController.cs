@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text.Json;
 using AgentRuntime.Agents;
 using AgentRuntime.Api.Platform;
@@ -157,21 +156,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             return NotFound(new { error = "This task has no artifact files to download." });
         }
 
-        var taskRoot = WorkspacePath.TaskRoot(opts, id);
-        var buffer = new MemoryStream();
-        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            foreach (var file in files)
-            {
-                var entryName = Path.GetRelativePath(taskRoot, file).Replace(Path.DirectorySeparatorChar, '/');
-                var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
-                await using var entryStream = await entry.OpenAsync(ct);
-                await using var source = System.IO.File.OpenRead(file);
-                await source.CopyToAsync(entryStream, ct);
-            }
-        }
-
-        buffer.Position = 0;
+        var buffer = await ArtifactFiles.ZipAsync(files, WorkspacePath.TaskRoot(opts, id), ct);
         return File(buffer, "application/zip", $"task-{id[..Math.Min(8, id.Length)]}-artifacts.zip");
     }
 

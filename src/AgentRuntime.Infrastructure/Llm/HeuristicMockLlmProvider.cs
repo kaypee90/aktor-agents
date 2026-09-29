@@ -123,7 +123,7 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
     {
         Id = NewId(),
         Name = "spawn_agent",
-        ArgumentsJson = JsonSerializer.Serialize(new { role = subRole, goal = subGoal, capabilities })
+        ArgumentsJson = JsonSerializer.Serialize(new { role = subRole, goal = subGoal, capabilities, why_not_myself = "This part runs in parallel with the rest of the goal." })
     };
 
     private static ToolCall CompleteCall(string summary, string[]? artifacts = null) => new()

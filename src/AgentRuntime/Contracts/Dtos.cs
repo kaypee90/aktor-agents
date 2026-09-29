@@ -41,6 +41,8 @@ public sealed record SpawnAgentRequest
     /// <summary>Inside a workspace: the child is a standing agent (monitor, responder) rather than
     /// a one-shot worker.</summary>
     [Id(6)] public bool Standing { get; init; }
+    /// <summary>The spawning agent's stated reason for not doing the work itself (shown in events).</summary>
+    [Id(7)] public string? Justification { get; init; }
 }
 
 [GenerateSerializer]
@@ -50,6 +52,8 @@ public sealed record SpawnAgentResult
     [Id(1)] public required string Status { get; init; }
     [Id(2)] public string? RejectionReason { get; init; }
     [Id(3)] public ResourceBudget? GrantedBudget { get; init; }
+    /// <summary>What the new agent may cost and how much spawn allowance is left, for the spawner.</summary>
+    [Id(4)] public string? Note { get; init; }
 
     public bool Success => RejectionReason is null;
 }
@@ -137,6 +141,8 @@ public sealed record AgentSnapshot
     [Id(21)] public string? WorkspaceId { get; init; }
     [Id(22)] public bool Standing { get; init; }
     [Id(23)] public string TenantId { get; init; } = string.Empty;
+    [Id(24)] public int SpawnsThisRequest { get; init; }
+    [Id(25)] public int PlannedWorkersLeft { get; init; }
 }
 
 [GenerateSerializer]

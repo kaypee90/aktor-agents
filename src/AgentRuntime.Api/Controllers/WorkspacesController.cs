@@ -14,7 +14,8 @@ namespace AgentRuntime.Api.Controllers;
 [ApiController]
 [Route("api/workspaces")]
 [AgentRuntime.Api.Platform.WorkspaceAccess]
-public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db, AgentRuntime.Api.Platform.TenantAccess access) : ControllerBase
+public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db, AgentRuntime.Api.Platform.TenantAccess access,
+    Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions) : ControllerBase
 {
     public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
@@ -170,6 +171,54 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpPost("{id}/archive")]
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Archive(string id) { await Workspace(id).Archive(); return NoContent(); }
+
+    // ---- Files: what the workspace's agents saved with filesystem_write ----
+
+    /// <summary>One entry per file the workspace's agents wrote, newest first, with who wrote it.</summary>
+    [HttpGet("{id}/files")]
+    public async Task<IActionResult> Files(string id, CancellationToken ct)
+    {
+        var files = await AgentRuntime.Api.Platform.ArtifactFiles.ListAsync(db, toolsOptions.Value, id, access.TenantId, ct);
+        return Ok(files.Select(f => new
+        {
+            artifact_id = f.Latest.ArtifactId,
+            path = f.RelativePath,
+            file_name = Path.GetFileName(f.RelativePath),
+            size_bytes = f.SizeBytes,
+            versions = f.Versions,
+            created_by_agent = f.Latest.CreatedByAgent,
+            updated_at = f.Latest.CreatedAt
+        }));
+    }
+
+    /// <summary>A file's current contents. Any recorded write of the file identifies it.</summary>
+    [HttpGet("{id}/files/{artifactId}/content")]
+    public async Task<IActionResult> FileContent(string id, string artifactId, CancellationToken ct)
+    {
+        var artifact = await db.Artifacts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId && a.TenantId == access.TenantId, ct);
+        if (artifact is null ||
+            !AgentRuntime.Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(toolsOptions.Value, id, artifact.Location) ||
+            !System.IO.File.Exists(artifact.Location))
+        {
+            return NotFound();
+        }
+
+        return PhysicalFile(Path.GetFullPath(artifact.Location), "application/octet-stream", Path.GetFileName(artifact.Location));
+    }
+
+    /// <summary>Every file as one zip, keeping the folders agents used.</summary>
+    [HttpGet("{id}/files.zip")]
+    public async Task<IActionResult> FilesZip(string id, CancellationToken ct)
+    {
+        var opts = toolsOptions.Value;
+        var files = await AgentRuntime.Api.Platform.ArtifactFiles.ListAsync(db, opts, id, access.TenantId, ct);
+        if (files.Count == 0) return NotFound(new { error = "This workspace has no files yet." });
+
+        var zip = await AgentRuntime.Api.Platform.ArtifactFiles.ZipAsync(files.Select(f => f.Latest.Location),
+            AgentRuntime.Infrastructure.Tools.WorkspacePath.TaskRoot(opts, id), ct);
+        return File(zip, "application/zip", $"{id}-files.zip");
+    }
 }
 
 /// <summary>
