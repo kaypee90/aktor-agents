@@ -74,6 +74,13 @@ public sealed class SpawnDisciplineTests : IAsyncLifetime
         if (input.EndsWith("spawn without a reason")) return Respond(Plan("large", 2));
         if (input.EndsWith("small job")) return Respond(Plan("small", 2));
         if (input.EndsWith("spawn without a plan")) return Respond(SpawnWorker("Unplanned"));
+        if (input.EndsWith("review it"))
+        {
+            // Asks the worker it started earlier, which has since finished.
+            var spawned = r.Messages.First(m => m.Role == ChatRole.Tool && m.ToolName == "spawn_agent" && m.Content!.Contains("agent_id"));
+            var workerId = JsonDocument.Parse(spawned.Content!).RootElement.GetProperty("agent_id").GetString();
+            return Respond(Call("send_message", new { to_agent_id = workerId, message_type = "TaskRequest", payload = "Please review your work." }));
+        }
         return Respond(Call("wait_for_events", new { summary = "Idle." }));
     }
 
@@ -140,6 +147,21 @@ public sealed class SpawnDisciplineTests : IAsyncLifetime
         var s = await WaitForAsync(id, _ => ToolResultSeen("\"approach\":\"self\"") && RejectionsSeen("No workers are planned") >= 2);
 
         Assert.Equal(0, Workers(s));
+    }
+
+    [Fact]
+    public async Task MessagingAFinishedWorker_IsRefused_InsteadOfWaitingForAReplyThatNeverComes()
+    {
+        var id = await CreateWorkspaceAsync();
+        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.Status == "Waiting"));
+
+        await Workspace(id).PostUserMessage("spawn one more", null, null);
+        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Part E" && a.Status == "Completed"));
+
+        await Workspace(id).PostUserMessage("review it", null, null);
+        await WaitForAsync(id, _ => ToolResultSeen("has finished (Completed)"));
+
+        Assert.True(ToolResultSeen("plan it with plan_request"), "the refusal should say what to do instead");
     }
 
     [Fact]

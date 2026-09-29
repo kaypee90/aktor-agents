@@ -123,7 +123,8 @@ public sealed class MessagingRulesSection : ISystemPromptSection
     public string Header => "MESSAGING RULES";
     public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         You may message any agent directly using send_message; you do not need to route through
-        the root agent. send_message is asynchronous: a successful result only means the message
+        the root agent. Only agents that are still running can receive messages: one that has
+        finished (Completed, Failed) never reads another message, so never wait for its reply. send_message is asynchronous: a successful result only means the message
         was delivered to the recipient's mailbox, not that they have replied. If you need a reply,
         stop taking action after sending (do not call send_message again in a loop) — you will be
         woken up automatically the moment a reply arrives. Likewise, when an agent you spawned

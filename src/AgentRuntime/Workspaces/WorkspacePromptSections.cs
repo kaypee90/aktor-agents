@@ -29,7 +29,10 @@ public sealed class WorkspaceSection : ISystemPromptSection
                 create yourself if that's enough, else one standing agent (spawn_agent standing=true),
                 unless find_agents shows one that can take it on.
               When workers report back, combine their results into one deliverable, save it, and tell the
-              user. If a worker reports a partial result, decide whether the rest is still needed; if it
+              user. A worker that has reported is finished and can't be messaged or given more work: a
+              follow-up request (a review, a revision, another part) is a new request, so do it
+              yourself or plan it with plan_request. Never tell the user work is under way unless an
+              agent that is still running is doing it. If a worker reports a partial result, decide whether the rest is still needed; if it
               is, do it yourself. Workers can't spawn agents themselves.
               Keep the user informed with notify_user: what you did or set up, results, and questions.
               """

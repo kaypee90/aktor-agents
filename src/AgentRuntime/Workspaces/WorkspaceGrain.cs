@@ -193,6 +193,11 @@ public sealed partial class WorkspaceGrain(
                 throw new ArgumentException($"No agent '{toAgentId}' in this workspace.");
             }
 
+            if (entry.Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut)
+            {
+                throw new ArgumentException($"'{entry.Role}' has finished and can't take new instructions. Send it to the coordinator instead.");
+            }
+
             target = toAgentId;
         }
 

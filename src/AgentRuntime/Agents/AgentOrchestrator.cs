@@ -370,6 +370,21 @@ public sealed class AgentOrchestrator(
             }
         }
 
+        // A finished agent never runs again, so a message to it would be "delivered" and never
+        // answered, and a sender waiting for the reply would wait forever. Runtime notices (the
+        // agent's own completion flowing to its parent) come from the agent itself, not through here.
+        if (recipient.Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut)
+        {
+            return new AgentMessageAck
+            {
+                MessageId = message.MessageId,
+                Accepted = false,
+                RejectionReason = $"'{recipient.Role}' ({message.ToAgentId}) has finished ({recipient.Status}) and can't receive messages or " +
+                                  "take more work. Its results are in its completion notice and any files it saved. Do the follow-up " +
+                                  "yourself, or plan it with plan_request to start a new worker."
+            };
+        }
+
         var target = grainFactory.GetGrain<IAgentGrain>(message.ToAgentId);
 
         await events.PublishAsync(new RuntimeEvent
