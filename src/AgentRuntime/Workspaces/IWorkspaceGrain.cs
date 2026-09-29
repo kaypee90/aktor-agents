@@ -133,4 +133,9 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// which must not write state itself).</summary>
     [OneWay]
     Task PostBudgetNotice(string reason);
+
+    /// <summary>Tells the user, once per pause, that a standing agent used its own daily budget and
+    /// when it resumes. One-way: the agent calls it as it ends its turn.</summary>
+    [OneWay]
+    Task PostAgentPausedNotice(string agentId, string role, string reason, DateTimeOffset resumesAt);
 }

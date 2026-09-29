@@ -4,6 +4,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { WorkspaceAgentView } from "@/lib/workspaceTypes";
 import { BotIcon } from "../BotIcon";
 import { accentFor } from "../world/worldUi";
+import { pauseInfo } from "./pauseInfo";
 
 // Nodes have a fixed size, which the canvas passes to React Flow as already measured. The canvas
 // rebuilds its nodes whenever activity changes, and an unmeasured node stays hidden until the
@@ -62,12 +63,16 @@ export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentN
   const busy = agent.status === "Thinking" || agent.status === "Executing";
   const finished = ["Completed", "Failed", "TimedOut", "Terminated"].includes(agent.status);
   const failed = agent.status === "Failed" || agent.status === "TimedOut";
+  const paused = finished ? null : pauseInfo(agent);
 
   return (
     <div
       style={{ width: TEAM_NODE_WIDTH, height: TEAM_NODE_HEIGHT }}
       className={`relative overflow-visible rounded-lg border bg-white px-2 py-1.5 shadow-sm dark:bg-neutral-900 ${
-        selected ? "border-blue-500 ring-2 ring-blue-500/40" : failed ? "border-rose-300 dark:border-rose-800" : "border-neutral-200 dark:border-neutral-700"
+        selected ? "border-blue-500 ring-2 ring-blue-500/40"
+          : failed ? "border-rose-300 dark:border-rose-800"
+          : paused ? "border-amber-400 dark:border-amber-700"
+          : "border-neutral-200 dark:border-neutral-700"
       } ${finished && !failed ? "opacity-60" : ""}`}
     >
       <Handles />
@@ -85,14 +90,15 @@ export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentN
               <span className="shrink-0 rounded bg-indigo-100 px-1 text-[9px] uppercase text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">standing</span>
             )}
           </div>
-          <div className={`truncate text-[11px] ${failed ? "text-rose-600" : "text-neutral-500"}`}>
-            {STATUS_TEXT[agent.status] ?? agent.status.toLowerCase()}
+          <div className={`truncate text-[11px] ${failed ? "text-rose-600" : paused ? "font-medium text-amber-600 dark:text-amber-400" : "text-neutral-500"}`}>
+            {paused?.label ?? STATUS_TEXT[agent.status] ?? agent.status.toLowerCase()}
           </div>
         </div>
       </div>
 
-      <div className="mt-1 truncate text-[10px] text-neutral-500" title={agent.current_task ?? agent.goal}>
-        {agent.current_task ?? agent.goal}
+      <div className={`mt-1 truncate text-[10px] ${paused ? "text-amber-700 dark:text-amber-300" : "text-neutral-500"}`}
+        title={paused?.detail ?? agent.current_task ?? agent.goal}>
+        {paused?.short ?? agent.current_task ?? agent.goal}
       </div>
       <div className="text-[10px] tabular-nums text-neutral-400">{agent.tokens_used.toLocaleString()} tokens</div>
     </div>

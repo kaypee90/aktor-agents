@@ -139,6 +139,7 @@ public sealed partial class WorkspaceGrain(
         if (dailyTokenLimit is { } t) S.DailyTokenLimit = Math.Max(1_000, t);
         if (dailyCostLimitUsd is { } c) S.DailyCostLimitUsd = Math.Max(0.01m, c);
         S.BudgetNoticeDay = null;
+        S.BudgetWarningDay = null;
         AppendChat(ChatAuthorKind.System, "system", "Workspace",
             $"Daily budget set to {S.DailyTokenLimit:N0} tokens / ${S.DailyCostLimitUsd:F2}.");
         await SaveAsync();
@@ -1203,6 +1204,20 @@ public sealed partial class WorkspaceGrain(
         return Task.FromResult(new BudgetDecision { Allowed = reason is null, Reason = reason });
     }
 
+    public async Task PostAgentPausedNotice(string agentId, string role, string reason, DateTimeOffset resumesAt)
+    {
+        if (!Exists || S.AgentPauseNotices.GetValueOrDefault(agentId) == resumesAt) return;
+
+        S.AgentPauseNotices[agentId] = resumesAt;
+        var notice = AppendChat(ChatAuthorKind.System, "system", "Workspace",
+            $"'{role}' has used its own daily {reason} and is paused until {resumesAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC. " +
+            "The coordinator and other agents keep working.", "warning");
+        QueueNotifications(notice);
+        await SaveAsync();
+        await KickOutboxAsync();
+        await ChangedAsync("agent paused");
+    }
+
     public async Task PostBudgetNotice(string reason)
     {
         var today = Today();
@@ -1233,8 +1248,31 @@ public sealed partial class WorkspaceGrain(
         S.CostToday += costUsd;
         S.TotalTokens += tokens;
         S.TotalCostUsd += costUsd;
+
+        // One early warning a day, so the user can raise the budget before agents stop.
+        var tokenShare = S.DailyTokenLimit > 0 ? (double)S.TokensToday / S.DailyTokenLimit : 0;
+        var costShare = S.DailyCostLimitUsd > 0 ? (double)(S.CostToday / S.DailyCostLimitUsd) : 0;
+        if (Math.Max(tokenShare, costShare) >= BudgetWarningShare && Math.Max(tokenShare, costShare) < 1 && S.BudgetWarningDay != today)
+        {
+            S.BudgetWarningDay = today;
+            var used = tokenShare >= costShare
+                ? $"{S.TokensToday:N0} of {S.DailyTokenLimit:N0} tokens"
+                : $"${S.CostToday:F2} of ${S.DailyCostLimitUsd:F2}";
+            var warning = AppendChat(ChatAuthorKind.System, "system", "Workspace",
+                $"{Math.Floor(Math.Max(tokenShare, costShare) * 100)}% of today's budget is used ({used}). Agents pause when it runs out, " +
+                "until midnight UTC; raise the daily budget if today's work needs more.", "warning");
+            QueueNotifications(warning);
+            await SaveAsync();
+            await KickOutboxAsync();
+            await ChangedAsync("budget warning");
+            return;
+        }
+
         await SaveAsync();
     }
+
+    /// <summary>Share of the daily budget at which the user is warned.</summary>
+    private const double BudgetWarningShare = 0.8;
 
     public Task<WorkspacePolicy> GetPolicy() => Task.FromResult(BuildPolicy());
 
@@ -1293,7 +1331,9 @@ public sealed partial class WorkspaceGrain(
                 CurrentTask = snap?.CurrentTask,
                 CachedInputTokens = snap?.Usage.CachedInputTokens ?? 0,
                 CreatedAt = snap?.CreatedAt,
-                CompletedAt = snap?.CompletedAt
+                CompletedAt = snap?.CompletedAt,
+                PauseReason = snap?.PauseReason,
+                PausedUntil = snap?.PausedUntil
             };
         }));
 

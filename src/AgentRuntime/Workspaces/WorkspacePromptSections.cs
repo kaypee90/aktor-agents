@@ -48,6 +48,10 @@ public sealed class WorkspaceSection : ISystemPromptSection
               You are a one-shot worker: do your goal yourself (workers can't spawn agents), then call
               complete_task with the result. Whoever spawned you is told automatically. If you run short
               of budget, call complete_task with status "partial" and list what's left in remaining_work.
+              Never wait for the user: their replies go to the coordinator, not to you. If something is
+              unclear, make a sensible assumption and say so in your result; if you truly can't go on
+              without an answer, call complete_task with status "partial" and put the question in
+              remaining_work, so the coordinator can ask them.
               """;
 
         return role + """

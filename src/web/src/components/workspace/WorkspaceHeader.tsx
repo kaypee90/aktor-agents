@@ -1,6 +1,7 @@
 "use client";
 
-import { workspaceAction } from "@/lib/api";
+import { useState } from "react";
+import { updateWorkspaceBudget, workspaceAction } from "@/lib/api";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
 
 function Meter({ label, used, limit, format }: { label: string; used: number; limit: number; format: (n: number) => string }) {
@@ -33,6 +34,72 @@ function Efficiency({ workspace }: { workspace: WorkspaceSnapshot }) {
   );
 }
 
+/** The next midnight UTC, when the daily budget renews, as the user's local time. */
+function renewsAt(): string {
+  const now = new Date();
+  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return midnight.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Shown while today's budget is used up: agents are paused, and raising the budget lets them
+ * carry on straight away (each parked agent re-checks within a minute). */
+function BudgetBanner({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [tokens, setTokens] = useState(workspace.daily_token_limit * 2);
+  const [dollars, setDollars] = useState(Math.round(workspace.daily_cost_limit_usd * 200) / 100);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const outOfTokens = workspace.tokens_today >= workspace.daily_token_limit;
+  const outOfCost = workspace.cost_today >= workspace.daily_cost_limit_usd;
+  if (workspace.status === "Archived" || (!outOfTokens && !outOfCost)) return null;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      await updateWorkspaceBudget(workspace.workspace_id, { daily_token_limit: tokens, daily_cost_limit_usd: dollars });
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      setError(/ 403 /.test(message) ? "Only an admin or owner can change the budget." : "Couldn't update the budget.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const input = "w-28 rounded border border-amber-300 bg-white px-2 py-0.5 text-neutral-900 dark:border-amber-700 dark:bg-neutral-900 dark:text-neutral-100";
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-100">
+      <span className="font-semibold">Agents are paused: today&apos;s {outOfTokens ? "token" : "cost"} budget is used up.</span>
+      <span>They carry on at midnight UTC ({renewsAt()} your time), or as soon as you raise the budget.</span>
+      {!editing ? (
+        <button onClick={() => setEditing(true)} className="ml-auto rounded bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700">
+          Raise budget
+        </button>
+      ) : (
+        <form onSubmit={save} className="ml-auto flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1">
+            Tokens/day
+            <input type="number" min={1000} step={1} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 1000)} className={input} />
+          </label>
+          <label className="flex items-center gap-1">
+            $/day
+            <input type="number" min={0.01} step={0.01} value={dollars} onChange={(e) => setDollars(Number(e.target.value) || 0.01)} className={input} />
+          </label>
+          <button type="submit" disabled={saving} className="rounded bg-amber-600 px-2.5 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button type="button" onClick={() => setEditing(false)} className="px-1 hover:underline">Cancel</button>
+        </form>
+      )}
+      {error && <span className="w-full text-rose-700 dark:text-rose-300">{error}</span>}
+    </div>
+  );
+}
+
 export function WorkspaceHeader({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
   const tone: Record<string, string> = {
     Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -43,31 +110,34 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
   const btn = "rounded border border-neutral-300 px-2 py-1 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800";
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-neutral-200 px-4 py-2 text-xs dark:border-neutral-800">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold">{workspace.name}</span>
-          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${tone[workspace.status]}`}>{workspace.status}</span>
+    <>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-neutral-200 px-4 py-2 text-xs dark:border-neutral-800">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">{workspace.name}</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${tone[workspace.status]}`}>{workspace.status}</span>
+          </div>
+          <div className="max-w-xl truncate text-neutral-500" title={workspace.goal}>{workspace.goal}</div>
         </div>
-        <div className="max-w-xl truncate text-neutral-500" title={workspace.goal}>{workspace.goal}</div>
+        <Meter label="Tokens today" used={workspace.tokens_today} limit={workspace.daily_token_limit} format={(n) => n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`} />
+        <Meter label="Cost today" used={workspace.cost_today} limit={workspace.daily_cost_limit_usd} format={(n) => `$${n.toFixed(2)}`} />
+        <Efficiency workspace={workspace} />
+        <div className="shrink-0 text-[10px] text-neutral-500">
+          <div>All time</div>
+          <div className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-300">{workspace.total_tokens.toLocaleString()} tokens · ${workspace.total_cost_usd.toFixed(4)}</div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          {workspace.status === "Active" && <button onClick={() => act("pause")} className={btn}>Pause</button>}
+          {workspace.status === "Paused" && <button onClick={() => act("resume")} className={btn}>Resume</button>}
+          {workspace.status !== "Archived" && (
+            <button onClick={() => confirm("Archive this workspace? All its agents stop and its triggers are removed.") && act("archive")}
+              className="rounded border border-rose-300 px-2 py-1 text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950">
+              Archive
+            </button>
+          )}
+        </div>
       </div>
-      <Meter label="Tokens today" used={workspace.tokens_today} limit={workspace.daily_token_limit} format={(n) => n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`} />
-      <Meter label="Cost today" used={workspace.cost_today} limit={workspace.daily_cost_limit_usd} format={(n) => `$${n.toFixed(2)}`} />
-      <Efficiency workspace={workspace} />
-      <div className="shrink-0 text-[10px] text-neutral-500">
-        <div>All time</div>
-        <div className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-300">{workspace.total_tokens.toLocaleString()} tokens · ${workspace.total_cost_usd.toFixed(4)}</div>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        {workspace.status === "Active" && <button onClick={() => act("pause")} className={btn}>Pause</button>}
-        {workspace.status === "Paused" && <button onClick={() => act("resume")} className={btn}>Resume</button>}
-        {workspace.status !== "Archived" && (
-          <button onClick={() => confirm("Archive this workspace? All its agents stop and its triggers are removed.") && act("archive")}
-            className="rounded border border-rose-300 px-2 py-1 text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950">
-            Archive
-          </button>
-        )}
-      </div>
-    </div>
+      <BudgetBanner key={`${workspace.daily_token_limit}:${workspace.daily_cost_limit_usd}`} workspace={workspace} onChanged={onChanged} />
+    </>
   );
 }

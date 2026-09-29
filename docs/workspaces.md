@@ -28,7 +28,7 @@ flowchart LR
 | **Schedule** | `create_schedule` with `every_minutes` or a 5-field UTC `cron` expression. Backed by an Orleans reminder, so it survives crashes and restarts. |
 | **Webhook** | `create_webhook` creates `POST /api/hooks/{workspace}/{trigger}/{secret}`. The secret URL is shown to the user, never to an agent. |
 | **Conversation** | The user's messages, agents' `notify_user` messages (with urgency `info`, `warning` or `urgent`), and system notices. Phase 3 connectors (Slack, SMS, email) will forward these. |
-| **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call. When it's used up, agents pause until midnight UTC and the user is told once. |
+| **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call. At 80% the chat warns once. When it's used up, the chat says so once, a banner with a **Raise budget** button stays in the header, and agents that need to run are paused: they show **paused · budget** with the time they resume. A paused agent keeps its turn open and re-checks every minute without calling the LLM, so it carries on by itself after midnight UTC or as soon as the budget is raised, including answering messages that arrived meanwhile. |
 
 ## Webhooks
 
@@ -59,7 +59,10 @@ Everything that runs indefinitely is designed to cost nothing while nothing is h
   - pick the longest schedule interval that works;
   - reuse existing agents and triggers instead of creating new ones;
   - never send "nothing happened" notifications.
-- **Hard caps:** a daily per-agent budget and a daily workspace budget, enforced by the runtime.
+- **Hard caps:** a daily workspace budget, and a daily budget for each standing agent, enforced by
+  the runtime. The coordinator has no per-agent cap: it's how the user reaches the workspace, so only
+  the workspace budget limits it. A standing agent that uses up its own budget pauses until it renews,
+  and the chat says so once, with the time it resumes.
 - **Resuming is cheap:** resuming a paused workspace unpauses agents without forcing an LLM call
   for each one.
 

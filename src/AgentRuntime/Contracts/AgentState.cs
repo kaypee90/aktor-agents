@@ -101,6 +101,10 @@ public sealed class AgentState
 
     public bool InWorkspace => WorkspaceId is not null;
 
+    /// <summary>The workspace's coordinator: the user's way in, capped only by the workspace's daily
+    /// budget, so the workspace never goes silent while that budget has room.</summary>
+    public bool IsWorkspaceCoordinator => InWorkspace && ParentAgentId is null && Role == "Coordinator";
+
     /// <summary>Summary of older history that was compacted out of the transcript (see
     /// ContextCompactor). Shown to the LLM so long-lived agents keep continuity cheaply.</summary>
     [Id(42)] public string? ContextSummary { get; set; }
@@ -125,6 +129,12 @@ public sealed class AgentState
     /// <summary>Workers this agent may still start for the current request, as its plan_request
     /// set out. Reset with <see cref="SpawnsThisRequest"/>: each request is planned on its own.</summary>
     [Id(47)] public int PlannedWorkersLeft { get; set; }
+
+    /// <summary>Why the runtime is holding this agent back (a budget or plan limit), and when that
+    /// lifts if known. Cleared as soon as it runs again; shown to the user so a paused agent doesn't
+    /// look merely idle.</summary>
+    [Id(48)] public string? PauseReason { get; set; }
+    [Id(49)] public DateTimeOffset? PausedUntil { get; set; }
 
     /// <summary>Task agents with a budget for their whole life (not standing agents, whose budget
     /// renews, nor simulation residents): these wrap up instead of failing when it runs out.</summary>

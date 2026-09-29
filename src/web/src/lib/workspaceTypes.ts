@@ -60,6 +60,9 @@ export interface WorkspaceAgentView {
   cached_input_tokens: number;
   created_at: string | null;
   completed_at: string | null;
+  /** Why the runtime is holding the agent back (a budget or plan limit), and until when if known. */
+  pause_reason: string | null;
+  paused_until: string | null;
 }
 
 export interface WorkspaceSnapshot {

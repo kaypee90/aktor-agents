@@ -143,6 +143,8 @@ public sealed record AgentSnapshot
     [Id(23)] public string TenantId { get; init; } = string.Empty;
     [Id(24)] public int SpawnsThisRequest { get; init; }
     [Id(25)] public int PlannedWorkersLeft { get; init; }
+    [Id(26)] public string? PauseReason { get; init; }
+    [Id(27)] public DateTimeOffset? PausedUntil { get; init; }
 }
 
 [GenerateSerializer]

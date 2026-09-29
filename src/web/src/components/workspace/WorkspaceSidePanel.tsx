@@ -8,6 +8,7 @@ import { STATUS_STYLES } from "@/lib/status";
 import { BotIcon } from "../BotIcon";
 import { EventStream } from "../EventStream";
 import { FilesPanel } from "./FilesPanel";
+import { pauseInfo } from "./pauseInfo";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
 
@@ -69,6 +70,7 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
           <ul className="divide-y divide-neutral-200 text-xs dark:divide-neutral-800">
             {workspace.agents.map((a) => {
               const style = STATUS_STYLES[(a.status as AgentStatus)] ?? STATUS_STYLES.Idle;
+              const paused = pauseInfo(a);
               return (
                 <li key={a.agent_id}>
                   <button onClick={() => onSelectAgent(a.agent_id)} className="flex w-full gap-2 p-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900">
@@ -79,9 +81,11 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
                       <span className="flex items-center gap-1.5">
                         <span className="truncate font-semibold">{a.role}</span>
                         {a.standing && <span className="rounded bg-indigo-100 px-1 text-[9px] uppercase text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">standing</span>}
-                        <span className={`ml-auto text-[10px] ${style.text}`}>{a.status}</span>
+                        <span className={`ml-auto text-[10px] ${paused ? "font-medium text-amber-600 dark:text-amber-400" : style.text}`}>{paused?.label ?? a.status}</span>
                       </span>
-                      <span className="block truncate text-neutral-500">{a.current_task ?? a.goal}</span>
+                      <span className={`block truncate ${paused ? "text-amber-700 dark:text-amber-300" : "text-neutral-500"}`} title={paused?.detail}>
+                        {paused?.detail ?? a.current_task ?? a.goal}
+                      </span>
                       <span className="block text-[10px] text-neutral-400">{a.tokens_used.toLocaleString()} tokens · ${a.cost_usd.toFixed(4)}</span>
                     </span>
                   </button>

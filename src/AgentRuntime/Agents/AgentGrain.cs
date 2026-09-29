@@ -488,12 +488,21 @@ public sealed class AgentGrain(
             }
             else
             {
-                if (BudgetExhausted(out var budgetReason))
+                // The coordinator has no cap of its own: capped separately, it would stop answering the
+                // user while the workspace's budget (checked below) still had room.
+                if (!s.IsWorkspaceCoordinator && BudgetExhausted(out var budgetReason))
                 {
                     if (s.Budget.PeriodHours > 0)
                     {
                         // A renewing budget pauses the agent until the next period instead of killing it.
+                        var resumesAt = (s.BudgetPeriodStartedAt ?? DateTimeOffset.UtcNow).AddHours(s.Budget.PeriodHours);
+                        s.PauseReason = $"its own daily {budgetReason} is used up";
+                        s.PausedUntil = resumesAt;
                         await EndTurnAsync($"Agent '{s.Name}' used its {s.Budget.PeriodHours}h {budgetReason} and will continue in the next period.");
+                        if (s.WorkspaceId is { } pausedIn)
+                        {
+                            await GrainFactory.GetGrain<IWorkspaceGrain>(pausedIn).PostAgentPausedNotice(AgentId, s.Role, budgetReason, resumesAt);
+                        }
                         return;
                     }
 
@@ -513,7 +522,7 @@ public sealed class AgentGrain(
                 var decision = await GrainFactory.GetGrain<IWorkspaceGrain>(workspaceId).CheckBudget();
                 if (!decision.Allowed)
                 {
-                    await EndTurnAsync($"Agent '{s.Name}' is paused: {decision.Reason}.");
+                    await ParkForWorkspaceBudgetAsync(decision.Reason ?? "the workspace's daily budget is used up");
                     return;
                 }
             }
@@ -527,6 +536,9 @@ public sealed class AgentGrain(
                 return;
             }
 
+            // Past every limit: whatever was holding the agent back has lifted.
+            s.PauseReason = null;
+            s.PausedUntil = null;
             s.TurnIteration++;
             s.TransitionTo(AgentStatus.Thinking);
             await state.WriteStateAsync();
@@ -843,9 +855,34 @@ public sealed class AgentGrain(
         var s = S;
         var wasParked = s.CurrentTask?.StartsWith("Paused: ", StringComparison.Ordinal) == true;
         s.CurrentTask = $"Paused: {reason}.";
+        s.PauseReason = reason;
+        s.PausedUntil = null;
         if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
         await state.WriteStateAsync();
         await Tenant.ParkForQuota(AgentId);
+        if (!wasParked)
+        {
+            await UpdateRegistryStatusAsync(s.Status);
+            await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' is paused: {reason}.");
+        }
+
+        await EnsureTurnReminderAsync();
+    }
+
+    /// <summary>
+    /// Out of the workspace's daily budget: like a plan quota, the turn stays open and the recovery
+    /// reminder re-checks it, so the agent carries on by itself after midnight UTC or as soon as the
+    /// user raises the budget, including answering any message that arrived meanwhile. Each check
+    /// is a grain call, not an LLM call.
+    /// </summary>
+    private async Task ParkForWorkspaceBudgetAsync(string reason)
+    {
+        var s = S;
+        var wasParked = s.PauseReason == reason;
+        s.PauseReason = reason;
+        s.PausedUntil = DateTimeOffset.UtcNow.UtcDateTime.Date.AddDays(1);
+        if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
+        await state.WriteStateAsync();
         if (!wasParked)
         {
             await UpdateRegistryStatusAsync(s.Status);
@@ -1590,6 +1627,8 @@ public sealed class AgentGrain(
         Standing = s.Standing,
         TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
         SpawnsThisRequest = s.SpawnsThisRequest,
-        PlannedWorkersLeft = s.PlannedWorkersLeft
+        PlannedWorkersLeft = s.PlannedWorkersLeft,
+        PauseReason = s.PauseReason,
+        PausedUntil = s.PausedUntil
     };
 }

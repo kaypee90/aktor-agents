@@ -212,6 +212,29 @@ public sealed class WorkspaceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DailyBudget_WarnsAt80Percent_ShowsWhoIsPaused_AndRaisingItAnswersWhatWaited()
+    {
+        // 3,000 tokens a call against a 10,000-token day: 90% after three calls, used up after four.
+        ScriptedLlmProviderRegistry.Current = MonitorScript(tokensPerCall: 3_000);
+        var id = await CreateWorkspaceAsync(dailyTokens: 10_000);
+
+        var s = await WaitForAsync(id, s => s.Conversation.Any(c => c.Text.Contains("Agents are paused for today")));
+        var warning = Assert.Single(s.Conversation, c => c.Text.Contains("of today's budget is used"));
+        Assert.True(warning.Seq < s.Conversation.First(c => c.Text.Contains("Agents are paused for today")).Seq, "the warning comes first");
+
+        // A message sent while paused isn't answered yet; the coordinator shows why it's waiting.
+        await Workspace(id).PostUserMessage("are you there?", null, null);
+        s = await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.PauseReason?.Contains("daily token budget") == true));
+        Assert.NotNull(s.Agents.Single(a => a.Role == "Coordinator").PausedUntil);
+        Assert.DoesNotContain(s.Conversation, c => c.Text == "ack: are you there?");
+
+        // Raising the budget is enough: nobody has to send the message again.
+        await Workspace(id).UpdateBudget(1_000_000, null);
+        s = await WaitForAsync(id, s => s.Conversation.Any(c => c.Text == "ack: are you there?"));
+        Assert.Null(s.Agents.Single(a => a.Role == "Coordinator").PauseReason);
+    }
+
+    [Fact]
     public async Task DailyBudget_StopsLlmCallsOnceUsedUp_AndTellsTheUserOnce()
     {
         // Each LLM call reports 3,000 tokens against a 10,000-token day.

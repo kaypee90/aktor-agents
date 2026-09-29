@@ -94,6 +94,15 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
         if (context.State.IsResident) return string.Empty;
         var b = context.State.Budget;
         var u = context.State.Usage;
+        if (context.State.IsWorkspaceCoordinator)
+        {
+            return """
+                You share the workspace's daily budget with every agent in it, including each one you
+                spawn. When it runs out, everyone pauses until it renews and the user is told. This is
+                enforced by the runtime, not by you.
+                """;
+        }
+
         if (b.PeriodHours > 0)
         {
             return $"""

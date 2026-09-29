@@ -238,6 +238,13 @@ public sealed class WorkspaceState
     [Id(27)] public Dictionary<string, string> ApprovalByCallKey { get; set; } = [];
     [Id(28)] public int NextApprovalNumber { get; set; } = 1;
     [Id(29)] public string TenantId { get; set; } = string.Empty;
+
+    /// <summary>Agents whose own daily budget ran out, and when each resumes: the user is told once
+    /// per pause.</summary>
+    [Id(30)] public Dictionary<string, DateTimeOffset> AgentPauseNotices { get; set; } = [];
+
+    /// <summary>The day the "80% of today's budget used" warning was last posted.</summary>
+    [Id(31)] public string? BudgetWarningDay { get; set; }
 }
 
 [GenerateSerializer]
@@ -255,6 +262,9 @@ public sealed record WorkspaceAgentView
     [Id(9)] public long CachedInputTokens { get; init; }
     [Id(10)] public DateTimeOffset? CreatedAt { get; init; }
     [Id(11)] public DateTimeOffset? CompletedAt { get; init; }
+    /// <summary>Why the runtime is holding the agent back (a budget or plan limit), if it is.</summary>
+    [Id(12)] public string? PauseReason { get; init; }
+    [Id(13)] public DateTimeOffset? PausedUntil { get; init; }
 }
 
 [GenerateSerializer]
