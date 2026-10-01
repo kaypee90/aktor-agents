@@ -35,3 +35,6 @@ src/AgentRuntime.Api/keys/
 
 # SDK build output
 sdk/typescript/dist/
+
+# Eval runs (aktor-eval --out); the committed baseline lives in evals/baseline.
+/evals/reports/

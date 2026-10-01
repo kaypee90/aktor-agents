@@ -43,6 +43,31 @@ runs on its own except changes to billing.
 Only you can change the policy, through the UI or the API. Agents have no tool for it, and messages
 from agents or channels can't change it either.
 
+## Team shape
+
+Policies also govern **how big and what shape a team can get**. Agents decide when to spawn, and
+the registry checks every spawn against these rules in the same step that registers the new
+agent, alongside `MAX_AGENT_DEPTH` and the other limits. A refused spawn reaches the agent as a
+structured tool error, e.g. `{"error": "…", "code": "spawn_rejected.duplicate_role",
+"details": {"rule": "duplicate_role", "existing_agent_id": "agent-…"}}`, so it knows which agent to
+message instead.
+
+| Rule | Field | Refuses a spawn when… |
+|---|---|---|
+| Team size | `max_agents` | the team (root included) already has this many agents |
+| Size by goal type | `goal_types: [{goal_type, keywords, max_agents}]` | the task is of that type and the team is at its cap. The type is the task's `goal_type` if given, otherwise the first type whose keywords appear in the task's goal |
+| Who may spawn | `spawner_roles`, `spawner_capabilities` (globs) | the spawning agent matches neither list |
+| Fan-out per level | `max_fan_out_by_depth: [3, 2, 0]` | an agent at that depth already has that many children (the last entry applies to deeper levels) |
+| No duplicates | `prevent_duplicate_roles` (on by default), `duplicate_goal_similarity` (0.75) | a live agent in the team has an equivalent role ("Database Specialist" = "database specialists agent") and a goal at least that similar (word overlap) |
+
+**Where policies come from.** Every policy that applies must allow the spawn, so a narrower policy
+can tighten a wider one but never loosen it:
+- **The server:** the `TeamPolicy` section of `appsettings.json`.
+- **A task:** `team_policy` on `POST /api/tasks` or MCP `run_goal`. It's stored on the root agent
+  and inherited by every agent it spawns.
+- **A workspace:** `team` in its safety policy (`PUT /api/workspaces/{id}/policy`). It's read live,
+  so a change applies to the next spawn.
+
 ## Approvals
 
 When a call needs approval:
@@ -109,7 +134,7 @@ This is **tamper-evident, not tamper-proof.**
 
 | Method | Path | |
 |---|---|---|
-| `GET` / `PUT` | `/api/workspaces/{id}/policy` | `{autonomy, rules: [{name, tool_pattern, applies, decision}], approval_timeout_hours}` |
+| `GET` / `PUT` | `/api/workspaces/{id}/policy` | `{autonomy, rules: [{name, tool_pattern, applies, decision}], approval_timeout_hours, team?}` |
 | `GET` | `/api/workspaces/{id}/approvals?status=Pending` | Newest first |
 | `POST` | `/api/workspaces/{id}/approvals/{approvalId or code}/decision` | `{approve, reason?}` |
 | `GET` | `/api/workspaces/{id}/audit?actor=&action=tool.&q=&since=&before=&limit=` | Newest first; `before` pages by sequence number |
@@ -129,3 +154,8 @@ This is **tamper-evident, not tamper-proof.**
   - deny rules block without asking, and reads run even when `Supervised`;
   - a parked agent can be stopped, and approving afterwards runs nothing;
   - a pending approval survives a crash, and approving afterwards runs the call once.
+- **Team shape:**
+  - `TeamPolicyTests` (unit): each rule, goal-type classification, role equivalence, and every
+    policy having to allow a spawn;
+  - `TeamPolicyIntegrationTests`: a duplicate-role spawn is refused with a structured error naming
+    the existing agent, and a task's fan-out limit is inherited by its children.

@@ -23,6 +23,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<ApiKeyRecord> ApiKeys => Set<ApiKeyRecord>();
     public DbSet<InvitationRecord> Invitations => Set<InvitationRecord>();
     public DbSet<BillingEventRecord> BillingEvents => Set<BillingEventRecord>();
+    public DbSet<TaskPreviewRecord> TaskPreviews => Set<TaskPreviewRecord>();
+    public DbSet<JournalStepRecord> JournalSteps => Set<JournalStepRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +39,9 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         {
             b.HasKey(t => t.TaskId);
             b.HasIndex(t => new { t.TenantId, t.CreatedAt });
+            b.Property(t => t.Source).HasDefaultValue("api");
+            // The callback sweep looks for finished tasks whose webhook hasn't been delivered.
+            b.HasIndex(t => t.CallbackDeliveredAt).HasFilter("\"CallbackUrl\" IS NOT NULL");
         });
 
         modelBuilder.Entity<AgentRecord>(b =>
@@ -65,6 +70,21 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasIndex(e => e.AgentId);
             b.HasIndex(e => e.Timestamp);
             b.HasIndex(e => new { e.TenantId, e.Timestamp });
+        });
+
+        modelBuilder.Entity<TaskPreviewRecord>(b =>
+        {
+            b.HasKey(p => p.PreviewId);
+            b.HasIndex(p => new { p.TenantId, p.CreatedAt });
+        });
+
+        modelBuilder.Entity<JournalStepRecord>(b =>
+        {
+            b.HasKey(j => j.Id);
+            b.Property(j => j.Id).ValueGeneratedOnAdd();
+            // One row per step: a step re-run after a crash replaces its row (last write wins).
+            b.HasIndex(j => new { j.TaskId, j.AgentPath, j.Kind, j.Key }).IsUnique();
+            b.HasIndex(j => new { j.TenantId, j.TaskId, j.Id });
         });
 
         modelBuilder.Entity<ArtifactRecord>(b =>

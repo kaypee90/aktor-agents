@@ -16,6 +16,72 @@ public sealed class TaskRecord
     public DateTimeOffset? CompletedAt { get; set; }
     public string? ResultSummary { get; set; }
     public string? ResultJson { get; set; }
+
+    /// <summary>The caller's correlation id (or one generated for it), returned with every result
+    /// and stamped on the run's events, so a failure can be traced across both systems.</summary>
+    public string? CorrelationId { get; set; }
+    /// <summary>How the task was started: "api", "mcp", "a2a" or "acp".</summary>
+    public string Source { get; set; } = "api";
+    /// <summary>The budget the root agent was granted (after the task ceiling was applied).</summary>
+    public string? BudgetJson { get; set; }
+
+    /// <summary>Completion webhook: POSTed once the task finishes (see TaskCallbackDispatcher).
+    /// Its signing secret, if any, is in the secret vault, never in this table.</summary>
+    public string? CallbackUrl { get; set; }
+    public DateTimeOffset? CallbackDeliveredAt { get; set; }
+    public int CallbackAttempts { get; set; }
+    public string? CallbackLastError { get; set; }
+
+    /// <summary>The preview the task was started from, and its estimate (roadmap P2), so estimate vs
+    /// actual can be reported and later estimates calibrated.</summary>
+    public string? PreviewId { get; set; }
+    public string? EstimateJson { get; set; }
+
+    /// <summary>Replays (roadmap P6): the task whose step journal this one replays, how, and from which step.</summary>
+    public string? ReplayOfTaskId { get; set; }
+    public string? ReplayMode { get; set; }
+    public long? ForkAfterStep { get; set; }
+}
+
+/// <summary>A cost and team preview (roadmap P2): one planning call's team shape and estimate.</summary>
+public sealed class TaskPreviewRecord
+{
+    public required string PreviewId { get; set; }
+    public required string TenantId { get; set; }
+    public required string Goal { get; set; }
+    public string PlanJson { get; set; } = "{}";
+    public string EstimateJson { get; set; } = "{}";
+    public string BudgetJson { get; set; } = "{}";
+    public int PlanningTokens { get; set; }
+    public decimal PlanningCostUsd { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>The task started from this preview, if any.</summary>
+    public string? TaskId { get; set; }
+}
+
+/// <summary>
+/// One step of an agent's run (roadmap P6): an LLM decision, or a tool call's result. Keyed by the
+/// agent's position in the tree (its path) rather than its id, so a replay — whose agents get new
+/// ids — can find the step it is at.
+/// </summary>
+public sealed class JournalStepRecord
+{
+    public long Id { get; set; }
+    public string TenantId { get; set; } = "default";
+    public required string TaskId { get; set; }
+    public required string AgentId { get; set; }
+    /// <summary>"r" for the root, then "/{spawn call id}" per level, e.g. "r/call_ab12/call_cd34".</summary>
+    public required string AgentPath { get; set; }
+    /// <summary>"llm" or "tool".</summary>
+    public required string Kind { get; set; }
+    /// <summary>The LLM step number (as text) for "llm"; the tool call id for "tool".</summary>
+    public required string Key { get; set; }
+    public int Step { get; set; }
+    public string? ToolName { get; set; }
+    public string PayloadJson { get; set; } = "{}";
+    /// <summary>LLM steps: how many messages and events the agent had received when it made the call.</summary>
+    public int InputsReceived { get; set; }
+    public DateTimeOffset At { get; set; }
 }
 
 public sealed class AgentRecord
@@ -99,6 +165,10 @@ public sealed class MemoryEntity
     public required string Key { get; set; }
     public required string Value { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>The model whose vector is in the (pgvector, unmapped) "Embedding" column, or null
+    /// when the entry has none. Only vectors from the same model are compared.</summary>
+    public string? EmbeddingModel { get; set; }
 }
 
 public sealed class ToolCallRecord

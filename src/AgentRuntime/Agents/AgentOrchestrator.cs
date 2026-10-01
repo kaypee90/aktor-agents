@@ -19,8 +19,10 @@ public sealed class AgentOrchestrator(
     IOptions<RuntimeLimitsOptions> limitsOptions,
     IOptions<DefaultBudgetOptions> defaultBudgetOptions,
     IOptions<SimulationOptions> simulationOptions,
-    IOptions<WorkspaceOptions> workspaceOptions) : IAgentOrchestrator
+    IOptions<WorkspaceOptions> workspaceOptions,
+    IOptions<TaskBudgetCeilingOptions> ceilingOptions) : IAgentOrchestrator
 {
+    private readonly TaskBudgetCeilingOptions _ceiling = ceilingOptions.Value;
     private readonly WorkspaceOptions _workspaces = workspaceOptions.Value;
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
     private readonly DefaultBudgetOptions _defaultBudget = defaultBudgetOptions.Value;
@@ -34,13 +36,16 @@ public sealed class AgentOrchestrator(
 
     private ITenantGrain Tenant(string tenantId) => grainFactory.GetGrain<ITenantGrain>(tenantId);
 
-    public async Task<string> CreateRootAgentAsync(
-        string taskId, string goal, ResourceBudget? budget = null, string? tenantId = null, CancellationToken cancellationToken = default)
+    public Task<string> CreateRootAgentAsync(
+        string taskId, string goal, ResourceBudget? budget = null, string? tenantId = null, CancellationToken cancellationToken = default) =>
+        CreateRootAgentAsync(taskId, goal, new TaskLaunchOptions { Budget = budget, TenantId = tenantId }, cancellationToken);
+
+    public async Task<string> CreateRootAgentAsync(string taskId, string goal, TaskLaunchOptions options, CancellationToken cancellationToken = default)
     {
-        var tenant = TenantIds.Normalize(tenantId);
+        var tenant = TenantIds.Normalize(options.TenantId);
         var plan = await Tenant(tenant).GetPlan();
         var agentId = $"root-{Guid.NewGuid().ToString("n")[..8]}";
-        var effectiveBudget = budget ?? _defaultBudget.ToBudget();
+        var effectiveBudget = _ceiling.Clamp(options.Budget ?? _defaultBudget.ToBudget());
         // "filesystem" so the root can write a final consolidated report before completing
         // (CLAUDE.md section 26/52 — the task should produce an inspectable final artifact).
         var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"]);
@@ -83,6 +88,10 @@ public sealed class AgentOrchestrator(
             Depth = 0,
             TaskId = taskId,
             TenantId = tenant,
+            CorrelationId = options.CorrelationId,
+            TeamPolicy = options.TeamPolicy,
+            JournalPath = "r",
+            Replay = options.Replay,
             AutoStart = true
         });
 
@@ -92,6 +101,7 @@ public sealed class AgentOrchestrator(
             AgentId = agentId,
             TaskId = taskId,
             TenantId = tenant,
+            CorrelationId = options.CorrelationId,
             Summary = $"Task created: {goal}",
             Data = new Dictionary<string, string> { ["goal"] = goal, ["rootAgentId"] = agentId }
         }, cancellationToken);
@@ -249,10 +259,14 @@ public sealed class AgentOrchestrator(
             Depth = parentEntry.Depth + 1,
             RootAgentId = parentSnapshot.RootAgentId,
             TenantId = tenant
-        }, request.Role, (await Tenant(tenant).GetPlan()).MaxActiveAgents);
+        }, request.Role, (await Tenant(tenant).GetPlan()).MaxActiveAgents,
+            // The task's rules travel with its agents; a workspace's are read live, so a change
+            // the user makes applies to the very next spawn.
+            new[] { parentSnapshot.TeamPolicy, policy?.Team }.OfType<Safety.TeamPolicy>().ToList());
         if (!validation.Allowed)
         {
-            return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId, validation.RejectionReason ?? "Spawn rejected.", cancellationToken);
+            return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId, validation.RejectionReason ?? "Spawn rejected.", cancellationToken,
+                validation.Rule, validation.DetailsJson);
         }
 
         await events.PublishAsync(new RuntimeEvent
@@ -287,13 +301,20 @@ public sealed class AgentOrchestrator(
             WorkspaceId = parentSnapshot.WorkspaceId,
             Standing = policy is not null && request.Standing,
             ContextWindow = policy is not null && request.Standing ? policy.StandingContextWindow : 0,
-            TenantId = tenant
+            TenantId = tenant,
+            CorrelationId = parentSnapshot.CorrelationId,
+            TeamPolicy = parentSnapshot.TeamPolicy,
+            // Keyed by the spawn call, not the new id, so a replay (whose agents get new ids) finds
+            // this agent's recorded steps under the same path.
+            JournalPath = $"{parentSnapshot.JournalPath}/{SpawnCallId(parentAgentId, idempotencyKey) ?? childId}",
+            Replay = parentSnapshot.Replay
         });
         await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
         await events.PublishAsync(new RuntimeEvent
         {
             Type = RuntimeEventType.AgentSpawned,
+            CorrelationId = parentSnapshot.CorrelationId,
             AgentId = parentAgentId,
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
@@ -310,6 +331,12 @@ public sealed class AgentOrchestrator(
             Note = policy is null ? null : SpawnCostNote(childBudget, request.Standing, policy, parentSnapshot.SpawnsThisRequest + 1)
         };
     }
+
+    /// <summary>The spawn_agent call id from its idempotency key ("{agentId}:{callId}").</summary>
+    private static string? SpawnCallId(string parentAgentId, string? idempotencyKey) =>
+        idempotencyKey is not null && idempotencyKey.StartsWith(parentAgentId + ":", StringComparison.Ordinal)
+            ? idempotencyKey[(parentAgentId.Length + 1)..]
+            : null;
 
     private static Dictionary<string, string> JustificationData(SpawnAgentRequest request) =>
         request.Justification is null ? [] : new Dictionary<string, string> { ["justification"] = request.Justification };
@@ -576,19 +603,29 @@ public sealed class AgentOrchestrator(
     }
 
     private async Task<SpawnAgentResult> RejectSpawnAsync(
-        string parentAgentId, string? taskId, string reason, CancellationToken cancellationToken)
+        string parentAgentId, string? taskId, string reason, CancellationToken cancellationToken, string? rule = null, string? detailsJson = null)
     {
         var parent = await Registry.GetAsync(parentAgentId);
+        var data = new Dictionary<string, string> { ["rejected"] = "true" };
+        if (rule is not null) data["rule"] = rule;
         await events.PublishAsync(new RuntimeEvent
         {
             Type = RuntimeEventType.AgentSpawnRequested,
             AgentId = parentAgentId,
             TaskId = taskId,
             TenantId = TenantIds.Normalize(parent?.TenantId),
-            Summary = $"Spawn rejected: {reason}"
+            Summary = $"Spawn rejected: {reason}",
+            Data = data
         }, cancellationToken);
 
-        return new SpawnAgentResult { AgentId = string.Empty, Status = "rejected", RejectionReason = reason };
+        return new SpawnAgentResult
+        {
+            AgentId = string.Empty,
+            Status = "rejected",
+            RejectionReason = reason,
+            RejectionRule = rule ?? "spawn_limit",
+            RejectionDetailsJson = detailsJson
+        };
     }
 
     private List<string> FilterToolsByPermission(IReadOnlyList<string> toolNames, ToolPermission allowed)

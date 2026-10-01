@@ -11,17 +11,20 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { computeTreeLayout } from "@/lib/layout";
-import type { AgentListItem } from "@/lib/types";
+import type { AgentListItem, AgentSpend } from "@/lib/types";
 import { AgentNode, type AgentNodeData } from "./AgentNode";
 
 const nodeTypes = { agent: AgentNode };
 
 export function AgentGraph({
   agents,
+  spend = {},
   selectedId,
   onSelect,
 }: {
   agents: AgentListItem[];
+  /** Spend per agent and branch, when known (tasks only). */
+  spend?: Record<string, AgentSpend>;
   selectedId: string | null;
   onSelect: (agentId: string) => void;
 }) {
@@ -34,7 +37,7 @@ export function AgentGraph({
         id: agent.agent_id,
         type: "agent",
         position: { x: pos.x, y: pos.y },
-        data: { agent },
+        data: { agent, spend: spend[agent.agent_id] },
         selected: agent.agent_id === selectedId,
       };
     });
@@ -50,7 +53,7 @@ export function AgentGraph({
       }));
 
     return { nodes, edges };
-  }, [agents, selectedId]);
+  }, [agents, spend, selectedId]);
 
   if (agents.length === 0) {
     return (

@@ -419,6 +419,64 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Invitations");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.JournalStepRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentPath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("InputsReceived")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Step")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TaskId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ToolName")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "TaskId", "Id");
+
+                    b.HasIndex("TaskId", "AgentPath", "Kind", "Key")
+                        .IsUnique();
+
+                    b.ToTable("JournalSteps");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.MembershipRecord", b =>
                 {
                     b.Property<string>("TenantId")
@@ -452,6 +510,9 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EmbeddingModel")
+                        .HasColumnType("text");
 
                     b.Property<string>("Key")
                         .IsRequired()
@@ -585,19 +646,96 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Sessions");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TaskPreviewRecord", b =>
+                {
+                    b.Property<string>("PreviewId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BudgetJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EstimateJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Goal")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlanJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("PlanningCostUsd")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("PlanningTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("PreviewId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.ToTable("TaskPreviews");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TaskRecord", b =>
                 {
                     b.Property<string>("TaskId")
                         .HasColumnType("text");
 
+                    b.Property<string>("BudgetJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("CallbackAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CallbackDeliveredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CallbackLastError")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CallbackUrl")
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CorrelationId")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("EstimateJson")
+                        .HasColumnType("text");
+
+                    b.Property<long?>("ForkAfterStep")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("Goal")
                         .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PreviewId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReplayMode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReplayOfTaskId")
                         .HasColumnType("text");
 
                     b.Property<string>("ResultJson")
@@ -608,6 +746,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("RootAgentId")
                         .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("api");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -620,6 +764,9 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .HasDefaultValue("default");
 
                     b.HasKey("TaskId");
+
+                    b.HasIndex("CallbackDeliveredAt")
+                        .HasFilter("\"CallbackUrl\" IS NOT NULL");
 
                     b.HasIndex("TenantId", "CreatedAt");
 

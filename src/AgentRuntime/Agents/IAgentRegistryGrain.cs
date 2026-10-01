@@ -25,7 +25,11 @@ public interface IAgentRegistryGrain : IGrainWithIntegerKey
     /// <summary>Validates (as <see cref="ValidateSpawnAsync"/>) and, if allowed, registers the entry
     /// in the same grain turn with its depth set to the validated depth. Validating and registering
     /// in separate calls lets two concurrent spawns both pass the total/active limit checks.</summary>
-    Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0);
+    /// <remarks>With a <paramref name="role"/> (an agent spawning a child), the team-shape policies
+    /// apply too: the server's configured one and any in <paramref name="teamPolicies"/> (the task's
+    /// or workspace's). A refusal names the rule in <see cref="SpawnValidationResult.Rule"/>.</remarks>
+    Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0,
+        List<Safety.TeamPolicy>? teamPolicies = null);
 
     Task UpdateStatusAsync(string agentId, AgentStatus status);
 

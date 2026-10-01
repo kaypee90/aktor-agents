@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        run: dotnet build AktorAgents.slnx -c Release
+
+      - name: Unit tests
+        run: dotnet test src/AgentRuntime.Tests -c Release --no-build
+
+      # Includes the API tests against a throwaway pgvector container (Docker is available on
+      # GitHub's Ubuntu runners) and the eval baseline check on the Mock provider.
+      - name: Integration tests
+        run: dotnet test src/AgentRuntime.IntegrationTests -c Release --no-build
+
+      - name: Eval against the baseline (Mock provider)
+        run: >
+          dotnet run --project src/AgentRuntime.Evals -c Release --no-build --
+          --spec evals/demo-scenarios.json --out evals/reports/ci --baseline evals/baseline/report.json
+          --set Llm:Provider=Mock --runs 2
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: evals/reports/ci
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint

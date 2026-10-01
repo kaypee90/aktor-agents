@@ -48,6 +48,10 @@ public sealed record WorkspaceCreationRequest
     [Id(4)] public string OwnerId { get; init; } = "local";
     /// <summary>The organization that owns the workspace (set by the API from the caller, never by an agent).</summary>
     [Id(5)] public string TenantId { get; init; } = string.Empty;
+    /// <summary>The template the workspace was made from (see WorkspaceTemplates), if any.</summary>
+    [Id(6)] public string? TemplateId { get; init; }
+    /// <summary>A safety policy to start with, in force before the coordinator's first step.</summary>
+    [Id(7)] public Safety.WorkspaceSafetyPolicy? SafetyPolicy { get; init; }
 }
 
 [GenerateSerializer]
@@ -180,6 +184,8 @@ public sealed record WorkspacePolicy
     /// <summary>What's left of the workspace's shared daily budget, told to agents when they spawn.</summary>
     [Id(6)] public long TokensLeftToday { get; init; }
     [Id(7)] public decimal CostLeftTodayUsd { get; init; }
+    /// <summary>The workspace's team-shape rules (from its safety policy).</summary>
+    [Id(8)] public Safety.TeamPolicy? Team { get; init; }
 }
 
 [GenerateSerializer]
@@ -245,6 +251,7 @@ public sealed class WorkspaceState
 
     /// <summary>The day the "80% of today's budget used" warning was last posted.</summary>
     [Id(31)] public string? BudgetWarningDay { get; set; }
+    [Id(32)] public string? TemplateId { get; set; }
 }
 
 [GenerateSerializer]
@@ -293,6 +300,7 @@ public sealed record WorkspaceSnapshot
     /// <summary>Pending first, then the most recent decided ones.</summary>
     [Id(20)] public List<Safety.ApprovalRecord> Approvals { get; init; } = [];
     [Id(21)] public string TenantId { get; init; } = string.Empty;
+    [Id(22)] public string? TemplateId { get; init; }
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

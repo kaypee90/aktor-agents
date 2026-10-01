@@ -136,6 +136,30 @@ public sealed class AgentState
     [Id(48)] public string? PauseReason { get; set; }
     [Id(49)] public DateTimeOffset? PausedUntil { get; set; }
 
+    /// <summary>Team-shape rules of the task this agent works in (set on the root, copied to every
+    /// child), checked by the registry on each spawn.</summary>
+    [Id(50)] public Safety.TeamPolicy? TeamPolicy { get; set; }
+
+    // ---- Step journal and replay (roadmap P6) ----
+
+    /// <summary>Position in the tree, stable across replays: "r", then "/{spawn call id}" per level.</summary>
+    [Id(51)] public string JournalPath { get; set; } = "r";
+
+    /// <summary>LLM calls made so far; the journal's step number for each decision.</summary>
+    [Id(52)] public int LlmStep { get; set; }
+
+    /// <summary>Messages and events received so far (kickoff not counted).</summary>
+    [Id(53)] public int InputsReceived { get; set; }
+
+    /// <summary>Set when this agent replays a past run.</summary>
+    [Id(54)] public Durability.ReplaySpec? Replay { get; set; }
+
+    /// <summary>A fork's agent past its fork point (or with nothing recorded): it runs live from here.</summary>
+    [Id(55)] public bool ReplayDiverged { get; set; }
+
+    /// <summary>Replaying and still on the recording.</summary>
+    public bool IsReplaying => Replay is not null && !ReplayDiverged;
+
     /// <summary>Task agents with a budget for their whole life (not standing agents, whose budget
     /// renews, nor simulation residents): these wrap up instead of failing when it runs out.</summary>
     public bool HasLifetimeBudget => !IsResident && !Standing && Budget.PeriodHours <= 0;

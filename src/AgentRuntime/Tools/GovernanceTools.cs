@@ -78,7 +78,10 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
 
         return result.Success
             ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { agent_id = result.AgentId, status = result.Status, granted_budget = result.GrantedBudget, note = result.Note }, ToolJson.Options))
-            : ToolExecutionResult.Fail(result.RejectionReason ?? "Spawn rejected.");
+            // Structured: the agent sees which rule refused it (e.g. duplicate_role, with the
+            // existing agent's id to message instead), not just prose.
+            : ToolExecutionResult.Fail(result.RejectionReason ?? "Spawn rejected.", "spawn_rejected." + (result.RejectionRule ?? "spawn_limit"),
+                result.RejectionDetailsJson);
     }
 
     private const int MinJustificationLength = 10;

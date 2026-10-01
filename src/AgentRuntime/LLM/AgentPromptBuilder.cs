@@ -212,3 +212,20 @@ public sealed class BehavioralRulesSection : ISystemPromptSection
         12. Never attempt to bypass runtime permissions.
         """;
 }
+
+/// <summary>Section "Prompts": operator-level prompt settings.</summary>
+public sealed class PromptOptions
+{
+    public const string SectionName = "Prompts";
+
+    /// <summary>Extra instructions for every task agent, set by the operator (never by an agent).
+    /// Changing them changes the prompt version the eval harness reports, so variants can be compared.</summary>
+    public string? ExtraInstructions { get; set; }
+}
+
+public sealed class OperatorInstructionsSection(Microsoft.Extensions.Options.IOptions<PromptOptions> options) : ISystemPromptSection
+{
+    public string Header => "OPERATOR INSTRUCTIONS";
+    public string Render(AgentPromptContext context) =>
+        context.State.IsResident || string.IsNullOrWhiteSpace(options.Value.ExtraInstructions) ? string.Empty : options.Value.ExtraInstructions!;
+}

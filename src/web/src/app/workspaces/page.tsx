@@ -36,13 +36,17 @@ function recall(): string | null {
 
 export default function WorkspacesPage() {
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  // Deep links (?id=<workspace>) from MCP/A2A results open that workspace.
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("id"),
+  );
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   // Shared by the chat widget and the team view, which keeps the agents clear of the open chat.
   const [chatOpen, setChatOpen] = useState(readChatOpen);
+
   const changeChatOpen = useCallback((open: boolean) => {
     setChatOpen(open);
     rememberChatOpen(open);

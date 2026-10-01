@@ -53,6 +53,25 @@ builder.Services.AddRateLimiter(o =>
 builder.Services.AddAgentRuntimeCore(builder.Configuration);
 builder.Services.AddAgentRuntimeInfrastructure(builder.Configuration);
 
+// One task service behind every way in: REST, MCP, A2A and ACP (docs/integrations.md).
+builder.Services.AddSingleton<TaskService>();
+builder.Services.AddSingleton<TaskPreviewService>();
+builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));
+builder.Services.Configure<AgentRuntime.Api.Interop.McpServerSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.McpServerSettings.SectionName));
+
+// Aktor as an MCP server (streamable HTTP at /mcp), authenticated with the same API keys.
+// Stateless: every request stands alone (no session affinity), and a tool sees its own request's
+// caller; progress notifications still stream back on the call's own response.
+builder.Services.AddMcpServer(o =>
+    {
+        o.ServerInfo = new ModelContextProtocol.Protocol.Implementation { Name = "aktor", Title = "Aktor governed agent teams", Version = "1.0.0" };
+        o.ServerInstructions = "Aktor runs autonomous agent teams under budgets the server enforces. Call run_goal to start one, " +
+                               "then get_task_status (it can wait) and get_task_result. Every result has a dashboard_url and a correlation_id.";
+    })
+    .WithHttpTransport(o => o.Stateless = true)
+    .AddAuthorizationFilters()
+    .WithTools<AgentRuntime.Api.Interop.AktorMcpTools>(AgentRuntime.Api.Interop.McpJson.Options);
+
 // A hiccup in a background service (e.g. the Postgres event writer losing its connection) should
 // never take down the whole silo/API; it logs and keeps running rather than stopping the host.
 builder.Services.Configure<Microsoft.Extensions.Hosting.HostOptions>(o =>
@@ -93,10 +112,16 @@ await app.MigrateDatabaseAsync();
 app.MapOpenApi().AllowAnonymous();
 
 app.UseCors();
+// ACP (/acp) runs over a WebSocket; keep-alives stop proxies closing a long prompt's connection.
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
+app.MapMcp("/mcp");
+// Aktor as an A2A agent and an ACP agent (docs/integrations.md).
+AgentRuntime.Api.Interop.A2aEndpoint.MapA2a(app);
+AgentRuntime.Api.Interop.AcpEndpoint.MapAcp(app);
 
 // Real-time event stream (CLAUDE.md sections 29, 31, 46) via Server-Sent Events.
 app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, string? taskId, CancellationToken ct) =>
@@ -122,3 +147,6 @@ app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, string? t
 });
 
 app.Run();
+
+/// <summary>Visible to the integration tests' WebApplicationFactory.</summary>
+public partial class Program;

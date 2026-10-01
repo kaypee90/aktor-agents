@@ -19,6 +19,9 @@ The core principle: **the LLM provides reasoning; the actor runtime provides exe
 isolation, messaging, lifecycle, resource management, and governance.** The LLM is never trusted
 to enforce a system-level constraint — the runtime always is.
 
+**What the runtime guarantees**, each with the code that enforces it and the test that proves it:
+[docs/guarantees.md](docs/guarantees.md).
+
 ---
 
 ## 1. What's in here
@@ -30,7 +33,11 @@ to enforce a system-level constraint — the runtime always is.
   /AgentRuntime.Infrastructure  Postgres persistence, LLM provider implementations, concrete tools
   /AgentRuntime.Api            ASP.NET Core API + co-hosted Orleans silo
   /AgentRuntime.Tests          unit tests (no Orleans cluster needed)
-  /AgentRuntime.IntegrationTests  tests against real Orleans grains, scripted LLM
+  /AgentRuntime.IntegrationTests  tests against real Orleans grains, scripted LLM, and the real API
+                               against a throwaway Postgres container
+  /AgentRuntime.Evals          aktor-eval: runs goals N times and reports team size, cost, completion, quality
+/evals                        eval scenarios and the committed baseline (docs/evals.md)
+/sdk/typescript               TypeScript SDK and the aktor-acp bridge
   /web                        Next.js dashboard (React Flow agent graph, live event stream)
 /docker                       Dockerfiles for the API and the web app
 docker-compose.yml
@@ -152,8 +159,10 @@ public interface ILLMProvider
 
 `AnthropicProvider` is fully implemented against the Messages API, including structured tool use.
 `OpenAIProvider` is a second complete implementation (Chat Completions API), proving the
-abstraction holds across vendors without touching `AgentGrain`. `GeminiProvider` is a documented
-stub — swap it in following the same pattern to add a third vendor. `HeuristicMockLlmProvider`
+abstraction holds across vendors without touching `AgentGrain`. `GeminiProvider` is a third
+(generateContent API with function calling, thought signatures and cached-token accounting), and
+`OllamaProvider` runs local models. All of them pass the same provider contract tests
+(`ProviderContractTests`). `HeuristicMockLlmProvider`
 needs no API key at all and is what `docker compose up` uses by default — it inspects the
 transcript to decide whether to spawn, recurse once, or complete, enough to demonstrate the whole
 pipeline (including recursive spawning) with zero configuration.
@@ -423,6 +432,52 @@ One server hosts many organizations, and the runtime (not only the API) keeps th
 The first account created on a server takes over existing data. Set `AUTH_MODE=disabled` for a
 single-user machine. See [docs/platform.md](docs/platform.md).
 
+## 10b-7. Calling Aktor from other tools: MCP, A2A, ACP
+
+Aktor is the governed runtime underneath other tools. n8n, Claude Code, CrewAI, OpenClaw and
+editors hand it a goal; a team works on it under the server's budgets; the result comes back.
+- **MCP server** at `/mcp`: `run_goal`, `get_task_status` (long poll), `get_task_result`,
+  `cancel_task`, `list_agents`.
+- **A2A agent** (`/.well-known/agent-card.json`, `/a2a`), speaking protocol 1.0 and 0.3.
+- **ACP agent** (`/acp`, plus the `aktor-acp` stdio bridge) for OpenClaw/acpx and Zed.
+- **Finding out a task finished:** poll, long-poll, a signed completion webhook, or MCP progress
+  notifications.
+- **No bypass:** every way in uses the same API keys, task service, budget ceiling, quotas and
+  tenant isolation as `POST /api/tasks`. Every result carries a `correlation_id` and a
+  `dashboard_url`.
+
+See [docs/integrations.md](docs/integrations.md).
+
+## 10b-8. Cost preview, team shape, memory, replay and evals
+
+- **Cost and team preview.** One planning call before a run shows the likely team and a token,
+  dollar and time range, calibrated on past runs. The dashboard asks before starting anything
+  costly, shows spend against budget per branch of the tree, and records estimate vs actual.
+  ([docs/preview.md](docs/preview.md))
+- **Team-shape policies** are enforced at every spawn: max agents (also by goal type), which roles
+  may spawn, fan-out per level, and no duplicate roles. Policies come from the server, the task or
+  the workspace, and only ever tighten. ([docs/safety.md](docs/safety.md#team-shape))
+- **Semantic memory** (pgvector + an Ollama or OpenAI embedding provider): hybrid search by meaning,
+  words and recency, still tenant-scoped. Without embeddings it falls back to keywords.
+  ([docs/memory.md](docs/memory.md))
+- **Replay from the step journal.** Re-run a finished task from its recorded decisions with no
+  model or external calls, or fork it live from any step. Step through it and diff two runs in the
+  dashboard. ([docs/replay.md](docs/replay.md))
+- **Evals.** `aktor-eval` measures team size, cost, duration, completion and judged quality across
+  models and prompt versions. CI checks the demo scenarios against a committed baseline.
+  ([docs/evals.md](docs/evals.md))
+
+## 10b-9. Flagship: incident response
+
+The **Incident response** workspace template:
+- an alert on its webhook wakes a team that investigates logs, metrics and recent deploys in
+  parallel;
+- the team writes `incident-report.md`;
+- it proposes a rollback that waits for your approval (`SemiAutonomous`).
+
+Every step is audited. With the Mock provider it runs as a scripted demo (**Simulate alert**); with
+a real model it runs live. See [docs/incident-response.md](docs/incident-response.md).
+
 ## 10c. Durable execution
 
 Agents survive crashes, restarts and outages, and resume exactly where they stopped:
@@ -512,10 +567,21 @@ dotnet test src/AgentRuntime.Tests               # unit tests — no Orleans clu
 dotnet test src/AgentRuntime.IntegrationTests    # real Orleans grains + a scripted LLM
 ```
 
-Integration tests cover: root spawning a child, a child recursively spawning a grandchild, two
-agents messaging each other directly (including a reply cycle), several children completing
-concurrently, tool-call budget exhaustion forcing a clean stop, and a spawn request beyond
-`MAX_CHILDREN_PER_AGENT` being rejected by the runtime rather than the LLM.
+Integration tests cover, among others:
+- root spawning a child, a child recursively spawning a grandchild, and two agents messaging each
+  other directly (including a reply cycle);
+- several children completing concurrently;
+- tool-call budget exhaustion forcing a clean stop;
+- a spawn request beyond `MAX_CHILDREN_PER_AGENT` being rejected by the runtime rather than the LLM;
+- crash recovery, approvals and tenancy;
+- the MCP, A2A and ACP endpoints, previews, vector memory and the incident-response demo, against
+  the real API and a throwaway pgvector container. These need Docker and are skipped without it.
+
+```bash
+# The eval harness on the demo scenarios, compared with the committed baseline:
+dotnet run --project src/AgentRuntime.Evals -- --spec evals/demo-scenarios.json --out evals/reports/latest \
+    --baseline evals/baseline/report.json --set Llm:Provider=Mock
+```
 
 ## 15. Known simplifications
 
@@ -524,6 +590,5 @@ This is a prototype, and a few things are deliberately simplified rather than fu
 - **Single silo by default.** Agent state, mailboxes and reminders are durable in Postgres (see
   [docs/durability.md](docs/durability.md)), so a restart or crash resumes in-flight work. For
   failover across machines, set `Silo:Clustering=AdoNet` to run several silos.
-- **`GeminiProvider`** is a stub — see §6.
 - **`POST /api/admin/reset` has no auth** — anyone who can reach the API can wipe all data. Fine
   for a local prototype; a shared deployment should gate this behind an operator role.

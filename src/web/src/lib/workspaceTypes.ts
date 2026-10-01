@@ -67,6 +67,8 @@ export interface WorkspaceAgentView {
 
 export interface WorkspaceSnapshot {
   workspace_id: string;
+  /** The template the workspace was made from (e.g. "incident-response"), if any. */
+  template_id?: string | null;
   name: string;
   goal: string;
   status: WorkspaceStatus;
@@ -208,4 +210,14 @@ export interface AuditVerification {
   records: number;
   first_broken_seq: number | null;
   message: string;
+}
+
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  description: string;
+  goal: string;
+  autonomy: string;
+  connections: { plugin_id: string; name: string; demo_only: boolean }[];
+  webhooks: { name: string; sample_payload: string }[];
 }

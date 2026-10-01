@@ -4,8 +4,9 @@ import Link from "next/link";
 import { AccountMenu } from "@/components/platform/AccountMenu";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getTask, listAgents, resetAll, subscribeToEvents } from "@/lib/api";
-import type { AgentListItem, RuntimeEvent, TaskSummary } from "@/lib/types";
+import { getTask, getTaskSpend, listAgents, resetAll, subscribeToEvents } from "@/lib/api";
+import type { AgentListItem, AgentSpend, RuntimeEvent, TaskPreview, TaskSummary } from "@/lib/types";
+import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
 import { AgentGraph } from "@/components/AgentGraph";
 import { EventStream } from "@/components/EventStream";
@@ -18,16 +19,24 @@ const POLL_INTERVAL_MS = 2000;
 
 export default function Home() {
   const { me } = useAuth();
-  const [taskId, setTaskId] = useState<string | null>(null);
+  // Deep links (?task=<id>): every task result from MCP, A2A or the API carries one, so a run
+  // started elsewhere can be opened here.
+  const [taskId, setTaskId] = useState<string | null>(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("task"),
+  );
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<TaskPreview | null>(null);
+  const [spend, setSpend] = useState<Record<string, AgentSpend>>({});
   const [resetting, setResetting] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
 
-  const handleTaskCreated = useCallback((newTaskId: string) => {
+  const handleTaskCreated = useCallback((newTaskId: string, _rootAgentId: string, newPreview: TaskPreview | null) => {
     setTaskId(newTaskId);
+    setPreview(newPreview);
+    setSpend({});
     setTask(null);
     setAgents([]);
     setEvents([]);
@@ -54,6 +63,16 @@ export default function Home() {
     }
   }
 
+  // Keep the address bar pointing at the task being watched, so it can be shared.
+  useEffect(() => {
+    if (!taskId) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("task") !== taskId) {
+      url.searchParams.set("task", taskId);
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, [taskId]);
+
   // Poll agent graph + task status (the source of truth is Postgres/the registry grain; polling is
   // simple and sufficient at demo scale, while the event stream below gives real-time detail).
   useEffect(() => {
@@ -61,11 +80,13 @@ export default function Home() {
 
     let cancelled = false;
     async function poll() {
-      const [nextAgents, nextTask] = await Promise.all([
+      const [nextAgents, nextTask, nextSpend] = await Promise.all([
         listAgents(),
         getTask(taskId!).catch(() => null),
+        getTaskSpend(taskId!).catch(() => null),
       ]);
       if (cancelled) return;
+      if (nextSpend) setSpend(Object.fromEntries(nextSpend.map((s) => [s.agent_id, s])));
       // listAgents() is system-wide; scope the graph to this task's own agent tree.
       setAgents(nextTask ? nextAgents.filter((a) => a.root_agent_id === nextTask.root_agent_id) : nextAgents);
       if (nextTask) setTask(nextTask);
@@ -83,8 +104,8 @@ export default function Home() {
   useEffect(() => {
     if (!taskId) return;
 
+    // Events were cleared when the task was chosen (handleTaskCreated).
     sourceRef.current?.close();
-    setEvents([]);
     const source = subscribeToEvents((evt) => {
       setEvents((prev) => {
         const next = [...prev, evt];
@@ -135,9 +156,29 @@ export default function Home() {
       <div className="border-b border-neutral-200 p-3 dark:border-neutral-800">
         <GoalForm onTaskCreated={handleTaskCreated} />
         {task && (
-          <div className="mt-2">
-            <TaskStatusBar task={task} />
+          <div className="mt-2 flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <TaskStatusBar task={task} />
+            </div>
+            <Link
+              href={`/replay?task=${task.task_id}`}
+              title="Step through every decision and tool result, replay or fork the run, and compare runs"
+              className="shrink-0 rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
+              Journal &amp; replay
+            </Link>
           </div>
+        )}
+        {task && preview && (
+          <details className="mt-2 rounded border border-neutral-200 px-3 py-2 dark:border-neutral-800">
+            <summary className="cursor-pointer text-xs font-medium text-neutral-600 dark:text-neutral-300">
+              Preview: {preview.team_size} agents, likely ${preview.estimate.cost_usd_expected.toFixed(2)} (up to $
+              {preview.estimate.cost_usd_high.toFixed(2)})
+            </summary>
+            <div className="mt-2">
+              <TaskPreviewCard preview={preview} />
+            </div>
+          </details>
         )}
       </div>
 
@@ -145,7 +186,7 @@ export default function Home() {
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1 border-r border-neutral-200 dark:border-neutral-800">
-          <AgentGraph agents={agents} selectedId={selectedAgentId} onSelect={setSelectedAgentId} />
+          <AgentGraph agents={agents} spend={spend} selectedId={selectedAgentId} onSelect={setSelectedAgentId} />
         </div>
 
         {selectedAgentId && (

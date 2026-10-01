@@ -150,6 +150,9 @@ export interface TaskSummary {
   created_at: string;
   completed_at: string | null;
   result_summary: string | null;
+  correlation_id?: string | null;
+  replay_of_task_id?: string | null;
+  replay_mode?: string | null;
 }
 
 export interface MessageRecord {
@@ -174,4 +177,101 @@ export interface ToolCallRecord {
   result_json: string | null;
   success: boolean;
   timestamp: string;
+}
+
+// ---- Cost and team preview (roadmap P2) ----
+
+export interface PlannedTeamMember {
+  role: string;
+  purpose: string;
+  depth: number;
+  parent_role: string | null;
+}
+
+export interface TaskEstimate {
+  tokens_low: number;
+  tokens_expected: number;
+  tokens_high: number;
+  cost_usd_low: number;
+  cost_usd_expected: number;
+  cost_usd_high: number;
+  duration_seconds_low: number;
+  duration_seconds_expected: number;
+  duration_seconds_high: number;
+  team_size: number;
+}
+
+export interface TaskPreview {
+  preview_id: string;
+  goal: string;
+  goal_type: string | null;
+  team: PlannedTeamMember[];
+  team_size: number;
+  max_depth: number;
+  rationale: string | null;
+  estimate: TaskEstimate;
+  budget: ResourceBudget;
+  capped_by_budget: boolean;
+  requires_confirmation: boolean;
+  confirm_above_usd: number;
+  calibration: { samples: number; tokens_per_agent: number; team_size_factor: number; source: string };
+  planning: { tokens: number; cost_usd: number };
+}
+
+/** One agent's spend, and its whole branch's (it plus everything below it), against its budget. */
+export interface AgentSpend {
+  agent_id: string;
+  parent_agent_id: string | null;
+  role: string;
+  tokens_used: number;
+  cost_usd: number;
+  budget_max_tokens: number;
+  budget_max_cost_usd: number;
+  branch_tokens: number;
+  branch_cost_usd: number;
+}
+
+// ---- Step journal, replay and diff (roadmap P6) ----
+
+export interface JournalStep {
+  seq: number;
+  agent_id: string;
+  agent_path: string;
+  role: string | null;
+  kind: "llm" | "tool";
+  key: string;
+  step: number;
+  tool_name: string | null;
+  inputs_received: number;
+  at: string;
+  summary: string;
+  payload: unknown;
+}
+
+export type StepDiffStatus = "Same" | "Different" | "OnlyInA" | "OnlyInB";
+
+export interface StepDiff {
+  agent_path: string;
+  kind: string;
+  key: string;
+  step: number;
+  tool_name: string | null;
+  status: StepDiffStatus;
+  seq_a: number | null;
+  seq_b: number | null;
+  summary_a: string | null;
+  summary_b: string | null;
+}
+
+export interface RunDiff {
+  a: string;
+  b: string;
+  identical: boolean;
+  same: number;
+  different: number;
+  only_in_a: number;
+  only_in_b: number;
+  agents_only_in_a: string[];
+  agents_only_in_b: string[];
+  steps: StepDiff[];
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { updateWorkspaceBudget, workspaceAction } from "@/lib/api";
+import { simulateWorkspaceAlert, updateWorkspaceBudget, workspaceAction } from "@/lib/api";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
 
 function Meter({ label, used, limit, format }: { label: string; used: number; limit: number; format: (n: number) => string }) {
@@ -127,6 +127,15 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
           <div className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-300">{workspace.total_tokens.toLocaleString()} tokens · ${workspace.total_cost_usd.toFixed(4)}</div>
         </div>
         <div className="flex shrink-0 gap-2">
+          {workspace.template_id && workspace.status === "Active" && (
+            <button
+              onClick={() => simulateWorkspaceAlert(workspace.workspace_id).finally(onChanged)}
+              title="Send the template's sample alert through this workspace's own webhook"
+              className={btn}
+            >
+              Simulate alert
+            </button>
+          )}
           {workspace.status === "Active" && <button onClick={() => act("pause")} className={btn}>Pause</button>}
           {workspace.status === "Paused" && <button onClick={() => act("resume")} className={btn}>Resume</button>}
           {workspace.status !== "Archived" && (

@@ -21,7 +21,6 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
 
   useEffect(() => {
     let cancelled = false;
-    let interval: ReturnType<typeof setInterval>;
 
     async function load() {
       try {
@@ -40,7 +39,7 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
     }
 
     load();
-    interval = setInterval(load, 3000);
+    const interval = setInterval(load, 3000);
     return () => {
       cancelled = true;
       clearInterval(interval);

@@ -32,4 +32,10 @@ public interface ISystemPromptSection
 public interface IAgentPromptBuilder
 {
     ChatMessage BuildSystemPrompt(AgentPromptContext context);
+
+    /// <summary>The single planning call behind a task preview (roadmap P2): sketch the team a root
+    /// agent would build for <paramref name="goal"/>, within the runtime's limits.</summary>
+    LlmCompletionRequest BuildTeamPreviewRequest(string goal, Contracts.ResourceBudget budget,
+        Configuration.RuntimeLimitsOptions limits, string? model, int maxOutputTokens) =>
+        Resources.TeamPreviewPrompt.Build(goal, budget, limits, model, maxOutputTokens);
 }

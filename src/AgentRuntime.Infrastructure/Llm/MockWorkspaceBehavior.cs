@@ -14,6 +14,9 @@ internal static partial class MockWorkspaceBehavior
 {
     public static LlmCompletionResponse Respond(LlmCompletionRequest request)
     {
+        // The incident-response template has its own script (the flagship demo).
+        if (MockIncidentBehavior.TryRespond(request) is { } incident) return incident;
+
         var system = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
         var isCoordinator = system.Contains("acting as: Coordinator.", StringComparison.Ordinal);
         var tools = request.Tools.Select(t => t.Name).ToHashSet();

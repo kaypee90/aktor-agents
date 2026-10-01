@@ -46,9 +46,12 @@ public sealed class AgentGrain(
     IntegrationService integrations,
     ContextCompactor compactor,
     IAuditLog audit,
+    IStepJournal journal,
+    RecordedLlmProvider recordedLlm,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
+    private const string CorrelationKey = "correlation_id";
 
     /// <summary>Fires when a task agent's time budget runs out. Its turn loop checks the time on
     /// every step, but an agent parked waiting for a reply that never comes runs no steps: this
@@ -146,6 +149,9 @@ public sealed class AgentGrain(
         s.WorkspaceId = request.WorkspaceId;
         s.Standing = request.Standing;
         s.ContextWindow = request.ContextWindow;
+        s.TeamPolicy = request.TeamPolicy;
+        s.JournalPath = string.IsNullOrEmpty(request.JournalPath) ? "r" : request.JournalPath;
+        s.Replay = request.Replay;
         s.CreatedAt = DateTimeOffset.UtcNow;
         if (s.Budget.PeriodHours > 0) s.BudgetPeriodStartedAt = s.CreatedAt;
         foreach (var (key, value) in request.Metadata)
@@ -155,6 +161,10 @@ public sealed class AgentGrain(
         if (!string.IsNullOrWhiteSpace(request.InitialContext))
         {
             s.Metadata["initial_context"] = request.InitialContext;
+        }
+        if (!string.IsNullOrWhiteSpace(request.CorrelationId))
+        {
+            s.Metadata[CorrelationKey] = request.CorrelationId;
         }
 
         s.TransitionTo(AgentStatus.Initializing);
@@ -326,12 +336,14 @@ public sealed class AgentGrain(
                     // A new request from the user starts a new spawn allowance; replies from agents
                     // (a child finishing) continue the current one, so chains of them can't reset it.
                     if (m.FromAgentId == "user") StartNewRequest();
+                    s.InputsReceived++;
                     newInput = true;
                     break;
 
                 case MailKind.Event when item.Event is { } e && !parked:
                     AppendTranscript(new AgentTranscriptEntry { Role = "user", Content = $"[Environment event: {e.EventName}]\n{e.Payload}" });
                     StartNewRequest();
+                    s.InputsReceived++;
                     newInput = true;
                     break;
 
@@ -536,6 +548,33 @@ public sealed class AgentGrain(
                 return;
             }
 
+            // A replay serves the recorded decision, but only once the agent has had as many inputs
+            // as it had originally at this step (a parent's summary comes after its children report).
+            JournalStep? recorded = null;
+            if (s.IsReplaying)
+            {
+                recorded = await recordedLlm.GetStepAsync(s.Replay!.SourceTaskId, s.JournalPath, s.LlmStep + 1);
+                var pastFork = recorded is not null && s.Replay.Mode == ReplayMode.Fork && recorded.Seq > (s.Replay.ForkAfterSeq ?? long.MaxValue);
+                if (recorded is null || pastFork)
+                {
+                    if (s.Replay.Mode == ReplayMode.Full)
+                    {
+                        await EndTurnAsync($"Agent '{s.Name}' has replayed every recorded step.");
+                        return;
+                    }
+
+                    s.ReplayDiverged = true;
+                    recorded = null;
+                    await PublishAsync(RuntimeEventType.AgentStatusChanged, $"Agent '{s.Name}' continues live from here (forked replay).",
+                        new Dictionary<string, string> { ["replay"] = "diverged", ["step"] = (s.LlmStep + 1).ToString() });
+                }
+                else if (recorded.InputsReceived > s.InputsReceived)
+                {
+                    await EndTurnAsync($"Agent '{s.Name}' is waiting for the input it had at this step in the original run.");
+                    return;
+                }
+            }
+
             // Past every limit: whatever was holding the agent back has lifted.
             s.PauseReason = null;
             s.PausedUntil = null;
@@ -544,11 +583,20 @@ public sealed class AgentGrain(
             await state.WriteStateAsync();
             await PublishAsync(RuntimeEventType.AgentThinking, $"Agent '{s.Name}' is reasoning about its next step.");
 
-            var response = await CallLlmWithRetriesAsync();
+            var replayed = recorded is not null;
+            var response = replayed
+                ? await recordedLlm.CompleteAsync(new LlmCompletionRequest
+                {
+                    Messages = [],
+                    Replay = new LlmReplayContext(s.Replay!.SourceTaskId, s.JournalPath, s.LlmStep + 1)
+                })
+                : await CallLlmWithRetriesAsync();
             if (response is null)
             {
                 return; // Failed permanently; FailAsync already ran.
             }
+
+            s.LlmStep++;
 
             var callCost = _llmOptions.CostOf(response, fast: s.UsesFastTier);
             s.Usage = s.Usage with
@@ -560,14 +608,19 @@ public sealed class AgentGrain(
             s.LastLlmInputTokens = response.InputTokens;
             // Saved together with the decision below, so a recovered turn doesn't take a second final step.
             if (s.WrapUp == WrapUpStage.FinalStep) s.WrapUp = WrapUpStage.FinalStepTaken;
-            if (s.WorkspaceId is { } usageWorkspace)
+            // A replayed step keeps the recorded usage in the agent's own counters, so budgets behave
+            // as they did originally, but no provider was called: nothing is metered or billed.
+            if (s.WorkspaceId is { } usageWorkspace && !replayed)
             {
                 await GrainFactory.GetGrain<IWorkspaceGrain>(usageWorkspace).RecordUsage(AgentId, response.InputTokens + response.OutputTokens, callCost);
             }
 
             // Metered before the step is saved: if we crash in between, the call is made (and
             // billed by the provider) again, so it's counted again.
-            await Tenant.RecordUsage(new Tenancy.UsageDelta { Tokens = response.InputTokens + response.OutputTokens, CostUsd = callCost, LlmCalls = 1 });
+            if (!replayed)
+            {
+                await Tenant.RecordUsage(new Tenancy.UsageDelta { Tokens = response.InputTokens + response.OutputTokens, CostUsd = callCost, LlmCalls = 1 });
+            }
 
             AppendTranscript(new AgentTranscriptEntry
             {
@@ -576,9 +629,10 @@ public sealed class AgentGrain(
                 ToolCalls = response.ToolCalls.Count == 0
                     ? null
                     : response.ToolCalls
-                        .Select(tc => new TranscriptToolCall { Id = tc.Id, Name = tc.Name, ArgumentsJson = tc.ArgumentsJson })
+                        .Select(tc => new TranscriptToolCall { Id = tc.Id, Name = tc.Name, ArgumentsJson = tc.ArgumentsJson, ProviderSignature = tc.ProviderSignature })
                         .ToList()
             });
+            await JournalAsync(JournalStep.LlmKind, s.LlmStep.ToString(), null, ReplayPolicy.LlmPayload(response));
 
             if (response.ToolCalls.Count == 0)
             {
@@ -779,16 +833,29 @@ public sealed class AgentGrain(
                 IdempotencyKey = $"{AgentId}:{call.Id}",
                 GrantedPermissions = s.GrantedPermissions
             };
-            var result = connectionTool is not null
-                ? await integrations.ExecuteToolAsync(s.WorkspaceId!, connectionTool, toolRequest)
-                : ConnectionNames.IsConnectionTool(call.Name) && s.InWorkspace
-                ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
-                : await toolRegistry.ExecuteAsync(toolRequest, s.AllowedTools, s.GrantedPermissions);
+            ToolExecutionResult result;
+            if (s.IsReplaying && !ReplayPolicy.ReRuns(call.Name))
+            {
+                // Replays never reach outside: the original result is served instead.
+                var original = await journal.GetAsync(s.Replay!.SourceTaskId, s.JournalPath, JournalStep.ToolKind, call.Id);
+                result = original is null
+                    ? ToolExecutionResult.Fail($"'{call.Name}' has no recorded result in the original run, and replays don't run external tools.")
+                    : ReplayPolicy.ToolResult(original.PayloadJson);
+            }
+            else
+            {
+                result = connectionTool is not null
+                    ? await integrations.ExecuteToolAsync(s.WorkspaceId!, connectionTool, toolRequest)
+                    : ConnectionNames.IsConnectionTool(call.Name) && s.InWorkspace
+                    ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
+                    : await toolRegistry.ExecuteAsync(toolRequest, s.AllowedTools, s.GrantedPermissions);
+            }
 
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
             if (!s.IsResident) await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
             s.InFlightToolCallIds.Remove(call.Id);
             AppendToolResult(call, result);
+            await JournalAsync(JournalStep.ToolKind, call.Id, call.Name, ReplayPolicy.ToolPayload(result));
             // Audited before the result is saved: if we crash in between, the replayed call is
             // recorded once (same key), not zero times.
             await AuditToolCallAsync(call, sideEffects, result, result.Success ? "ok" : "failed");
@@ -1055,6 +1122,59 @@ public sealed class AgentGrain(
         await UpdateRegistryStatusAsync(AgentStatus.Waiting);
         await PublishAsync(RuntimeEventType.AgentStatusChanged, summary);
         await ReleaseTurnReminderAsync();
+        await ContinueReplayIfDueAsync();
+    }
+
+    /// <summary>
+    /// A replay can see inputs arrive together that came one by one originally, which leaves fewer
+    /// wake-ups than recorded turns. So when a turn ends and the next recorded step has already had
+    /// its inputs, the agent carries straight on (on a timer, not a call to itself, which would
+    /// queue behind this very turn).
+    /// </summary>
+    private async Task ContinueReplayIfDueAsync()
+    {
+        var s = S;
+        if (!s.IsReplaying || s.IsTerminal || s.Paused) return;
+        if (await recordedLlm.GetStepAsync(s.Replay!.SourceTaskId, s.JournalPath, s.LlmStep + 1) is not { } next ||
+            next.InputsReceived > s.InputsReceived)
+        {
+            return;
+        }
+
+        s.ResumeRequested = true;
+        await state.WriteStateAsync();
+        _replayTimer?.Dispose();
+        _replayTimer = this.RegisterGrainTimer(_ => WakeAndThink(), TimeSpan.FromMilliseconds(10), Timeout.InfiniteTimeSpan);
+    }
+
+    private IGrainTimer? _replayTimer;
+
+    /// <summary>Records a step in the run's journal (roadmap P6). Best effort: a journal outage costs
+    /// the ability to replay this run, never the run itself.</summary>
+    private async Task JournalAsync(string kind, string key, string? toolName, string payloadJson)
+    {
+        var s = S;
+        if (s.IsResident) return;
+        try
+        {
+            await journal.RecordAsync(new JournalStep
+            {
+                TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
+                TaskId = s.TaskId,
+                AgentId = AgentId,
+                AgentPath = s.JournalPath,
+                Kind = kind,
+                Key = key,
+                Step = s.LlmStep,
+                ToolName = toolName,
+                PayloadJson = payloadJson,
+                InputsReceived = s.InputsReceived
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Agent {AgentId} could not journal {Kind} step {Key}", AgentId, kind, key);
+        }
     }
 
     private Task CompleteAsync(string argumentsJson)
@@ -1452,7 +1572,9 @@ public sealed class AgentGrain(
     {
         var s = S;
         var t = s.Transcript;
-        if (s.IsResident || PendingToolCalls().Count > 0) return false;
+        // A replay keeps the history as it is: its decisions come from the journal, and a summary
+        // would need a live model call.
+        if (s.IsResident || s.IsReplaying || PendingToolCalls().Count > 0) return false;
 
         int start;
         if (s.ContextWindow > 0)
@@ -1537,7 +1659,7 @@ public sealed class AgentGrain(
             _ => ChatRole.User
         },
         Content = entry.Content,
-        ToolCalls = entry.ToolCalls?.Select(tc => new ToolCall { Id = tc.Id, Name = tc.Name, ArgumentsJson = tc.ArgumentsJson }).ToList(),
+        ToolCalls = entry.ToolCalls?.Select(tc => new ToolCall { Id = tc.Id, Name = tc.Name, ArgumentsJson = tc.ArgumentsJson, ProviderSignature = tc.ProviderSignature }).ToList(),
         ToolCallId = entry.ToolCallId,
         ToolName = entry.ToolName
     };
@@ -1555,8 +1677,31 @@ public sealed class AgentGrain(
             Role = "tool",
             ToolCallId = call.Id,
             ToolName = call.Name,
-            Content = result.Success ? result.ResultJson : JsonSerializer.Serialize(new { error = result.ErrorMessage })
+            Content = result.Success ? result.ResultJson : ErrorContent(result)
         });
+    }
+
+    /// <summary>A failed tool call as the agent sees it: the message, plus a code and details when the
+    /// runtime gave a structured reason (e.g. a team-shape rule refusing a spawn).</summary>
+    private static string ErrorContent(ToolExecutionResult result)
+    {
+        if (result.ErrorCode is null) return JsonSerializer.Serialize(new { error = result.ErrorMessage });
+
+        JsonElement? details = null;
+        if (result.ErrorDetailsJson is { } json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                details = doc.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                // Unparseable details are left out rather than failing the call's record.
+            }
+        }
+
+        return JsonSerializer.Serialize(new { error = result.ErrorMessage, code = result.ErrorCode, details });
     }
 
     private bool BudgetExhausted(out string reason)
@@ -1593,6 +1738,7 @@ public sealed class AgentGrain(
             ParentAgentId = s.ParentAgentId,
             TaskId = s.TaskId,
             TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
+            CorrelationId = s.Metadata.GetValueOrDefault(CorrelationKey),
             Summary = summary,
             Data = data ?? new Dictionary<string, string>()
         });
@@ -1629,6 +1775,10 @@ public sealed class AgentGrain(
         SpawnsThisRequest = s.SpawnsThisRequest,
         PlannedWorkersLeft = s.PlannedWorkersLeft,
         PauseReason = s.PauseReason,
-        PausedUntil = s.PausedUntil
+        PausedUntil = s.PausedUntil,
+        CorrelationId = s.Metadata.GetValueOrDefault(CorrelationKey),
+        TeamPolicy = s.TeamPolicy,
+        JournalPath = s.JournalPath,
+        Replay = s.Replay
     };
 }

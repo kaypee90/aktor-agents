@@ -31,9 +31,20 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AgentDbContext>(sp => sp.GetRequiredService<IDbContextFactory<AgentDbContext>>().CreateDbContext());
 
         services.AddSingleton<IMemoryStore, PostgresMemoryStore>();
+        RegisterEmbeddingProvider(services, configuration);
         services.AddSingleton<IWorldArchive, EfWorldArchive>();
         services.AddSingleton<AgentRuntime.Workspaces.IWorkspaceArchive, EfWorkspaceArchive>();
         services.AddHostedService<PersistenceEventSubscriber>();
+        services.AddSingleton<AgentRuntime.Durability.IStepJournal, PostgresStepJournal>();
+
+        // Tasks started from other systems (MCP, A2A, ACP, webhooks back to them).
+        services.Configure<Tasks.TaskCallbackOptions>(configuration.GetSection(Tasks.TaskCallbackOptions.SectionName));
+        services.Configure<Tasks.TaskLinkOptions>(configuration.GetSection(Tasks.TaskLinkOptions.SectionName));
+        services.AddSingleton<Tasks.TaskCompletionNotifier>();
+        services.AddHostedService<Tasks.TaskCallbackDispatcher>();
+        services.AddHttpClient(Tasks.TaskCallbackDispatcher.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(PublicNetworkHandler.Create);
+        services.AddHttpClient(Tasks.TaskCallbackDispatcher.PrivateHttpClientName, c => c.Timeout = TimeSpan.FromSeconds(30));
 
         services.AddHttpClient("agent-tools")
             .ConfigurePrimaryHttpMessageHandler(PublicNetworkHandler.Create);
@@ -65,8 +76,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TwilioSmsPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, EmailSmtpPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TelegramPlugin>();
+        // The incident-response template's simulated production system (docs/incident-response.md).
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, DemoOpsPlugin>();
         services.AddPluginsFromDirectory(configuration["Plugins:Directory"] ?? "./plugins");
-        RegisterLlmProvider(services, configuration);
+        AddLlmProvider(services, configuration);
 
         services.AddSingleton<ITool, WebSearchTool>();
         services.AddSingleton<ITool, FilesystemReadTool>();
@@ -81,7 +94,39 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    private static void RegisterLlmProvider(IServiceCollection services, IConfiguration configuration)
+    /// <summary>Memory:Embeddings:Provider = None (keyword search only), Ollama or OpenAI (docs/memory.md).</summary>
+    private static void RegisterEmbeddingProvider(IServiceCollection services, IConfiguration configuration)
+    {
+        var section = configuration.GetSection("Memory:Embeddings");
+        var provider = section["Provider"] ?? "None";
+        var baseUrl = section["BaseUrl"];
+        var timeout = TimeSpan.FromSeconds(Math.Max(5, section.GetValue("TimeoutSeconds", 30)));
+
+        if (provider.Equals("Ollama", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<OllamaEmbeddingProvider>(c =>
+            {
+                var inContainer = string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase);
+                var url = string.IsNullOrWhiteSpace(baseUrl) ? (inContainer ? "http://host.docker.internal:11434/" : "http://localhost:11434/") : baseUrl;
+                c.BaseAddress = new Uri(url.EndsWith('/') ? url : url + "/");
+                c.Timeout = timeout;
+            });
+            services.AddSingleton<AgentRuntime.Memory.IEmbeddingProvider>(sp => sp.GetRequiredService<OllamaEmbeddingProvider>());
+        }
+        else if (provider.Equals("OpenAI", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddHttpClient<OpenAIEmbeddingProvider>(c =>
+            {
+                var url = string.IsNullOrWhiteSpace(baseUrl) ? "https://api.openai.com/" : baseUrl;
+                c.BaseAddress = new Uri(url.EndsWith('/') ? url : url + "/");
+                c.Timeout = timeout;
+            });
+            services.AddSingleton<AgentRuntime.Memory.IEmbeddingProvider>(sp => sp.GetRequiredService<OpenAIEmbeddingProvider>());
+        }
+    }
+
+    /// <summary>The LLM provider named by Llm:Provider (Mock when unset), with its HTTP client.</summary>
+    public static void AddLlmProvider(IServiceCollection services, IConfiguration configuration)
     {
         var providerName = configuration.GetSection(LlmOptions.SectionName)["Provider"] ?? "Mock";
         // appsettings.json ships "BaseUrl": "" as a documented-empty placeholder, not null — a
@@ -95,6 +140,12 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<OpenAIProvider>(client =>
         {
             client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(configuredBaseUrl) ? "https://api.openai.com/" : configuredBaseUrl);
+        });
+
+        services.AddHttpClient<GeminiProvider>(client =>
+        {
+            client.BaseAddress = new Uri(string.IsNullOrWhiteSpace(configuredBaseUrl) ? "https://generativelanguage.googleapis.com/" : configuredBaseUrl);
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(30, configuration.GetValue($"{LlmOptions.SectionName}:TimeoutSeconds", 300)));
         });
 
         services.AddHttpClient<OllamaProvider>(client =>
@@ -132,7 +183,7 @@ public static class ServiceCollectionExtensions
                 services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<OllamaProvider>());
                 break;
             case "Gemini":
-                services.AddSingleton<ILLMProvider, GeminiProvider>();
+                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<GeminiProvider>());
                 break;
             default:
                 services.AddSingleton<ILLMProvider, HeuristicMockLlmProvider>();

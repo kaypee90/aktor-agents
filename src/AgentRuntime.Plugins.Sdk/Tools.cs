@@ -66,8 +66,18 @@ public sealed record ToolExecutionResult
     public string ResultJson { get; init; } = "{}";
     public string? ErrorMessage { get; init; }
 
+    /// <summary>A stable, machine-readable reason for a failure (e.g. "duplicate_role"), so the
+    /// agent (and anyone reading the trace) can tell rules apart without parsing prose.</summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>Structured detail for a failure, as a JSON object (e.g. which rule and limit applied).</summary>
+    public string? ErrorDetailsJson { get; init; }
+
     public static ToolExecutionResult Ok(string resultJson) => new() { Success = true, ResultJson = resultJson };
     public static ToolExecutionResult Fail(string error) => new() { Success = false, ErrorMessage = error };
+
+    public static ToolExecutionResult Fail(string error, string code, string? detailsJson = null) =>
+        new() { Success = false, ErrorMessage = error, ErrorCode = code, ErrorDetailsJson = detailsJson };
 }
 
 /// <summary>

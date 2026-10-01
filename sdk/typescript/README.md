@@ -56,6 +56,41 @@ The client does the following for you:
 Everything the SDK covers is also plain REST. The full description is at `/openapi/v1.json` on
 your server.
 
+## Tasks from other systems
+
+`aktor.tasks.create(goal)` starts a one-off task. The REST endpoint behind it takes more than the
+SDK method exposes today. Call it directly for those options (see
+[docs/integrations.md](../../docs/integrations.md)):
+
+```ts
+// Budget, your own correlation id, a completion webhook (signed with the secret), and team-shape rules.
+const res = await fetch(`${baseUrl}/api/tasks`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "X-Correlation-Id": "n8n-run-42" },
+  body: JSON.stringify({
+    goal: "Research the market for AI property management software.",
+    budget: { max_cost_usd: 3 },
+    callback_url: "https://n8n.example.com/webhook/aktor-done",
+    callback_secret: process.env.AKTOR_CALLBACK_SECRET,
+    team_policy: { max_agents: 6 },
+  }),
+});
+const { task_id, dashboard_url } = await res.json();
+
+// Long poll: answers when the task finishes, or after the timeout with done=false.
+const status = await (await fetch(`${baseUrl}/api/tasks/${task_id}/wait?timeout_seconds=120`, {
+  headers: { Authorization: `Bearer ${apiKey}` },
+})).json();
+```
+
+**MCP, A2A and ACP.** The same tasks are available to MCP clients at `/mcp`, A2A agents at
+`/a2a`, and ACP clients through the bridge in this package:
+
+```bash
+# Node 22+: runs Aktor as an Agent Client Protocol agent over stdio (OpenClaw/acpx, Zed).
+AKTOR_URL=https://your-aktor AKTOR_API_KEY=ak_… npx aktor-acp
+```
+
 ## Tests
 
 ```bash

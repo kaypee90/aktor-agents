@@ -1,7 +1,7 @@
 {
   "name": "@aktor/sdk",
   "version": "0.1.0",
-  "description": "TypeScript client for the Aktor Agents platform API: workspaces, agents, approvals, audit, usage and live events.",
+  "description": "TypeScript client for the Aktor Agents platform API (workspaces, agents, approvals, audit, usage, live events), and aktor-acp, a stdio bridge that runs Aktor as an Agent Client Protocol agent.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "engines": {
@@ -24,5 +25,8 @@
   },
   "devDependencies": {
     "typescript": "^5.6.0"
+  },
+  "bin": {
+    "aktor-acp": "./bin/aktor-acp.mjs"
   }
 }

@@ -30,6 +30,38 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             });
         }
 
+        // A task preview's planning call: sketch the team this mock actually builds for a task
+        // (two specialists, each with one helper), so estimates calibrate against real runs.
+        if (request.Tools.Any(t => t.Name == AgentRuntime.Resources.TeamPreviewPrompt.ToolName))
+        {
+            return Task.FromResult(new LlmCompletionResponse
+            {
+                ToolCalls =
+                [
+                    new ToolCall
+                    {
+                        Id = NewId(),
+                        Name = AgentRuntime.Resources.TeamPreviewPrompt.ToolName,
+                        ArgumentsJson = JsonSerializer.Serialize(new
+                        {
+                            goal_type = "research",
+                            team = new object[]
+                            {
+                                new { role = "Research Agent", purpose = "Research the market and competitors." },
+                                new { role = "Technical Architecture Agent", purpose = "Propose a technical architecture." },
+                                new { role = "Detail Agent", purpose = "Gather supporting detail for the research.", parent_role = "Research Agent" },
+                                new { role = "Detail Agent", purpose = "Gather supporting detail for the architecture.", parent_role = "Technical Architecture Agent" }
+                            },
+                            rationale = "Two parallel specialists, each with a helper for detail work."
+                        })
+                    }
+                ],
+                FinishReason = LlmFinishReason.ToolCalls,
+                InputTokens = EstimateTokens(string.Concat(request.Messages.Select(m => m.Content))),
+                OutputTokens = 120
+            });
+        }
+
         // Simulation traffic is recognisable by its tools: genesis offers only define_world, and
         // every resident has end_turn.
         if (request.Tools.Any(t => t.Name == "define_world"))

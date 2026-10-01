@@ -16,6 +16,11 @@ public interface IAgentOrchestrator
     Task<string> CreateRootAgentAsync(string taskId, string goal, ResourceBudget? budget = null,
         string? tenantId = null, CancellationToken cancellationToken = default);
 
+    /// <summary>Creates a task's root agent. The requested budget is capped at the configured
+    /// task ceiling (<see cref="Configuration.TaskBudgetCeilingOptions"/>) whoever the caller is.</summary>
+    Task<string> CreateRootAgentAsync(string taskId, string goal, TaskLaunchOptions options,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Spawns a child agent. With an <paramref name="idempotencyKey"/> (the spawn_agent tool
     /// call's key) the child id is derived from it, so a spawn replayed after a crash returns the
     /// same child instead of creating a second one.</summary>

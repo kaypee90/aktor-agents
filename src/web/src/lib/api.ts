@@ -1,5 +1,9 @@
 import type {
   AgentListItem,
+  AgentSpend,
+  JournalStep,
+  RunDiff,
+  TaskPreview,
   AgentSnapshot,
   ArtifactListItem,
   EventRecordDto,
@@ -38,11 +42,24 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function createTask(goal: string, budget?: Partial<ResourceBudget>) {
+export function createTask(goal: string, budget?: Partial<ResourceBudget>, previewId?: string) {
   return apiFetch<{ task_id: string; root_agent_id: string }>("/api/tasks", {
+    method: "POST",
+    body: JSON.stringify({ goal, budget, preview_id: previewId }),
+  });
+}
+
+/** One cheap planning call: the team the root would likely build, and its cost range. */
+export function previewTask(goal: string, budget?: Partial<ResourceBudget>) {
+  return apiFetch<TaskPreview>("/api/tasks/preview", {
     method: "POST",
     body: JSON.stringify({ goal, budget }),
   });
+}
+
+/** Spend against budget for every agent and branch of a task's tree. */
+export function getTaskSpend(taskId: string) {
+  return apiFetch<AgentSpend[]>(`/api/tasks/${taskId}/spend`);
 }
 
 export function listTasks() {
@@ -179,6 +196,24 @@ export function endWorld(worldId: string) {
 
 export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number }) {
   return apiFetch<{ workspace_id: string }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listWorkspaceTemplates() {
+  return apiFetch<import("./workspaceTypes").WorkspaceTemplate[]>("/api/workspace-templates");
+}
+
+/** A workspace from a template: its instructions, safety policy, webhooks and (with the demo
+ * system) simulated connections. Returns the webhook paths, which hold a secret. */
+export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true) {
+  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[] }>("/api/workspaces/from-template", {
+    method: "POST",
+    body: JSON.stringify({ template, name, use_demo_system: useDemoSystem }),
+  });
+}
+
+/** Sends the template's sample alert through the workspace's own webhook. */
+export function simulateWorkspaceAlert(id: string) {
+  return apiFetch<{ delivered: boolean }>(`/api/workspaces/${id}/simulate-alert`, { method: "POST", body: "{}" });
 }
 
 export function listWorkspaces() {
@@ -425,3 +460,21 @@ export function openBillingPortal() {
   return apiFetch<{ url: string }>("/api/billing/portal", { method: "POST" });
 }
 
+
+/** Every recorded step of a task: each LLM decision and tool result, in order. */
+export function getTaskJournal(taskId: string) {
+  return apiFetch<JournalStep[]>(`/api/tasks/${taskId}/journal`);
+}
+
+/** Replays a task from its journal: "full" (no model or external calls) or a "fork" that runs live
+ * after the given step. Returns the new task. */
+export function replayTask(taskId: string, mode: "full" | "fork", forkAfterStep?: number) {
+  return apiFetch<{ task_id: string; root_agent_id: string | null }>(`/api/tasks/${taskId}/replay`, {
+    method: "POST",
+    body: JSON.stringify({ mode, fork_after_step: forkAfterStep }),
+  });
+}
+
+export function diffTasks(a: string, b: string) {
+  return apiFetch<RunDiff>(`/api/tasks/${a}/diff/${b}`);
+}

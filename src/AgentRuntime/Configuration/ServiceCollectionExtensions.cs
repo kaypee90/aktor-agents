@@ -21,6 +21,11 @@ public static class ServiceCollectionExtensions
     {
         services.Configure<RuntimeLimitsOptions>(configuration.GetSection(RuntimeLimitsOptions.SectionName));
         services.Configure<DefaultBudgetOptions>(configuration.GetSection(DefaultBudgetOptions.SectionName));
+        services.Configure<Memory.MemoryOptions>(configuration.GetSection(Memory.MemoryOptions.SectionName));
+        services.TryAddSingleton<Memory.IEmbeddingProvider, Memory.NullEmbeddingProvider>();
+        services.Configure<Resources.PreviewOptions>(configuration.GetSection(Resources.PreviewOptions.SectionName));
+        services.Configure<Safety.TeamPolicy>(configuration.GetSection(Safety.TeamPolicy.SectionName));
+        services.Configure<TaskBudgetCeilingOptions>(configuration.GetSection(TaskBudgetCeilingOptions.SectionName));
         services.Configure<LlmOptions>(configuration.GetSection(LlmOptions.SectionName));
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
@@ -35,6 +40,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IEventStream>(sp => sp.GetRequiredService<InMemoryEventBus>());
 
         services.AddSingleton<IAgentOrchestrator, AgentOrchestrator>();
+
+        // Step journal and replay (roadmap P6): in-memory by default, durable from the infrastructure layer.
+        services.TryAddSingleton<Durability.IStepJournal, Durability.InMemoryStepJournal>();
+        services.AddSingleton<Durability.RecordedLlmProvider>();
         services.AddSingleton<ToolRegistry>();
 
         // Governance tools: always available to every agent, independent of capabilities.
@@ -81,6 +90,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();
         services.AddSingleton<ISystemPromptSection, CompletionCriteriaSection>();
         services.AddSingleton<ISystemPromptSection, BehavioralRulesSection>();
+        services.Configure<PromptOptions>(configuration.GetSection(PromptOptions.SectionName));
+        services.AddSingleton<ISystemPromptSection, OperatorInstructionsSection>();
         services.AddSingleton<ISystemPromptSection, EnvironmentInfoSection>();
         services.AddSingleton<ISystemPromptSection, ContextSummarySection>();
         services.AddSingleton<ContextCompactor>();

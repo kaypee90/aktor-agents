@@ -14,7 +14,7 @@ namespace AgentRuntime.Tests;
 public class AgentRegistryGrainTests
 {
     private static AgentRegistryGrain CreateGrain(RuntimeLimitsOptions limits, FakePersistentState<RegistryState>? state = null) =>
-        new(state ?? new FakePersistentState<RegistryState>(), Options.Create(limits), NullLogger<AgentRegistryGrain>.Instance);
+        new(state ?? new FakePersistentState<RegistryState>(), Options.Create(limits), Options.Create(new AgentRuntime.Safety.TeamPolicy()), NullLogger<AgentRegistryGrain>.Instance);
 
     [Fact]
     public async Task ValidateSpawnAsync_NoParent_RootAllowedAtDepthZero()

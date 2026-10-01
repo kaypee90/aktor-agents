@@ -13,6 +13,10 @@ public sealed record ToolCall
     public required string Id { get; init; }
     public required string Name { get; init; }
     public required string ArgumentsJson { get; init; }
+
+    /// <summary>Opaque data the provider requires back with this call on the next request
+    /// (Gemini's thought signature). Stored with the transcript; other providers ignore it.</summary>
+    public string? ProviderSignature { get; init; }
 }
 
 public sealed record ChatMessage
@@ -50,7 +54,13 @@ public sealed record LlmCompletionRequest
     public string? Model { get; init; }
     public int MaxTokens { get; init; } = 4096;
     public double Temperature { get; init; } = 0.4;
+
+    /// <summary>Set when the call replays a past run: which recorded step to serve (see
+    /// Durability.RecordedLlmProvider). Live providers ignore it.</summary>
+    public LlmReplayContext? Replay { get; init; }
 }
+
+public sealed record LlmReplayContext(string SourceTaskId, string AgentPath, int Step);
 
 public enum LlmFinishReason
 {

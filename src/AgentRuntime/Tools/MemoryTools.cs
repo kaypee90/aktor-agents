@@ -75,7 +75,8 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
     {
         Name = "search_knowledge",
         SideEffects = ToolSideEffects.ReadOnly,
-        Description = "Search shared knowledge written by any agent for relevant prior findings.",
+        Description = "Search shared knowledge written by any agent of your organization for relevant prior findings. " +
+                      "Matches by meaning as well as by words, best and most recent first.",
         JsonSchema = """{ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }"""
     };
 
@@ -87,9 +88,11 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
         var results = await memory.SearchAsync(request.TenantId, args.Query, MemoryKind.Shared, cancellationToken: request.CancellationToken);
         return ToolExecutionResult.Ok(JsonSerializer.Serialize(new
         {
-            results = results.Select(r => new { r.AgentId, r.Key, r.Value })
+            results = results.Take(MaxResults).Select(r => new { r.AgentId, r.Key, r.Value, r.Score })
         }, ToolJson.Options));
     }
+
+    private const int MaxResults = 10;
 
     private sealed record QueryArgs(string Query);
 }

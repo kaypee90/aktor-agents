@@ -26,6 +26,28 @@ public sealed record AgentInitializationRequest
     [Id(17)] public bool Standing { get; init; }
     [Id(18)] public int ContextWindow { get; init; }
     [Id(19)] public string TenantId { get; init; } = string.Empty;
+    /// <summary>The caller's correlation id (API, MCP, A2A), stamped on every event of the agent
+    /// tree so a run can be traced across systems.</summary>
+    [Id(20)] public string? CorrelationId { get; init; }
+    /// <summary>The task's or workspace's team-shape policy, inherited by every agent of the tree.</summary>
+    [Id(21)] public Safety.TeamPolicy? TeamPolicy { get; init; }
+    /// <summary>Where the agent sits in its tree, for the step journal: "r", then "/{spawn call id}" per level.</summary>
+    [Id(22)] public string? JournalPath { get; init; }
+    [Id(23)] public Durability.ReplaySpec? Replay { get; init; }
+}
+
+/// <summary>How a task's root agent is launched. Every entry point (REST, MCP, A2A, ACP) goes
+/// through the same options, so none of them can bypass a limit the others enforce.</summary>
+[GenerateSerializer]
+public sealed record TaskLaunchOptions
+{
+    [Id(0)] public ResourceBudget? Budget { get; init; }
+    [Id(1)] public string? TenantId { get; init; }
+    [Id(2)] public string? CorrelationId { get; init; }
+    /// <summary>Team-shape rules for this task, on top of the server's (they can only tighten them).</summary>
+    [Id(3)] public Safety.TeamPolicy? TeamPolicy { get; init; }
+    /// <summary>Replay a past run from its step journal (roadmap P6).</summary>
+    [Id(4)] public Durability.ReplaySpec? Replay { get; init; }
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -54,6 +76,9 @@ public sealed record SpawnAgentResult
     [Id(3)] public ResourceBudget? GrantedBudget { get; init; }
     /// <summary>What the new agent may cost and how much spawn allowance is left, for the spawner.</summary>
     [Id(4)] public string? Note { get; init; }
+    /// <summary>Machine-readable reason for a rejection (e.g. "duplicate_role") and its details.</summary>
+    [Id(5)] public string? RejectionRule { get; init; }
+    [Id(6)] public string? RejectionDetailsJson { get; init; }
 
     public bool Success => RejectionReason is null;
 }
@@ -87,6 +112,10 @@ public sealed record SpawnValidationResult
     [Id(0)] public bool Allowed { get; init; }
     [Id(1)] public string? RejectionReason { get; init; }
     [Id(2)] public int AllowedDepth { get; init; }
+    /// <summary>The team-shape rule that refused the spawn (see Safety.TeamRules), if one did.</summary>
+    [Id(3)] public string? Rule { get; init; }
+    [Id(4)] public string? DetailsJson { get; init; }
+    [Id(5)] public string? ExistingAgentId { get; init; }
 
     public static SpawnValidationResult Allow(int depth) => new() { Allowed = true, AllowedDepth = depth };
     public static SpawnValidationResult Reject(string reason) => new() { Allowed = false, RejectionReason = reason };
@@ -145,6 +174,10 @@ public sealed record AgentSnapshot
     [Id(25)] public int PlannedWorkersLeft { get; init; }
     [Id(26)] public string? PauseReason { get; init; }
     [Id(27)] public DateTimeOffset? PausedUntil { get; init; }
+    [Id(28)] public string? CorrelationId { get; init; }
+    [Id(29)] public Safety.TeamPolicy? TeamPolicy { get; init; }
+    [Id(30)] public string JournalPath { get; init; } = "r";
+    [Id(31)] public Durability.ReplaySpec? Replay { get; init; }
 }
 
 [GenerateSerializer]

@@ -15,9 +15,11 @@ public sealed class RegistryState
 public sealed class AgentRegistryGrain(
     [PersistentState("registry", "Default")] IPersistentState<RegistryState> state,
     IOptions<RuntimeLimitsOptions> limitsOptions,
+    IOptions<Safety.TeamPolicy> teamPolicyOptions,
     ILogger<AgentRegistryGrain> logger) : Grain, IAgentRegistryGrain
 {
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
+    private readonly Safety.TeamPolicy _serverTeamPolicy = teamPolicyOptions.Value;
 
     public Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null, string? tenantId = null, int tenantMaxActive = 0)
     {
@@ -74,8 +76,10 @@ public sealed class AgentRegistryGrain(
 
             if (!string.IsNullOrWhiteSpace(role))
             {
+                // Only a live sibling is a duplicate: a finished one can't take messages, so its
+                // successor (the next incident's investigator, say) must be allowed.
                 var duplicate = state.State.Agents.Values.FirstOrDefault(a =>
-                    a.ParentAgentId == parentAgentId && string.Equals(a.Role, role, StringComparison.OrdinalIgnoreCase));
+                    a.ParentAgentId == parentAgentId && IsActive(a.Status) && string.Equals(a.Role, role, StringComparison.OrdinalIgnoreCase));
                 if (duplicate is not null)
                 {
                     return Task.FromResult(SpawnValidationResult.Reject(
@@ -96,7 +100,8 @@ public sealed class AgentRegistryGrain(
             entry.AgentId, entry.ParentAgentId, entry.Depth);
     }
 
-    public async Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0)
+    public async Task<SpawnValidationResult> TryRegisterSpawnAsync(AgentDirectoryEntry entry, string? role = null, int tenantMaxActive = 0,
+        List<Safety.TeamPolicy>? teamPolicies = null)
     {
         // Idempotent for replays: re-registering the same id (a spawn retried after a crash, with
         // an id derived from its idempotency key) succeeds without counting against any limit.
@@ -109,6 +114,21 @@ public sealed class AgentRegistryGrain(
         if (!validation.Allowed)
         {
             return validation;
+        }
+
+        // Team shape: only for agents spawning agents (not roots, coordinators or residents).
+        if (role is not null && entry.ParentAgentId is { } parentId && state.State.Agents.TryGetValue(parentId, out var parent))
+        {
+            var policies = new List<Safety.TeamPolicy> { _serverTeamPolicy };
+            policies.AddRange(teamPolicies ?? []);
+            var team = state.State.Agents.Values.Where(a => a.RootAgentId == parent.RootAgentId).ToList();
+            var rootGoal = state.State.Agents.GetValueOrDefault(parent.RootAgentId)?.Goal ?? parent.Goal;
+            var shape = Safety.TeamShapeValidator.Validate(policies, parent, team, role, entry.Goal, rootGoal);
+            if (!shape.Allowed)
+            {
+                logger.LogInformation("Spawn by {ParentAgentId} refused by team policy rule {Rule}", parentId, shape.Rule);
+                return shape;
+            }
         }
 
         await RegisterAsync(entry with { Depth = validation.AllowedDepth });

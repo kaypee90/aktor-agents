@@ -50,6 +50,14 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
 
             // One audit log for the whole test run, so it outlives silo kills like a database would.
             services.AddSingleton<AgentRuntime.Safety.IAuditLog>(TestAudit.Log);
+
+            // Likewise one step journal, so a replay can read a run recorded before a silo restart.
+            services.AddSingleton<AgentRuntime.Durability.IStepJournal>(TestJournal.Instance);
         }
     }
+}
+
+public static class TestJournal
+{
+    public static readonly AgentRuntime.Durability.InMemoryStepJournal Instance = new();
 }

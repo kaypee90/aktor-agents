@@ -43,6 +43,8 @@ public sealed record WorkspaceSafetyPolicy
     [Id(1)] public List<ApprovalRule> Rules { get; init; } = [];
     /// <summary>Unanswered approval requests are rejected after this long.</summary>
     [Id(2)] public int ApprovalTimeoutHours { get; init; } = 72;
+    /// <summary>Team-shape rules for the workspace's agents (on top of the server's), enforced at every spawn.</summary>
+    [Id(3)] public TeamPolicy? Team { get; init; }
 }
 
 public sealed record PolicyVerdict(PolicyDecisionKind Decision, string Reason);

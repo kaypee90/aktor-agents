@@ -62,6 +62,11 @@ public sealed partial class WorkspaceGrain(
         s.DailyTokenLimit = Math.Max(1_000, request.DailyTokenLimit ?? _opts.DefaultDailyTokenLimit);
         s.DailyCostLimitUsd = Math.Max(0.01m, request.DailyCostLimitUsd ?? _opts.DefaultDailyCostLimitUsd);
         s.CoordinatorAgentId = WorkspaceIds.CoordinatorId(s.WorkspaceId);
+        s.TemplateId = request.TemplateId;
+        if (request.SafetyPolicy is { } policy)
+        {
+            s.SafetyPolicy = policy with { ApprovalTimeoutHours = Math.Clamp(policy.ApprovalTimeoutHours, 1, 24 * 30), Rules = policy.Rules.Take(50).ToList() };
+        }
 
         AppendChat(ChatAuthorKind.User, "user", "You", s.Goal);
         AppendChat(ChatAuthorKind.System, "system", "Workspace",
@@ -361,6 +366,11 @@ public sealed partial class WorkspaceGrain(
         if (preview is not null) ownerView["dry_run"] = JsonSerializer.SerializeToNode(preview, OwnerJson);
         return WorkspaceActionResult.Ok(result.Message, ownerView.ToJsonString());
     }
+
+    public Task<WebhookOutcome> DeliverWebhookAsOwner(string triggerId, string body, string deliveryId) =>
+        Exists && S.Triggers.TryGetValue(triggerId, out var trigger) && trigger.Kind == TriggerKind.Webhook && trigger.Secret is { } secret
+            ? DeliverWebhook(new WebhookDelivery { TriggerId = triggerId, Token = secret, Body = body, DeliveryId = deliveryId, ContentType = "application/json" })
+            : Task.FromResult(WebhookOutcome.NotFound);
 
     public async Task<WorkspaceActionResult> RemoveTrigger(string triggerId, string requestedBy)
     {
@@ -1107,7 +1117,8 @@ public sealed partial class WorkspaceGrain(
         var before = S.SafetyPolicy;
         S.SafetyPolicy = policy with { ApprovalTimeoutHours = Math.Clamp(policy.ApprovalTimeoutHours, 1, 24 * 30), Rules = policy.Rules.Take(50).ToList() };
         AppendChat(ChatAuthorKind.System, "system", "Workspace",
-            $"Safety policy updated: {S.SafetyPolicy.Autonomy} mode, {S.SafetyPolicy.Rules.Count} rule(s).");
+            $"Safety policy updated: {S.SafetyPolicy.Autonomy} mode, {S.SafetyPolicy.Rules.Count} rule(s)" +
+            (S.SafetyPolicy.Team is { IsEmpty: false } ? ", team-shape rules set." : "."));
         await SaveAsync();
         await AuditAsync("user", changedBy, "You", "policy.updated", "safety policy", "ok",
             $"{before.Autonomy} → {S.SafetyPolicy.Autonomy}, {S.SafetyPolicy.Rules.Count} rule(s)",
@@ -1302,7 +1313,8 @@ public sealed partial class WorkspaceGrain(
         MaxSpawnsPerRequest = _opts.MaxSpawnsPerRequest,
         TokensLeftToday = Math.Max(0, S.DailyTokenLimit - (S.UsageDay == Today() ? S.TokensToday : 0)),
         CostLeftTodayUsd = Math.Max(0, S.DailyCostLimitUsd - (S.UsageDay == Today() ? S.CostToday : 0)),
-        Status = S.Status
+        Status = S.Status,
+        Team = S.SafetyPolicy.Team
     };
 
     // ---- Snapshot -----------------------------------------------------------
@@ -1361,6 +1373,7 @@ public sealed partial class WorkspaceGrain(
             PendingNotifications = S.NotificationOutbox.Count,
             LlmCallsAvoided = S.LlmCallsAvoided,
             SafetyPolicy = S.SafetyPolicy,
+            TemplateId = S.TemplateId,
             Approvals = S.Approvals.Values
                 .OrderBy(a => a.Status == ApprovalStatus.Pending ? 0 : 1)
                 .ThenByDescending(a => a.RequestedAt)

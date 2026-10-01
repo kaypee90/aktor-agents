@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/AgentRuntime.Api/AgentRuntime.Api.csproj" />
+    <Project Path="src/AgentRuntime.Evals/AgentRuntime.Evals.csproj" />
     <Project Path="src/AgentRuntime.Infrastructure/AgentRuntime.Infrastructure.csproj" />
     <Project Path="src/AgentRuntime.IntegrationTests/AgentRuntime.IntegrationTests.csproj" />
     <Project Path="src/AgentRuntime.Tests/AgentRuntime.Tests.csproj" />

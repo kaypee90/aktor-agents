@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { createWorkspace } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
+import type { WorkspaceTemplate } from "@/lib/workspaceTypes";
 
 // Deliberately varied: workspaces are generic, and these only seed the form.
 const EXAMPLES = [
@@ -20,6 +21,25 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
   const [dollars, setDollars] = useState(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
+  const [useDemoSystem, setUseDemoSystem] = useState(true);
+
+  useEffect(() => {
+    listWorkspaceTemplates().then(setTemplates).catch(() => setTemplates([]));
+  }, []);
+
+  async function fromTemplate(t: WorkspaceTemplate) {
+    setBusy(true);
+    setError(null);
+    try {
+      const { workspace_id } = await createWorkspaceFromTemplate(t.id, undefined, useDemoSystem);
+      onCreated(workspace_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create workspace");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,6 +66,34 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
           webhooks it needs, keeps running, and takes new instructions from you at any time.
         </p>
       </div>
+      {templates.length > 0 && (
+        <div className="space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/40">
+          <div className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">Start from a template</div>
+          {templates.map((t) => (
+            <div key={t.id} className="flex items-start gap-3 text-xs">
+              <div className="flex-1">
+                <div className="font-medium">{t.name}</div>
+                <div className="text-neutral-600 dark:text-neutral-400">{t.description}</div>
+                <div className="mt-0.5 text-[11px] text-neutral-500">
+                  {t.autonomy} · webhooks: {t.webhooks.map((w) => w.name).join(", ") || "none"}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => fromTemplate(t)}
+                className="shrink-0 rounded bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Create
+              </button>
+            </div>
+          ))}
+          <label className="flex items-center gap-2 text-[11px] text-neutral-600 dark:text-neutral-400">
+            <input type="checkbox" checked={useDemoSystem} onChange={(e) => setUseDemoSystem(e.target.checked)} />
+            Connect the simulated production system, so it can be tried right away (add your real connections later)
+          </label>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1">
         {EXAMPLES.map((ex) => (
           <button key={ex.name} type="button" onClick={() => { setName(ex.name); setGoal(ex.goal); }}

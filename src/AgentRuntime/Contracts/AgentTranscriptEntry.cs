@@ -22,4 +22,6 @@ public sealed record TranscriptToolCall
     [Id(0)] public required string Id { get; init; }
     [Id(1)] public required string Name { get; init; }
     [Id(2)] public required string ArgumentsJson { get; init; }
+    /// <summary>Opaque provider data that must be sent back with the call (Gemini's thought signature).</summary>
+    [Id(3)] public string? ProviderSignature { get; init; }
 }

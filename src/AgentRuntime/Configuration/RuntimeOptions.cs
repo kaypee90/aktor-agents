@@ -57,6 +57,33 @@ public sealed class DefaultBudgetOptions
     };
 }
 
+/// <summary>
+/// The most any single task may be granted, whatever its caller asks for. Applied by the runtime
+/// when the root agent is created, so REST, MCP, A2A and ACP callers all get the same ceiling.
+/// </summary>
+public sealed class TaskBudgetCeilingOptions
+{
+    public const string SectionName = "TaskBudgetCeiling";
+
+    public int MaxTokens { get; set; } = 5_000_000;
+    public int MaxDurationSeconds { get; set; } = 4 * 60 * 60;
+    public int MaxChildren { get; set; } = 20;
+    public int MaxToolCalls { get; set; } = 5_000;
+    public decimal MaxCostUsd { get; set; } = 50m;
+
+    /// <summary>The requested budget with every limit capped at the ceiling.</summary>
+    public ResourceBudget Clamp(ResourceBudget requested) => requested with
+    {
+        MaxTokens = Math.Clamp(requested.MaxTokens, 0, MaxTokens),
+        MaxDurationSeconds = Math.Clamp(requested.MaxDurationSeconds, 0, MaxDurationSeconds),
+        MaxChildren = Math.Clamp(requested.MaxChildren, 0, MaxChildren),
+        MaxToolCalls = Math.Clamp(requested.MaxToolCalls, 0, MaxToolCalls),
+        MaxCostUsd = Math.Clamp(requested.MaxCostUsd, 0, MaxCostUsd),
+        // A task's budget is for its lifetime; renewing budgets belong to workspaces.
+        PeriodHours = 0
+    };
+}
+
 public sealed class LlmOptions
 {
     public const string SectionName = "Llm";
@@ -92,7 +119,8 @@ public sealed class LlmOptions
     public string ModelFor(bool fast) => fast && !string.IsNullOrWhiteSpace(FastModel) ? FastModel : Model;
 
     /// <summary>Price of a cached input token relative to a normal one. Defaults to the provider's
-    /// published discount: Anthropic cache reads 0.1, OpenAI cached input 0.5, otherwise 1.</summary>
+    /// published discount: Anthropic cache reads 0.1, OpenAI cached input 0.5, Gemini cached
+    /// content 0.25, otherwise 1.</summary>
     public decimal? CachedInputPriceFactor { get; set; }
 
     /// <summary>Price of writing a token to the cache relative to a normal input token
@@ -106,7 +134,7 @@ public sealed class LlmOptions
         var usingFast = fast && !string.IsNullOrWhiteSpace(FastModel);
         var inPrice = usingFast ? FastPricePerInputTokenUsd ?? PricePerInputTokenUsd : PricePerInputTokenUsd;
         var outPrice = usingFast ? FastPricePerOutputTokenUsd ?? PricePerOutputTokenUsd : PricePerOutputTokenUsd;
-        var cachedFactor = CachedInputPriceFactor ?? Provider switch { "Anthropic" => 0.1m, "OpenAI" => 0.5m, _ => 1m };
+        var cachedFactor = CachedInputPriceFactor ?? Provider switch { "Anthropic" => 0.1m, "OpenAI" => 0.5m, "Gemini" => 0.25m, _ => 1m };
         var writeFactor = CacheWritePriceFactor ?? (Provider == "Anthropic" ? 1.25m : 1m);
         var uncached = Math.Max(0, r.InputTokens - r.CachedInputTokens - r.CacheWriteInputTokens);
         return uncached * inPrice

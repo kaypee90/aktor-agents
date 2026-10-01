@@ -23,6 +23,21 @@ public sealed class ShellExecTool(IOptions<ToolsOptions> options) : ITool
         JsonSchema = """{ "type": "object", "properties": { "command": { "type": "string" } }, "required": ["command"] }"""
     };
 
+    /// <summary>The sandbox: no network, capped memory and CPU, and only this task's workspace
+    /// mounted. The command runs in the container, never on the host.</summary>
+    internal static List<string> DockerArguments(ToolsOptions opts, string workspace, string containerName, string command) =>
+    [
+        "run", "--rm",
+        "--name", containerName,
+        "--network", "none",
+        "--memory", opts.ShellMemoryLimit,
+        "--cpus", opts.ShellCpuLimit,
+        "-v", $"{workspace}:/workspace",
+        "-w", "/workspace",
+        opts.ShellDockerImage,
+        "sh", "-c", command
+    ];
+
     public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request)
     {
         var args = JsonSerializer.Deserialize<ShellArgs>(request.ArgumentsJson, ToolJson.Options)
@@ -35,18 +50,7 @@ public sealed class ShellExecTool(IOptions<ToolsOptions> options) : ITool
         // process does not stop the container, which would keep running past the time limit.
         var containerName = $"agent-shell-{Guid.NewGuid():n}";
 
-        var dockerArgs = new List<string>
-        {
-            "run", "--rm",
-            "--name", containerName,
-            "--network", "none",
-            "--memory", opts.ShellMemoryLimit,
-            "--cpus", opts.ShellCpuLimit,
-            "-v", $"{workspace}:/workspace",
-            "-w", "/workspace",
-            opts.ShellDockerImage,
-            "sh", "-c", args.Command
-        };
+        var dockerArgs = DockerArguments(opts, workspace, containerName, args.Command);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(request.CancellationToken);
         cts.CancelAfter(TimeSpan.FromSeconds(opts.ShellTimeoutSeconds));

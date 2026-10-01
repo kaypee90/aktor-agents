@@ -16,6 +16,7 @@ namespace AgentRuntime.Infrastructure.Persistence;
 public sealed class PersistenceEventSubscriber(
     IEventStream eventStream,
     IServiceScopeFactory scopeFactory,
+    Tasks.TaskCompletionNotifier completions,
     ILogger<PersistenceEventSubscriber> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,6 +46,7 @@ public sealed class PersistenceEventSubscriber(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AgentDbContext>();
         var tenant = AgentRuntime.Tenancy.TenantIds.Normalize(evt.TenantId);
+        string? completedTaskId = null;
 
         db.Events.Add(new EventRecord
         {
@@ -64,23 +66,35 @@ public sealed class PersistenceEventSubscriber(
         switch (evt.Type)
         {
             case RuntimeEventType.TaskCreated when evt.TaskId is not null:
-                db.Tasks.Add(new TaskRecord
+                // The task service writes the row before starting the root agent (so callers can
+                // poll it straight away); tasks started any other way get their row here.
+                var existingTask = await db.Tasks.FindAsync([evt.TaskId], ct);
+                if (existingTask is null)
                 {
-                    TenantId = tenant,
-                    TaskId = evt.TaskId,
-                    Goal = evt.Data.GetValueOrDefault("goal", evt.Summary),
-                    RootAgentId = evt.Data.GetValueOrDefault("rootAgentId", evt.AgentId),
-                    CreatedAt = evt.Timestamp
-                });
+                    db.Tasks.Add(new TaskRecord
+                    {
+                        TenantId = tenant,
+                        TaskId = evt.TaskId,
+                        Goal = evt.Data.TryGetValue("goal", out var goal) ? goal : evt.Summary,
+                        RootAgentId = evt.Data.TryGetValue("rootAgentId", out var rootId) ? rootId : evt.AgentId,
+                        CorrelationId = evt.CorrelationId,
+                        CreatedAt = evt.Timestamp
+                    });
+                }
+                else
+                {
+                    existingTask.RootAgentId ??= evt.Data.TryGetValue("rootAgentId", out var existingRoot) ? existingRoot : evt.AgentId;
+                }
                 break;
 
             case RuntimeEventType.AgentCreated or RuntimeEventType.AgentSpawned or RuntimeEventType.AgentStarted
                 or RuntimeEventType.AgentStatusChanged or RuntimeEventType.AgentCompleted
                 or RuntimeEventType.AgentFailed or RuntimeEventType.AgentTerminated:
                 await UpsertAgentAsync(scope, db, evt.Type == RuntimeEventType.AgentSpawned ? evt.TargetAgentId : evt.AgentId, ct);
-                if (evt.Type is RuntimeEventType.AgentCompleted or RuntimeEventType.AgentFailed or RuntimeEventType.AgentTerminated)
+                if ((evt.Type is RuntimeEventType.AgentCompleted or RuntimeEventType.AgentFailed or RuntimeEventType.AgentTerminated) &&
+                    await MaybeCompleteTaskAsync(scope, db, evt, ct))
                 {
-                    await MaybeCompleteTaskAsync(scope, db, evt, ct);
+                    completedTaskId = evt.TaskId;
                 }
                 break;
 
@@ -134,6 +148,9 @@ public sealed class PersistenceEventSubscriber(
         }
 
         await db.SaveChangesAsync(ct);
+
+        // After the save: whoever is woken reads the finished row.
+        if (completedTaskId is not null) completions.Signal(completedTaskId);
     }
 
     private static async Task UpsertAgentAsync(IServiceScope scope, AgentDbContext db, string? agentId, CancellationToken ct)
@@ -186,17 +203,44 @@ public sealed class PersistenceEventSubscriber(
 
     private static readonly JsonSerializerOptions ResultJsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
-    private static async Task MaybeCompleteTaskAsync(IServiceScope scope, AgentDbContext db, RuntimeEvent evt, CancellationToken ct)
+    /// <summary>Estimate vs actual (roadmap P2), for tasks started from a preview. Later previews
+    /// calibrate on these numbers.</summary>
+    private static void AddEstimateMetrics(TaskRecord task, Dictionary<string, string> metrics, int agents, long tokens, decimal cost)
     {
-        if (evt.TaskId is null) return;
+        if (task.EstimateJson is null) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(task.EstimateJson);
+            var e = doc.RootElement;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var estCost = e.GetProperty("cost_usd_expected").GetDecimal();
+            var estTokens = e.GetProperty("tokens_expected").GetInt64();
+            metrics["estimated_cost_usd"] = estCost.ToString("F4", inv);
+            metrics["estimated_cost_usd_range"] = $"{e.GetProperty("cost_usd_low").GetDecimal().ToString("F4", inv)}-{e.GetProperty("cost_usd_high").GetDecimal().ToString("F4", inv)}";
+            metrics["estimated_tokens"] = estTokens.ToString(inv);
+            metrics["estimated_team_size"] = e.GetProperty("team_size").GetInt32().ToString(inv);
+            metrics["actual_team_size"] = agents.ToString(inv);
+            if (estCost > 0) metrics["cost_estimate_ratio"] = (cost / estCost).ToString("F2", inv);
+            if (estTokens > 0) metrics["token_estimate_ratio"] = ((double)tokens / estTokens).ToString("F2", inv);
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            // An estimate saved in an older shape: report the result without the comparison.
+        }
+    }
+
+    /// <summary>Closes the task when its root agent finishes. True if it did.</summary>
+    private static async Task<bool> MaybeCompleteTaskAsync(IServiceScope scope, AgentDbContext db, RuntimeEvent evt, CancellationToken ct)
+    {
+        if (evt.TaskId is null) return false;
 
         // Only the root agent completing/failing/being terminated closes the whole task.
         var orchestrator = scope.ServiceProvider.GetRequiredService<IAgentOrchestrator>();
         var snapshot = await orchestrator.GetSnapshotAsync(evt.AgentId ?? string.Empty, ct);
-        if (snapshot is null || snapshot.AgentId != snapshot.RootAgentId) return;
+        if (snapshot is null || snapshot.AgentId != snapshot.RootAgentId) return false;
 
         var task = await db.Tasks.FindAsync([evt.TaskId], ct);
-        if (task is null) return;
+        if (task is null) return false;
 
         var summary = evt.Data.GetValueOrDefault("summary", evt.Summary);
         task.Status = snapshot.Status.ToString();
@@ -258,10 +302,12 @@ public sealed class PersistenceEventSubscriber(
             {
                 ["total_tool_calls"] = totalToolCalls.ToString(),
                 ["total_tokens_used"] = totalTokens.ToString(),
-                ["total_cost_usd"] = totalCost.ToString("F4")
+                ["total_cost_usd"] = totalCost.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)
             }
         };
+        AddEstimateMetrics(task, result.Metrics, participatingAgents, totalTokens, totalCost);
 
         task.ResultJson = JsonSerializer.Serialize(result, ResultJsonOptions);
+        return true;
     }
 }

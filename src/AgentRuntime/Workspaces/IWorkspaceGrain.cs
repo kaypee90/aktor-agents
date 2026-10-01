@@ -53,6 +53,11 @@ public interface IWorkspaceGrain : IGrainWithStringKey
 
     Task<WebhookOutcome> DeliverWebhook(WebhookDelivery delivery);
 
+    /// <summary>Delivers a payload to one of the workspace's webhooks on its owner's behalf (the API
+    /// has already checked the caller may act on the workspace), e.g. to simulate an alert. Goes
+    /// through the same path as a real delivery: rate limits, payload limits and the audit log.</summary>
+    Task<WebhookOutcome> DeliverWebhookAsOwner(string triggerId, string body, string deliveryId);
+
     /// <summary>Asked by an agent before each LLM call. Interleaved and read-only, so it's cheap
     /// and can't deadlock against the asking agent.</summary>
     [AlwaysInterleave]

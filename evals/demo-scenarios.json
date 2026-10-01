@@ -1,0 +1,26 @@
+{
+  "judge": "auto",
+  "run_timeout_seconds": 300,
+  "scenarios": [
+    {
+      "name": "feasibility-research",
+      "goal": "Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.",
+      "runs": 3,
+      "expected_topics": ["market", "competitor", "architecture", "pricing", "risk"]
+    },
+    {
+      "name": "add-authentication",
+      "goal": "Add user authentication to this application.",
+      "runs": 3,
+      "expected_topics": ["password", "session", "token", "test", "security"]
+    }
+  ],
+  "variants": [
+    { "name": "default" },
+    {
+      "name": "lean-teams",
+      "settings": { "Prompts:ExtraInstructions": "Keep the team small: start at most two agents, and only for work that clearly runs in parallel." }
+    },
+    { "name": "replay", "mode": "replay" }
+  ]
+}

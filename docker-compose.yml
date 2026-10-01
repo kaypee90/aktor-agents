@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # Postgres 16 with pgvector, for semantic memory recall (docs/memory.md). Same data format as
+    # postgres:16, so an existing volume keeps working.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-aktor_agents}
       POSTGRES_USER: ${POSTGRES_USER:-aktor}
@@ -39,6 +41,14 @@ services:
       # Token efficiency (docs/efficiency.md): a cheaper model for routine event handling and
       # history summaries, e.g. claude-haiku-4-5 / gpt-4o-mini. Empty = use LLM_MODEL everywhere.
       Llm__FastModel: ${LLM_FAST_MODEL:-}
+      # Semantic memory (docs/memory.md): None (keyword search), Ollama or OpenAI.
+      Memory__Embeddings__Provider: ${EMBEDDING_PROVIDER:-None}
+      Memory__Embeddings__Model: ${EMBEDDING_MODEL:-}
+      Memory__Embeddings__BaseUrl: ${EMBEDDING_BASE_URL:-}
+      Memory__Embeddings__ApiKey: ${EMBEDDING_API_KEY:-}
+      # Links in task results (MCP, A2A, webhooks) point here.
+      Dashboard__BaseUrl: ${APP_BASE_URL:-http://localhost:3000}
+      Tasks__Callbacks__AllowPrivateNetworks: ${CALLBACKS_ALLOW_PRIVATE_NETWORKS:-false}
       Tools__SearchProvider: ${SEARCH_PROVIDER:-Tavily}
       Tools__SearchApiKey: ${SEARCH_API_KEY:-}
       # Integrations (docs/plugins.md). The vault key encrypts connection secrets: set

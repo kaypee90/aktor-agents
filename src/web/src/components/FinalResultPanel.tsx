@@ -15,7 +15,6 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
     if (!TERMINAL_STATUSES.has(taskStatus)) return;
 
     let cancelled = false;
-    let interval: ReturnType<typeof setInterval>;
 
     async function load() {
       try {
@@ -38,7 +37,7 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
     load();
     // The root's completion event is processed slightly after its own status flips, so poll a
     // few times until the aggregated result is actually ready.
-    interval = setInterval(load, 1500);
+    const interval = setInterval(load, 1500);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -74,6 +73,17 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
                 <span>Tokens used: {result.metrics.total_tokens_used ?? "—"}</span>
                 <span>Cost: ${result.metrics.total_cost_usd ?? "0.0000"}</span>
               </div>
+
+              {result.metrics.estimated_cost_usd && (
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-neutral-500">
+                  <span>
+                    Estimated: ${Number(result.metrics.estimated_cost_usd).toFixed(4)} / {result.metrics.estimated_team_size} agents
+                  </span>
+                  <span>
+                    Actual vs estimate: {result.metrics.cost_estimate_ratio ? `${Number(result.metrics.cost_estimate_ratio).toFixed(2)}×` : "—"} cost
+                  </span>
+                </div>
+              )}
 
               {result.findings.length > 0 && (
                 <div>

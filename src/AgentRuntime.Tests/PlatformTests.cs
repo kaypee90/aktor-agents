@@ -123,7 +123,7 @@ public sealed class TenancyUnitTests
         Assert.Equal(expected, AgentDatabaseSandbox.TenantSuffix(tenant));
 
     private static AgentRegistryGrain Registry(RuntimeLimitsOptions limits) =>
-        new(new FakePersistentState<RegistryState>(), Options.Create(limits), NullLogger<AgentRegistryGrain>.Instance);
+        new(new FakePersistentState<RegistryState>(), Options.Create(limits), Options.Create(new AgentRuntime.Safety.TeamPolicy()), NullLogger<AgentRegistryGrain>.Instance);
 
     private static AgentDirectoryEntry Entry(string id, string tenant, string? parent = null) => new()
     {

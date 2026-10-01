@@ -1,0 +1,558 @@
+{
+  "generated_at": "2026-10-01T19:20:55.064141+00:00",
+  "judge": "heuristic",
+  "cells": [
+    {
+      "scenario": "feasibility-research",
+      "variant": "default",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "f068fb0255ac",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 4.3333,
+        "min": 4,
+        "max": 5,
+        "p50": 4,
+        "p95": 5
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 16550.6667,
+        "min": 15967,
+        "max": 17718,
+        "p50": 15967,
+        "p95": 17718
+      },
+      "cost_usd": {
+        "mean": 0.0564,
+        "min": 0.054381,
+        "max": 0.060354,
+        "p50": 0.054381,
+        "p95": 0.060354
+      },
+      "duration_seconds": {
+        "mean": 0.7833,
+        "min": 0.11,
+        "max": 2.11,
+        "p50": 0.13,
+        "p95": 2.11
+      },
+      "quality": {
+        "mean": 4.5333,
+        "min": 4.4,
+        "max": 4.6,
+        "p50": 4.6,
+        "p95": 4.6
+      },
+      "results": [
+        {
+          "task_id": "eval-0d55b54b40e8",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17718,
+          "cost_usd": 0.060354,
+          "duration_seconds": 2.11,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-0be0a02aa895",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 15967,
+          "cost_usd": 0.054381,
+          "duration_seconds": 0.11,
+          "quality": 4.4,
+          "quality_rationale": "summary, on topic, 2 finding(s), 1 artifact(s), 2/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-8d93b7373874",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 15967,
+          "cost_usd": 0.054381,
+          "duration_seconds": 0.13,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        }
+      ]
+    },
+    {
+      "scenario": "add-authentication",
+      "variant": "default",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "f068fb0255ac",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 5,
+        "min": 5,
+        "max": 5,
+        "p50": 5,
+        "p95": 5
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 17522,
+        "min": 17522,
+        "max": 17522,
+        "p50": 17522,
+        "p95": 17522
+      },
+      "cost_usd": {
+        "mean": 0.0598,
+        "min": 0.059766,
+        "max": 0.059766,
+        "p50": 0.059766,
+        "p95": 0.059766
+      },
+      "duration_seconds": {
+        "mean": 0.1467,
+        "min": 0.12,
+        "max": 0.19,
+        "p50": 0.13,
+        "p95": 0.19
+      },
+      "quality": {
+        "mean": 4,
+        "min": 4,
+        "max": 4,
+        "p50": 4,
+        "p95": 4
+      },
+      "results": [
+        {
+          "task_id": "eval-4b6d321e8850",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.13,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-db1f1ec7eca0",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.19,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-4aed1ccb744c",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.12,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        }
+      ]
+    },
+    {
+      "scenario": "feasibility-research",
+      "variant": "lean-teams",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "d59135cf5805",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 4.3333,
+        "min": 4,
+        "max": 5,
+        "p50": 4,
+        "p95": 5
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 16838,
+        "min": 16244,
+        "max": 18026,
+        "p50": 16244,
+        "p95": 18026
+      },
+      "cost_usd": {
+        "mean": 0.0572,
+        "min": 0.055212,
+        "max": 0.061278,
+        "p50": 0.055212,
+        "p95": 0.061278
+      },
+      "duration_seconds": {
+        "mean": 0.17,
+        "min": 0.1,
+        "max": 0.29,
+        "p50": 0.12,
+        "p95": 0.29
+      },
+      "quality": {
+        "mean": 4.6,
+        "min": 4.6,
+        "max": 4.6,
+        "p50": 4.6,
+        "p95": 4.6
+      },
+      "results": [
+        {
+          "task_id": "eval-6c28768d7610",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 16244,
+          "cost_usd": 0.055212,
+          "duration_seconds": 0.29,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-aa2bd2a0915c",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 16244,
+          "cost_usd": 0.055212,
+          "duration_seconds": 0.1,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-fb3bb5a69f81",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 18026,
+          "cost_usd": 0.061278,
+          "duration_seconds": 0.12,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        }
+      ]
+    },
+    {
+      "scenario": "add-authentication",
+      "variant": "lean-teams",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "d59135cf5805",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 5,
+        "min": 5,
+        "max": 5,
+        "p50": 5,
+        "p95": 5
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 17827,
+        "min": 17827,
+        "max": 17827,
+        "p50": 17827,
+        "p95": 17827
+      },
+      "cost_usd": {
+        "mean": 0.0607,
+        "min": 0.060681,
+        "max": 0.060681,
+        "p50": 0.060681,
+        "p95": 0.060681
+      },
+      "duration_seconds": {
+        "mean": 0.14,
+        "min": 0.12,
+        "max": 0.16,
+        "p50": 0.14,
+        "p95": 0.16
+      },
+      "quality": {
+        "mean": 4,
+        "min": 4,
+        "max": 4,
+        "p50": 4,
+        "p95": 4
+      },
+      "results": [
+        {
+          "task_id": "eval-703f22d1c517",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17827,
+          "cost_usd": 0.060681,
+          "duration_seconds": 0.12,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-f726b8a10735",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17827,
+          "cost_usd": 0.060681,
+          "duration_seconds": 0.14,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-96421bb01122",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17827,
+          "cost_usd": 0.060681,
+          "duration_seconds": 0.16,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        }
+      ]
+    },
+    {
+      "scenario": "feasibility-research",
+      "variant": "replay",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "f068fb0255ac",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 4,
+        "min": 4,
+        "max": 4,
+        "p50": 4,
+        "p95": 4
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 15967,
+        "min": 15967,
+        "max": 15967,
+        "p50": 15967,
+        "p95": 15967
+      },
+      "cost_usd": {
+        "mean": 0.0544,
+        "min": 0.054381,
+        "max": 0.054381,
+        "p50": 0.054381,
+        "p95": 0.054381
+      },
+      "duration_seconds": {
+        "mean": 0.1167,
+        "min": 0.09,
+        "max": 0.15,
+        "p50": 0.11,
+        "p95": 0.15
+      },
+      "quality": {
+        "mean": 4.6,
+        "min": 4.6,
+        "max": 4.6,
+        "p50": 4.6,
+        "p95": 4.6
+      },
+      "replay_fidelity": 1,
+      "results": [
+        {
+          "task_id": "eval-2fd64af006b5",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 15967,
+          "cost_usd": 0.054381,
+          "duration_seconds": 0.15,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-17c4a02e905b",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 15967,
+          "cost_usd": 0.054381,
+          "duration_seconds": 0.11,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up.",
+          "reproduced": true
+        },
+        {
+          "task_id": "eval-15251c611e80",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 4,
+          "max_depth": 2,
+          "tokens": 15967,
+          "cost_usd": 0.054381,
+          "duration_seconds": 0.09,
+          "quality": 4.6,
+          "quality_rationale": "summary, on topic, 3 finding(s), 1 artifact(s), 3/5 topics",
+          "summary": "Delegated \u0027Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.\u0027 to 3 specialized sub-agents; see final-report.md for the consolidated write-up.",
+          "reproduced": true
+        }
+      ]
+    },
+    {
+      "scenario": "add-authentication",
+      "variant": "replay",
+      "model": "Mock:claude-sonnet-5",
+      "prompt_version": "f068fb0255ac",
+      "runs": 3,
+      "completion_rate": 1,
+      "team_size": {
+        "mean": 5,
+        "min": 5,
+        "max": 5,
+        "p50": 5,
+        "p95": 5
+      },
+      "depth": {
+        "mean": 2,
+        "min": 2,
+        "max": 2,
+        "p50": 2,
+        "p95": 2
+      },
+      "tokens": {
+        "mean": 17522,
+        "min": 17522,
+        "max": 17522,
+        "p50": 17522,
+        "p95": 17522
+      },
+      "cost_usd": {
+        "mean": 0.0598,
+        "min": 0.059766,
+        "max": 0.059766,
+        "p50": 0.059766,
+        "p95": 0.059766
+      },
+      "duration_seconds": {
+        "mean": 0.1267,
+        "min": 0.11,
+        "max": 0.14,
+        "p50": 0.13,
+        "p95": 0.14
+      },
+      "quality": {
+        "mean": 4,
+        "min": 4,
+        "max": 4,
+        "p50": 4,
+        "p95": 4
+      },
+      "replay_fidelity": 1,
+      "results": [
+        {
+          "task_id": "eval-95900330bdab",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.11,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up."
+        },
+        {
+          "task_id": "eval-dc5491694b7f",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.14,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up.",
+          "reproduced": true
+        },
+        {
+          "task_id": "eval-fe777f32ceca",
+          "completed": true,
+          "outcome": "completed",
+          "team_size": 5,
+          "max_depth": 2,
+          "tokens": 17522,
+          "cost_usd": 0.059766,
+          "duration_seconds": 0.13,
+          "quality": 4,
+          "quality_rationale": "summary, on topic, 4 finding(s), 1 artifact(s), 0/5 topics",
+          "summary": "Delegated \u0027Add user authentication to this application.\u0027 to 4 specialized sub-agents; see final-report.md for the consolidated write-up.",
+          "reproduced": true
+        }
+      ]
+    }
+  ]
+}
