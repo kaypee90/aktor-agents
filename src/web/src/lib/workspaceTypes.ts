@@ -166,10 +166,24 @@ export interface ApprovalRule {
   decision: PolicyDecision;
 }
 
+/** Team-shape rules (docs/safety.md#team-shape), enforced at every spawn. */
+export interface TeamPolicy {
+  max_agents: number | null;
+  goal_types?: { goal_type: string; keywords: string[]; max_agents: number }[];
+  goal_type?: string | null;
+  spawner_roles: string[];
+  spawner_capabilities?: string[];
+  max_fan_out_by_depth: number[];
+  prevent_duplicate_roles: boolean;
+  duplicate_goal_similarity?: number;
+  count_finished_agents?: boolean;
+}
+
 export interface SafetyPolicy {
   autonomy: AutonomyLevel;
   rules: ApprovalRule[];
   approval_timeout_hours: number;
+  team?: TeamPolicy | null;
 }
 
 export interface ApprovalRecord {

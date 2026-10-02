@@ -25,6 +25,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<BillingEventRecord> BillingEvents => Set<BillingEventRecord>();
     public DbSet<TaskPreviewRecord> TaskPreviews => Set<TaskPreviewRecord>();
     public DbSet<JournalStepRecord> JournalSteps => Set<JournalStepRecord>();
+    public DbSet<SkillRecord> Skills => Set<SkillRecord>();
+    public DbSet<LlmCallRecord> LlmCalls => Set<LlmCallRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -72,6 +74,16 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasIndex(e => new { e.TenantId, e.Timestamp });
         });
 
+        modelBuilder.Entity<SkillRecord>(b => b.HasKey(k => new { k.TenantId, k.Name }));
+
+        modelBuilder.Entity<LlmCallRecord>(b =>
+        {
+            b.HasKey(c => c.Id);
+            b.Property(c => c.Id).ValueGeneratedOnAdd();
+            b.HasIndex(c => new { c.TenantId, c.Timestamp });
+            b.HasIndex(c => c.TaskId);
+        });
+
         modelBuilder.Entity<TaskPreviewRecord>(b =>
         {
             b.HasKey(p => p.PreviewId);
@@ -105,6 +117,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(t => t.Id);
             b.Property(t => t.Id).ValueGeneratedOnAdd();
             b.HasIndex(t => t.AgentId);
+            b.HasIndex(t => t.TaskId);
         });
 
         modelBuilder.Entity<SecretRecord>(b =>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiErrorMessage, decideApproval, listAudit, updateSafetyPolicy, verifyAudit } from "@/lib/api";
+import type { TeamPolicy } from "@/lib/workspaceTypes";
 import type {
   ApprovalRecord,
   ApprovalRule,
@@ -37,7 +38,7 @@ const OUTCOME_STYLE: Record<string, string> = {
   unknown: "text-amber-600 dark:text-amber-400",
 };
 
-const field = "rounded border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900";
+const field = "rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900";
 
 function prettyArgs(json: string) {
   try {
@@ -76,15 +77,15 @@ export function ApprovalCard({ workspaceId, approval, onDecided, compact = false
       <div className="flex items-baseline justify-between gap-2">
         <div>
           <span className="font-semibold">{approval.code}</span> · <span className="font-medium">{approval.agent_name}</span> wants to run{" "}
-          <code className="rounded bg-white/70 px-1 dark:bg-neutral-900">{approval.tool_name}</code>
+          <code className="rounded bg-white/70 px-1 dark:bg-zinc-900">{approval.tool_name}</code>
         </div>
-        <span className="shrink-0 text-[10px] text-neutral-500">expires {new Date(approval.expires_at).toLocaleString()}</span>
+        <span className="shrink-0 text-[10px] text-zinc-500">expires {new Date(approval.expires_at).toLocaleString()}</span>
       </div>
-      {approval.agent_note && <div className="mt-1 italic text-neutral-600 dark:text-neutral-300">&ldquo;{approval.agent_note}&rdquo;</div>}
+      {approval.agent_note && <div className="mt-1 italic text-zinc-600 dark:text-zinc-300">&ldquo;{approval.agent_note}&rdquo;</div>}
       {!compact && (
         <>
-          <pre className="mt-1 max-h-40 overflow-auto rounded bg-white/70 p-1.5 text-[11px] dark:bg-neutral-900">{prettyArgs(approval.arguments_json)}</pre>
-          <div className="mt-1 text-[10px] text-neutral-500">Why: {approval.policy_reason}</div>
+          <pre className="mt-1 max-h-40 overflow-auto rounded bg-white/70 p-1.5 text-[11px] dark:bg-zinc-900">{prettyArgs(approval.arguments_json)}</pre>
+          <div className="mt-1 text-[10px] text-zinc-500">Why: {approval.policy_reason}</div>
         </>
       )}
       <div className="mt-2 flex gap-1.5">
@@ -98,6 +99,43 @@ export function ApprovalCard({ workspaceId, approval, onDecided, compact = false
       </div>
       {error && <div className="mt-1 text-rose-600">{error}</div>}
     </div>
+  );
+}
+
+/** Limits on the workspace's team: size, who may spawn, fan-out per level, duplicates. Counted over
+ * live agents, since a workspace runs for months. Enforced by the runtime at every spawn. */
+function TeamShapeEditor({ team, onChange }: { team: TeamPolicy | null; onChange: (t: TeamPolicy | null) => void }) {
+  const t: TeamPolicy = team ?? { max_agents: null, spawner_roles: [], max_fan_out_by_depth: [], prevent_duplicate_roles: true, count_finished_agents: false };
+  const set = (patch: Partial<TeamPolicy>) => onChange({ ...t, count_finished_agents: false, ...patch });
+  return (
+    <>
+      <h3 className="pt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Team shape</h3>
+      <p className="text-[11px] text-zinc-500">Limits on top of the server&apos;s, checked by the runtime every time an agent tries to start another.</p>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <label className="space-y-1">
+          <span className="text-zinc-500">Max live agents</span>
+          <input className={`${field} w-full`} inputMode="numeric" placeholder="No limit" value={t.max_agents ?? ""}
+            onChange={(e) => set({ max_agents: e.target.value.trim() === "" ? null : Number(e.target.value) || 0 })} />
+        </label>
+        <label className="space-y-1">
+          <span className="text-zinc-500">Fan-out per level</span>
+          <input className={`${field} w-full`} placeholder="e.g. 3, 0" value={t.max_fan_out_by_depth.join(", ")}
+            onChange={(e) => set({ max_fan_out_by_depth: e.target.value.split(/[,\s]+/).filter((x) => x !== "").map(Number).filter((n) => !Number.isNaN(n)) })} />
+        </label>
+        <label className="col-span-2 space-y-1">
+          <span className="text-zinc-500">Roles that may spawn (comma-separated, * wildcards; empty: any)</span>
+          <input className={`${field} w-full`} placeholder="Coordinator, *lead*" value={t.spawner_roles.join(", ")}
+            onChange={(e) => set({ spawner_roles: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} />
+        </label>
+      </div>
+      <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={t.prevent_duplicate_roles} onChange={(e) => set({ prevent_duplicate_roles: e.target.checked })} />
+        Refuse a second live agent with the same role and goal
+      </label>
+      {team && (
+        <button onClick={() => onChange(null)} className="text-xs text-zinc-500 hover:underline">Clear team rules</button>
+      )}
+    </>
   );
 }
 
@@ -125,21 +163,21 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
 
   return (
     <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Autonomy</h3>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Autonomy</h3>
       <div className="space-y-1">
         {LEVELS.map((l) => (
           <label key={l.value} className="flex cursor-pointer gap-2 text-xs">
             <input type="radio" name="autonomy" checked={draft.autonomy === l.value} onChange={() => setDraft({ ...draft, autonomy: l.value })} />
             <span>
               <span className="font-medium">{l.label}</span>
-              <span className="block text-neutral-500">{l.help}</span>
+              <span className="block text-zinc-500">{l.help}</span>
             </span>
           </label>
         ))}
       </div>
 
-      <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Rules</h3>
-      <p className="text-[11px] text-neutral-500">
+      <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Rules</h3>
+      <p className="text-[11px] text-zinc-500">
         Checked in order before the autonomy level; the first match wins. Patterns match tool names, e.g. <code>billing__*</code> or{" "}
         <code>*__send_sms</code>.
       </p>
@@ -153,7 +191,7 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
           <select value={r.decision} onChange={(e) => setRule(i, { decision: e.target.value as PolicyDecision })} className={field}>
             {DECISIONS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
           </select>
-          <button onClick={() => setDraft((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== i) }))} className="px-1 text-neutral-400 hover:text-rose-600" aria-label="Remove rule">
+          <button onClick={() => setDraft((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== i) }))} className="px-1 text-zinc-400 hover:text-rose-600" aria-label="Remove rule">
             ✕
           </button>
         </div>
@@ -163,7 +201,7 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
           ...d,
           rules: [...d.rules, { id: crypto.randomUUID().replace(/-/g, "").slice(0, 8), name: "", tool_pattern: "*", applies: "Writes", decision: "RequireApproval" }],
         }))}
-        className="text-xs text-blue-600 hover:underline"
+        className="text-xs text-brand-600 hover:underline dark:text-brand-400"
       >
         + Add rule
       </button>
@@ -181,8 +219,10 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
         hours
       </label>
 
+      <TeamShapeEditor team={draft.team ?? null} onChange={(team) => setDraft({ ...draft, team })} />
+
       {error && <div className="text-xs text-rose-600">{error}</div>}
-      <button disabled={!dirty || saving} onClick={save} className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40">
+      <button disabled={!dirty || saving} onClick={save} className="rounded bg-brand-500 px-3 py-1 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-40">
         {saving ? "Saving…" : "Save policy"}
       </button>
     </section>
@@ -221,8 +261,8 @@ function AuditLog({ workspaceId, refreshKey }: { workspaceId: string; refreshKey
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Audit log</h3>
-        <button onClick={verify} className="rounded border border-neutral-300 px-2 py-0.5 text-[11px] hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Audit log</h3>
+        <button onClick={verify} className="rounded border border-zinc-300 px-2 py-0.5 text-[11px] hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">
           Verify integrity
         </button>
       </div>
@@ -234,22 +274,22 @@ function AuditLog({ workspaceId, refreshKey }: { workspaceId: string; refreshKey
       )}
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search (tool, summary)…" className={`${field} w-full text-xs`} />
       {error && <div className="text-xs text-rose-600">{error}</div>}
-      {entries.length === 0 && <div className="text-xs text-neutral-500">Nothing recorded yet.</div>}
-      <ul className="divide-y divide-neutral-200 text-xs dark:divide-neutral-800">
+      {entries.length === 0 && <div className="text-xs text-zinc-500">Nothing recorded yet.</div>}
+      <ul className="divide-y divide-zinc-200 text-xs dark:divide-zinc-800">
         {entries.map((e) => (
           <li key={e.seq} className="py-1.5">
             <button className="w-full text-left" onClick={() => setOpen(open === e.seq ? null : e.seq)}>
               <div className="flex justify-between gap-2">
-                <span className="font-mono text-[10px] text-neutral-500">#{e.seq} {new Date(e.at).toLocaleString()}</span>
-                <span className={`text-[10px] font-medium ${OUTCOME_STYLE[e.outcome] ?? "text-neutral-500"}`}>{e.outcome}</span>
+                <span className="font-mono text-[10px] text-zinc-500">#{e.seq} {new Date(e.at).toLocaleString()}</span>
+                <span className={`text-[10px] font-medium ${OUTCOME_STYLE[e.outcome] ?? "text-zinc-500"}`}>{e.outcome}</span>
               </div>
               <div>
-                <span className="font-medium">{e.action}</span> <span className="text-neutral-500">by {e.actor_name || e.actor_id}</span>
+                <span className="font-medium">{e.action}</span> <span className="text-zinc-500">by {e.actor_name || e.actor_id}</span>
               </div>
-              <div className="truncate text-neutral-600 dark:text-neutral-300">{e.summary}</div>
+              <div className="truncate text-zinc-600 dark:text-zinc-300">{e.summary}</div>
             </button>
             {open === e.seq && (
-              <pre className="mt-1 max-h-60 overflow-auto rounded bg-neutral-100 p-1.5 text-[10px] dark:bg-neutral-900">
+              <pre className="mt-1 max-h-60 overflow-auto rounded bg-zinc-100 p-1.5 text-[10px] dark:bg-zinc-900">
                 {prettyArgs(e.detail_json)}
                 {"\n\nhash "}
                 {e.hash}
@@ -271,11 +311,11 @@ export function SafetyPanel({ workspace, onChanged }: { workspace: WorkspaceSnap
   return (
     <div className="space-y-5 p-3">
       <section className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Waiting for you ({pending.length})</h3>
-        {pending.length === 0 && <div className="text-xs text-neutral-500">No pending approvals.</div>}
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Waiting for you ({pending.length})</h3>
+        {pending.length === 0 && <div className="text-xs text-zinc-500">No pending approvals.</div>}
         {pending.map((a) => <ApprovalCard key={a.approval_id} workspaceId={workspace.workspace_id} approval={a} onDecided={onChanged} />)}
         {decided.length > 0 && (
-          <ul className="space-y-0.5 pt-1 text-[11px] text-neutral-500">
+          <ul className="space-y-0.5 pt-1 text-[11px] text-zinc-500">
             {decided.map((a) => (
               <li key={a.approval_id}>
                 {a.code} {a.tool_name}: <span className="font-medium">{a.status.toLowerCase()}</span>

@@ -56,7 +56,7 @@ public sealed class WorldsController(
         WorldBlueprint blueprint;
         try
         {
-            blueprint = await genesis.GenerateAsync(settings.Seed, population, ct);
+            blueprint = await genesis.GenerateAsync(settings.Seed, population, access.TenantId, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { AccountMenu } from "@/components/platform/AccountMenu";
-import { useCallback, useEffect, useState } from "react";
+import { Button, PageHeader, StatusBadge, cx } from "@/components/ui";
+import { Icons } from "@/components/ui/icons";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
 import type { RuntimeEvent } from "@/lib/types";
 import type { WorkspaceListItem, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
 import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm";
 import { WorkspaceChatWidget, readChatOpen, rememberChatOpen } from "@/components/workspace/WorkspaceChatWidget";
-import { WorkspaceHeader } from "@/components/workspace/WorkspaceHeader";
+import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
 import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
@@ -35,11 +37,16 @@ function recall(): string | null {
 }
 
 export default function WorkspacesPage() {
+  return <Suspense><Workspaces /></Suspense>;
+}
+
+function Workspaces() {
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
-  // Deep links (?id=<workspace>) from MCP/A2A results open that workspace.
-  const [workspaceId, setWorkspaceId] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("id"),
-  );
+  // Deep links (?id=<workspace>) from MCP/A2A results and new templates open that workspace.
+  // useSearchParams stays current on in-app navigation, unlike window.location.
+  const params = useSearchParams();
+  const urlId = params.get("id") ?? params.get("workspace");
+  const [workspaceId, setWorkspaceId] = useState<string | null>(urlId);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -58,13 +65,27 @@ export default function WorkspacesPage() {
     listWorkspaces()
       .then((list) => {
         setWorkspaces(list);
-        const fromUrl = new URLSearchParams(window.location.search).get("workspace");
-        const last = fromUrl ?? recall();
+        const last = urlId ?? recall();
         if (last && list.some((w) => w.workspace_id === last)) setWorkspaceId(last);
         else if (list.length === 0) setCreating(true);
       })
       .catch(() => setCreating(true));
+    // Once, on open: later URL changes are followed below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A link to another workspace while this page is open (same route, so no remount).
+  const [seenUrlId, setSeenUrlId] = useState(urlId);
+  if (urlId !== seenUrlId) {
+    setSeenUrlId(urlId);
+    if (urlId) {
+      setWorkspaceId(urlId);
+      setWorkspace(null);
+      setEvents([]);
+      setSelectedAgent(null);
+      setCreating(false);
+    }
+  }
 
   const open = useCallback((id: string) => {
     setWorkspaceId(id);
@@ -133,39 +154,39 @@ export default function WorkspacesPage() {
   }, [workspaceId, refresh]);
 
   return (
-    <div className="flex h-screen flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <header className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-        <div>
-          <h1 className="text-lg font-semibold">Aktor Agents: Workspaces</h1>
-          <p className="text-xs text-neutral-500">Long-running agents that work for you, take new instructions any time, and react to schedules and webhooks.</p>
-        </div>
-        <nav className="flex items-center gap-2 text-xs">
-          <Link href="/" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Tasks</Link>
-          <Link href="/simulation" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Simulation</Link>
-          <span className="rounded bg-neutral-100 px-2 py-1 font-medium dark:bg-neutral-800">Workspaces</span>
-          <AccountMenu />
-        </nav>
-      </header>
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title="Workspaces"
+        description="Long-running agent teams that work for you: they take new instructions any time, react to schedules, webhooks and watches, and stay inside a daily budget."
+        actions={
+          <>
+            <Link href="/templates"><Button icon={<Icons.Templates className="h-3.5 w-3.5" />}>Templates</Button></Link>
+            <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => { setCreating(true); setWorkspaceId(null); setWorkspace(null); }}>
+              New workspace
+            </Button>
+          </>
+        }
+      />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-60 shrink-0 overflow-y-auto border-r border-neutral-200 dark:border-neutral-800">
-          <div className="p-2">
-            <button onClick={() => { setCreating(true); setWorkspaceId(null); setWorkspace(null); }}
-              className="w-full rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-              + New workspace
-            </button>
-          </div>
-          <ul className="text-xs">
+        <aside className="w-60 shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50/50 p-2 dark:border-zinc-800 dark:bg-zinc-950">
+          {workspaces.length === 0 && <div className="p-4 text-xs text-zinc-500">No workspaces yet.</div>}
+          <ul className="space-y-1">
             {workspaces.map((w) => (
               <li key={w.workspace_id}>
                 <button onClick={() => open(w.workspace_id)}
-                  className={`block w-full px-3 py-2 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900 ${w.workspace_id === workspaceId ? "bg-neutral-100 dark:bg-neutral-800" : ""}`}>
-                  <span className="flex items-center justify-between gap-1">
-                    <span className="truncate font-medium">{w.name}</span>
-                    <span className="text-[9px] uppercase text-neutral-400">{w.status}</span>
+                  className={cx(
+                    "block w-full rounded-lg px-3 py-2.5 text-left transition-colors",
+                    w.workspace_id === workspaceId
+                      ? "bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800"
+                      : "hover:bg-zinc-100 dark:hover:bg-zinc-900/60",
+                  )}>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{w.name}</span>
+                    <StatusBadge status={w.status} />
                   </span>
-                  <span className="block truncate text-neutral-500">{w.goal}</span>
-                  <span className="block text-[10px] text-neutral-400">{w.agents} agents · {w.triggers} triggers</span>
+                  <span className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{withoutTemplateTag(w.goal)}</span>
+                  <span className="mt-1 block text-[11px] text-zinc-400">{w.agents} agents · {w.triggers} triggers</span>
                 </button>
               </li>
             ))}
@@ -177,7 +198,7 @@ export default function WorkspacesPage() {
         )}
 
         {!creating && !workspace && (
-          <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+          <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
             {workspaceId ? "Loading workspace…" : "Select a workspace or create a new one."}
           </div>
         )}
@@ -186,12 +207,12 @@ export default function WorkspacesPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <WorkspaceHeader workspace={workspace} onChanged={refresh} />
             <div className="flex min-h-0 flex-1">
-              <div className="relative min-w-0 flex-1 border-r border-neutral-200 dark:border-neutral-800">
+              <div className="relative min-w-0 flex-1 border-r border-zinc-200 dark:border-zinc-800">
                 <WorkspaceTeamView workspace={workspace} events={events} selectedId={selectedAgent} onSelect={setSelectedAgent} chatOpen={chatOpen} />
                 <WorkspaceChatWidget workspace={workspace} open={chatOpen} onOpenChange={changeChatOpen} onSent={refresh} onSelectAgent={setSelectedAgent} />
               </div>
               {selectedAgent && (
-                <div className="w-96 shrink-0 border-r border-neutral-200 dark:border-neutral-800">
+                <div className="w-96 shrink-0 border-r border-zinc-200 dark:border-zinc-800">
                   <AgentDetailsPanel agentId={selectedAgent} onClose={() => setSelectedAgent(null)} />
                 </div>
               )}

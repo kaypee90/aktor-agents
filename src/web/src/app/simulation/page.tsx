@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { AccountMenu } from "@/components/platform/AccountMenu";
+import { PageHeader, inputClass } from "@/components/ui";
 import { useCallback, useEffect, useState } from "react";
 import { getWorld, listWorlds, subscribeToEvents } from "@/lib/api";
 import type { RuntimeEvent } from "@/lib/types";
@@ -116,20 +115,15 @@ export default function SimulationPage() {
   const departed = world?.residents.filter((r) => r.state === "Removed" || r.state === "Left") ?? [];
 
   return (
-    <div className="flex h-screen flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <header className="flex items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-        <div>
-          <h1 className="text-lg font-semibold">Aktor Agents: World Simulation</h1>
-          <p className="text-xs text-neutral-500">Autonomous agents living in a shared world: watch them plan, talk, trade, vote and multiply.</p>
-        </div>
-        <nav className="flex items-center gap-2 text-xs">
-          <Link href="/" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Tasks</Link>
-          <span className="rounded bg-neutral-100 px-2 py-1 font-medium dark:bg-neutral-800">Simulation</span>
-          <Link href="/workspaces" className="rounded px-2 py-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800">Workspaces</Link>
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title="Simulation"
+        description="Autonomous agents living in a shared world: watch them plan, talk, trade, vote and multiply."
+        actions={
           <select
             value={worldId ?? ""}
             onChange={(e) => open(e.target.value || null)}
-            className="ml-2 max-w-56 rounded border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+            className={`${inputClass} w-72`}
           >
             <option value="">+ New world</option>
             {worlds.map((w) => (
@@ -139,9 +133,8 @@ export default function SimulationPage() {
             ))}
             {worldId && !worlds.some((w) => w.world_id === worldId) && <option value={worldId}>{worldId}</option>}
           </select>
-          <AccountMenu />
-        </nav>
-      </header>
+        }
+      />
 
       {!worldId && (
         <div className="flex-1 overflow-y-auto">
@@ -150,11 +143,11 @@ export default function SimulationPage() {
       )}
 
       {worldId && !world && (
-        <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+        <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
           {loadError ? (
             <div className="space-y-2 text-center">
               <div>Couldn&apos;t load this world: {loadError}</div>
-              <button onClick={() => open(null)} className="rounded border border-neutral-300 px-3 py-1 text-xs dark:border-neutral-700">Create a new world</button>
+              <button onClick={() => open(null)} className="rounded border border-zinc-300 px-3 py-1 text-xs dark:border-zinc-700">Create a new world</button>
             </div>
           ) : (
             "Loading world…"
@@ -166,15 +159,15 @@ export default function SimulationPage() {
         <>
           <WorldStatusBar world={world} onChanged={refresh} />
           <div className="flex min-h-0 flex-1">
-            <div className="flex min-w-0 flex-1 flex-col border-r border-neutral-200 dark:border-neutral-800">
+            <div className="flex min-w-0 flex-1 flex-col border-r border-zinc-200 dark:border-zinc-800">
               <div className="min-h-0 flex-1">
                 <WorldMap world={world} selectedId={selected} onSelect={setSelected} />
               </div>
               {departed.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-neutral-200 px-3 py-1.5 text-[11px] dark:border-neutral-800">
-                  <span className="text-neutral-500">Departed:</span>
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-zinc-200 px-3 py-1.5 text-[11px] dark:border-zinc-800">
+                  <span className="text-zinc-500">Departed:</span>
                   {departed.map((r) => (
-                    <button key={r.agent_id} onClick={() => setSelected(r.agent_id)} className={`rounded bg-neutral-100 px-1.5 hover:underline dark:bg-neutral-800 ${accentFor(r.agent_id)}`}>
+                    <button key={r.agent_id} onClick={() => setSelected(r.agent_id)} className={`rounded bg-zinc-100 px-1.5 hover:underline dark:bg-zinc-800 ${accentFor(r.agent_id)}`}>
                       {r.name} ({r.state === "Removed" ? "voted out" : "left"})
                     </button>
                   ))}
@@ -183,7 +176,7 @@ export default function SimulationPage() {
             </div>
 
             {selected && (
-              <div className="w-96 shrink-0 border-r border-neutral-200 dark:border-neutral-800">
+              <div className="w-96 shrink-0 border-r border-zinc-200 dark:border-zinc-800">
                 <ResidentPanel world={world} agentId={selected} onClose={() => setSelected(null)} onSelect={setSelected} />
               </div>
             )}

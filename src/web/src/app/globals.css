@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
+/* Dark mode follows a class on <html> ("dark"), set before first paint from the user's choice
+   (light / dark / system; see ThemeScript). System is the default, so the OS setting still rules. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #18181b;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #e4e4e7;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -10,17 +20,37 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Brand accent: a warm coral, used sparingly for primary actions and the active nav item. */
+  --color-brand-50: #fff3f1;
+  --color-brand-100: #ffe4df;
+  --color-brand-200: #ffcbc2;
+  --color-brand-300: #ffa797;
+  --color-brand-400: #ff7a63;
+  --color-brand-500: #ff5a43;
+  --color-brand-600: #ec3b22;
+  --color-brand-700: #c72d17;
+  --color-brand-800: #a42917;
+  --color-brand-900: #87281a;
+  --color-brand-950: #4a0f06;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Quieter scrollbars in the dark theme. */
+.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dark ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 9999px; border: 2px solid #09090b; }
+.dark ::-webkit-scrollbar-track { background: transparent; }
+
+/* React Flow in the dark theme. */
+.dark .react-flow__background { background: #09090b; }
+.dark .react-flow__controls button { background: #18181b; border-color: #27272a; fill: #a1a1aa; }
+.dark .react-flow__minimap { background: #111113; }
+.dark .react-flow__minimap-mask { fill: rgba(9, 9, 11, 0.72) !important; }
+.dark .react-flow__minimap-node { fill: #52525b !important; stroke: none !important; }
+.dark .react-flow__edge-path { stroke: #52525b; }
+.dark .react-flow__controls { box-shadow: none; border: 1px solid #27272a; border-radius: 8px; overflow: hidden; }

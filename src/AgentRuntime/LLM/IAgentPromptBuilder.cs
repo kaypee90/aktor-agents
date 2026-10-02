@@ -9,6 +9,8 @@ public sealed record AgentPromptContext
     public required IReadOnlyList<ToolDefinitionSummary> AvailableTools { get; init; }
     public required AutonomyLevel AutonomyLevel { get; init; }
     public required string EnvironmentSummary { get; init; }
+    /// <summary>The organization's enabled skills (name and description only).</summary>
+    public IReadOnlyList<Skills.SkillSummary> Skills { get; init; } = [];
 }
 
 public sealed record ToolDefinitionSummary(string Name, string Description);

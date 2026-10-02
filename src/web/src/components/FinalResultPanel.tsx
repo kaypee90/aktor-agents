@@ -3,32 +3,33 @@
 import { useEffect, useState } from "react";
 import { artifactDownloadUrl, artifactsZipUrl, getTaskArtifacts, getTaskResult } from "@/lib/api";
 import type { ArtifactListItem, TaskResult } from "@/lib/types";
+import { useLiveList } from "@/lib/useLiveList";
 
 const TERMINAL_STATUSES = new Set(["Completed", "Failed", "Terminated", "TimedOut"]);
 
-export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskStatus: string }) {
+export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
+  taskId: string;
+  taskStatus: string;
+  /** How many "file written" events the page has seen for this task; each one reloads the list. */
+  artifactWrites?: number;
+}) {
   const [result, setResult] = useState<TaskResult | null>(null);
-  const [artifacts, setArtifacts] = useState<ArtifactListItem[]>([]);
   const [open, setOpen] = useState(true);
+  const terminal = TERMINAL_STATUSES.has(taskStatus);
 
   useEffect(() => {
-    if (!TERMINAL_STATUSES.has(taskStatus)) return;
+    if (!terminal) return;
 
     let cancelled = false;
 
     async function load() {
       try {
-        const [resultResponse, artifactList] = await Promise.all([
-          getTaskResult(taskId),
-          getTaskArtifacts(taskId).catch(() => [] as ArtifactListItem[]),
-        ]);
-
+        const resultResponse = await getTaskResult(taskId);
         if (cancelled) return;
         if (resultResponse.ready && resultResponse.result) {
           setResult(resultResponse.result);
           clearInterval(interval);
         }
-        setArtifacts(artifactList);
       } catch {
         // API may be briefly unavailable right after task completion; retry on the next tick.
       }
@@ -42,7 +43,13 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
       cancelled = true;
       clearInterval(interval);
     };
-  }, [taskId, taskStatus]);
+  }, [taskId, terminal]);
+
+  // Files are saved by a background writer that can trail the live events and the task's status,
+  // so reload when the task finishes, when its result lands, and after every file write.
+  const artifactList = useLiveList<ArtifactListItem>(terminal ? taskId : null, artifactWrites + (result ? 1 : 0),
+    () => getTaskArtifacts(taskId));
+  const artifacts = artifactList ?? [];
 
   if (!TERMINAL_STATUSES.has(taskStatus)) return null;
 
@@ -50,24 +57,24 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
   const uniqueFileCount = new Set(artifacts.map((a) => a.file_name)).size;
 
   return (
-    <div className="border-b border-neutral-200 dark:border-neutral-800">
+    <div className="border-b border-zinc-200 dark:border-zinc-800">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900"
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-900"
       >
         <span>Final Result</span>
-        <span className="text-neutral-400">{open ? "▲" : "▼"}</span>
+        <span className="text-zinc-400">{open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
         <div className="space-y-3 px-3 pb-3 text-sm">
           {!result ? (
-            <div className="text-neutral-500">Aggregating final result…</div>
+            <div className="text-zinc-500">Aggregating final result…</div>
           ) : (
             <>
-              <p className="text-neutral-700 dark:text-neutral-300">{result.summary}</p>
+              <p className="text-zinc-700 dark:text-zinc-300">{result.summary}</p>
 
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-neutral-500">
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500">
                 <span>Participating agents: {result.participating_agents}</span>
                 <span>Tool calls: {result.metrics.total_tool_calls ?? "—"}</span>
                 <span>Tokens used: {result.metrics.total_tokens_used ?? "—"}</span>
@@ -75,7 +82,7 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
               </div>
 
               {result.metrics.estimated_cost_usd && (
-                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-neutral-500">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500">
                   <span>
                     Estimated: ${Number(result.metrics.estimated_cost_usd).toFixed(4)} / {result.metrics.estimated_team_size} agents
                   </span>
@@ -87,8 +94,8 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
 
               {result.findings.length > 0 && (
                 <div>
-                  <div className="mb-1 text-xs font-semibold uppercase text-neutral-500">Findings</div>
-                  <ul className="list-inside list-disc space-y-1 text-neutral-600 dark:text-neutral-400">
+                  <div className="mb-1 text-xs font-semibold uppercase text-zinc-500">Findings</div>
+                  <ul className="list-inside list-disc space-y-1 text-zinc-600 dark:text-zinc-400">
                     {result.findings.map((f, i) => (
                       <li key={i}>{f}</li>
                     ))}
@@ -99,7 +106,7 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
               {result.unresolved_items.length > 0 && (
                 <div>
                   <div className="mb-1 text-xs font-semibold uppercase text-amber-600">Unresolved</div>
-                  <ul className="list-inside list-disc space-y-1 text-neutral-600 dark:text-neutral-400">
+                  <ul className="list-inside list-disc space-y-1 text-zinc-600 dark:text-zinc-400">
                     {result.unresolved_items.map((item, i) => (
                       <li key={i}>{item}</li>
                     ))}
@@ -111,20 +118,22 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
 
           <div>
             <div className="mb-1 flex items-center gap-3">
-              <span className="text-xs font-semibold uppercase text-neutral-500">
+              <span className="text-xs font-semibold uppercase text-zinc-500">
                 Artifacts {uniqueFileCount > 0 && `(${uniqueFileCount})`}
               </span>
               {uniqueFileCount > 1 && (
                 <a
                   href={artifactsZipUrl(taskId)}
-                  className="rounded border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  className="rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
                 >
                   Download all (.zip)
                 </a>
               )}
             </div>
-            {artifacts.length === 0 ? (
-              <div className="text-xs text-neutral-500">
+            {artifactList === null ? (
+              <div className="text-xs text-zinc-500">Loading files…</div>
+            ) : artifacts.length === 0 ? (
+              <div className="text-xs text-zinc-500">
                 No files were written to the workspace for this task (agents only wrote via
                 filesystem_write would appear here).
               </div>
@@ -139,7 +148,7 @@ export function FinalResultPanel({ taskId, taskStatus }: { taskId: string; taskS
                     >
                       {a.file_name}
                     </a>
-                    <span className="ml-2 text-xs text-neutral-400">by {a.created_by_agent}</span>
+                    <span className="ml-2 text-xs text-zinc-400">by {a.created_by_agent}</span>
                   </li>
                 ))}
               </ul>

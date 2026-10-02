@@ -53,6 +53,7 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
 
             // Likewise one step journal, so a replay can read a run recorded before a silo restart.
             services.AddSingleton<AgentRuntime.Durability.IStepJournal>(TestJournal.Instance);
+            services.AddSingleton<AgentRuntime.Skills.ISkillStore>(TestSkills.Store);
         }
     }
 }
@@ -60,4 +61,9 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
 public static class TestJournal
 {
     public static readonly AgentRuntime.Durability.InMemoryStepJournal Instance = new();
+}
+
+public static class TestSkills
+{
+    public static readonly AgentRuntime.Skills.InMemorySkillStore Store = new();
 }

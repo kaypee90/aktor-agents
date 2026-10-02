@@ -38,7 +38,7 @@ to enforce a system-level constraint — the runtime always is.
   /AgentRuntime.Evals          aktor-eval: runs goals N times and reports team size, cost, completion, quality
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
 /sdk/typescript               TypeScript SDK and the aktor-acp bridge
-  /web                        Next.js dashboard (React Flow agent graph, live event stream)
+  /web                        Next.js dashboard (agent graph, live events, analytics, settings)
 /docker                       Dockerfiles for the API and the web app
 docker-compose.yml
 .env.example
@@ -218,13 +218,19 @@ Set these in `.env` (Docker Compose) or `appsettings.Development.json` / environ
 (running `dotnet run` directly):
 
 ```bash
-LLM_PROVIDER=Anthropic        # Mock | Anthropic | OpenAI | Gemini
+LLM_PROVIDER=Anthropic        # Mock | Anthropic | OpenAI | Gemini | Ollama
 LLM_MODEL=claude-sonnet-5     # whatever model id your provider/account supports
 LLM_API_KEY=sk-...
 ```
 
 The API never exposes this key to an agent or a tool call — it's held by the provider
 implementation and injected via configuration, per CLAUDE.md §44.
+
+**Or choose it in the dashboard.** Under **Settings → AI model**, an organization's Admin picks
+the provider and model, pastes its own API key (stored encrypted, never shown again), lists the
+models the key can use, sets the prices budgets count in, and tests the connection before saving.
+The change applies from each agent's next step. The `.env` settings above are the default for
+organizations that don't choose. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ### Local models with Ollama
 
@@ -281,15 +287,34 @@ produces.
 
 ## 10. Inspecting the agent graph, the final result, and artifacts
 
-- **Dashboard** (`src/web`): live React Flow graph, color-coded by status, a live event stream via
-  Server-Sent Events (`/ws/events`), and a details panel per agent (goal, budget/usage, granted
-  tools, and its structured reasoning trace).
-- **Final Result panel**: once the root agent finishes (Completed/Failed/Terminated/TimedOut), a
-  collapsible "Final Result" panel appears under the task bar with the aggregated summary,
+- **Dashboard** (`src/web`): a sidebar app with dark, light and system themes (system, the default,
+  follows the OS; the switch is at the bottom of the sidebar). Its pages:
+  - **Tasks**: a composer with budget (cost, tokens, minutes, sub-agents), team shape (max agents,
+    fan-out, spawner roles, goal type), delivery (webhook, secret, correlation id) and a cost
+    estimate; then the run itself, with a live React Flow graph colour-coded by status, the run's
+    full activity (history plus live events via `/ws/events`), the result, and a details panel
+    per agent (goal, budget and usage, granted tools, structured reasoning trace).
+  - **Workspaces** and **Templates**: standing teams, their triggers, integrations, safety policy
+    (including team shape) and approvals.
+  - **Skills**: write a skill in the browser or upload a `SKILL.md` or `.zip`; enable, edit,
+    download or delete it.
+  - **Shared memory**: search what agents saved with `write_memory`, and add facts for them.
+  - **Analytics**: spend, tokens, runs and durations over time; what consumes the most by agent
+    role; spend by source; tool timings and failures; the most expensive and slowest runs. Filter
+    by date range, source, status and goal; click a chart to drill in
+    ([docs/analytics.md](docs/analytics.md)).
+  - **Run history**: every run with its source (API, MCP, A2A, ACP, replay), status, agents and
+    cost, with links to its graph and its journal (step through, replay, fork, diff).
+  - **Simulation**, **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
+    snippets), and **Settings** (organization, members, the AI model, API keys, usage and billing,
+    your account).
+- **Result tab**: once the root agent finishes (Completed/Failed/Terminated/TimedOut), the run's
+  **Result** tab shows the aggregated summary,
   per-agent findings, unresolved items, run metrics (tool calls / tokens / cost), and download
   links for any artifact an agent wrote via `filesystem_write` (the zero-config Mock provider has
   the root agent write a `final-report.md` consolidating its sub-agents' findings, so this is
-  populated even with no LLM API key configured).
+  populated even with no LLM API key configured). Files appear as agents write them, without
+  reloading the page.
 - **REST API**:
   - `GET /api/tasks/{id}` — status + one-line summary
   - `GET /api/tasks/{id}/result` — the aggregated `TaskResult` (CLAUDE.md §52): `{ready, result: {status, summary, findings, artifacts, participating_agents, unresolved_items, metrics}}`. `ready: false` until the root completes.
@@ -467,6 +492,30 @@ See [docs/integrations.md](docs/integrations.md).
   models and prompt versions. CI checks the demo scenarios against a committed baseline.
   ([docs/evals.md](docs/evals.md))
 
+## 10b-8b. Skills
+
+Teach agents how your organization works. **Skills** in the sidebar: write a skill (name, description,
+instructions, optional files) or upload a `SKILL.md` / `.zip` in the Agent Skills format. Every
+agent sees each skill's name and description and loads the instructions with `load_skill` when its
+work matches. Skills are per organization and never grant permissions. See
+[docs/skills.md](docs/skills.md).
+
+## 10b-8c. Choosing the model
+
+Each organization can pick its own provider (Anthropic, OpenAI or any OpenAI-compatible service,
+Gemini, Ollama) and model under **Settings → AI model**, with its own key and prices, and test it
+before saving. Without a choice, the server's `.env` configuration applies. Keys are encrypted and
+never sent to an address an organization chose unless they're its own. See
+[docs/llm-settings.md](docs/llm-settings.md).
+
+## 10b-8d. Analytics
+
+**Analytics** shows where tokens and money go and what takes long: trends per hour or day,
+consumption by agent role, spend by source, tool timings and failures, run durations, and the
+most expensive and slowest runs, with changes against the previous period. Filters (date range,
+source, status, goal search) stay in the URL, so a view can be shared. See
+[docs/analytics.md](docs/analytics.md).
+
 ## 10b-9. Flagship: incident response
 
 The **Incident response** workspace template:
@@ -511,6 +560,11 @@ State lives in Postgres through Orleans' ADO.NET storage (installed automaticall
 - **Credentials never reach an agent**: the database connection string, search API key, and LLM
   API key all live in server-side configuration; tools accept only the parameters an agent should
   see (a URL, a SQL string, a search query) and the runtime supplies the credential.
+- **Organization model keys** (Settings → AI model) are encrypted with the secrets master key,
+  only Admins can set them, and the API never returns them. The server's own key is used only for
+  the server's provider at the server's address. On a shared server, set
+  `LLM_ALLOW_PRIVATE_BASE_URLS=false` so organization admins can't point a provider at your
+  internal network ([docs/llm-settings.md](docs/llm-settings.md)).
 
 ## 12. Architecture diagram
 

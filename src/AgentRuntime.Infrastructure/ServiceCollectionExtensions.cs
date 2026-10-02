@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentRuntime.Workspaces.IWorkspaceArchive, EfWorkspaceArchive>();
         services.AddHostedService<PersistenceEventSubscriber>();
         services.AddSingleton<AgentRuntime.Durability.IStepJournal, PostgresStepJournal>();
+        services.AddSingleton<AgentRuntime.Skills.ISkillStore, PostgresSkillStore>();
 
         // Tasks started from other systems (MCP, A2A, ACP, webhooks back to them).
         services.Configure<Tasks.TaskCallbackOptions>(configuration.GetSection(Tasks.TaskCallbackOptions.SectionName));
@@ -55,6 +56,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SecretsOptions>(configuration.GetSection(SecretsOptions.SectionName));
         services.AddSingleton<SecretProtector>();
         services.AddSingleton<AgentRuntime.Integrations.ISecretStore, PostgresSecretStore>();
+        services.AddSingleton<ITaskModelSelection, Tasks.PostgresTaskModelSelection>();
         services.AddSingleton<AgentRuntime.Safety.IAuditLog, Persistence.PostgresAuditLog>();
 
         // Platform: accounts and access (docs/platform.md), and billing if a provider is configured.
@@ -171,24 +173,34 @@ public static class ServiceCollectionExtensions
             });
         }
 
+        // The configured provider serves every call without organization settings; the router in
+        // front of it sends calls of organizations with their own settings to theirs.
+        const string server = OrganizationLlmRouter.ServerProviderKey;
         switch (providerName)
         {
             case "Anthropic":
-                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<AnthropicProvider>());
+                services.AddKeyedSingleton<ILLMProvider>(server, (sp, _) => sp.GetRequiredService<AnthropicProvider>());
                 break;
             case "OpenAI":
-                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<OpenAIProvider>());
+                services.AddKeyedSingleton<ILLMProvider>(server, (sp, _) => sp.GetRequiredService<OpenAIProvider>());
                 break;
             case "Ollama":
-                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<OllamaProvider>());
+                services.AddKeyedSingleton<ILLMProvider>(server, (sp, _) => sp.GetRequiredService<OllamaProvider>());
                 break;
             case "Gemini":
-                services.AddSingleton<ILLMProvider>(sp => sp.GetRequiredService<GeminiProvider>());
+                services.AddKeyedSingleton<ILLMProvider>(server, (sp, _) => sp.GetRequiredService<GeminiProvider>());
                 break;
             default:
-                services.AddSingleton<ILLMProvider, HeuristicMockLlmProvider>();
+                services.AddKeyedSingleton<ILLMProvider>(server, (sp, _) => sp.GetRequiredService<HeuristicMockLlmProvider>());
                 break;
         }
+
+        services.AddSingleton<HeuristicMockLlmProvider>();
+        services.AddHttpClient(LlmProviderFactory.PublicClientName).ConfigurePrimaryHttpMessageHandler(PublicNetworkHandler.Create);
+        services.AddHttpClient(LlmProviderFactory.PrivateClientName);
+        services.AddSingleton<LlmProviderFactory>();
+        services.AddSingleton<LlmConnectionTester>();
+        services.AddSingleton<ILLMProvider, OrganizationLlmRouter>();
     }
 
     /// <summary>Applies pending EF Core migrations and provisions the database_query sandbox role at

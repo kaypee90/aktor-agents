@@ -646,6 +646,46 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Sessions");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SkillRecord", b =>
+                {
+                    b.Property<string>("TenantId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("FilesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("TenantId", "Name");
+
+                    b.ToTable("Skills");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TaskPreviewRecord", b =>
                 {
                     b.Property<string>("PreviewId")
@@ -825,6 +865,9 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ResultJson")
                         .HasColumnType("text");
 
@@ -851,6 +894,8 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AgentId");
+
+                    b.HasIndex("TaskId");
 
                     b.ToTable("ToolCalls");
                 });

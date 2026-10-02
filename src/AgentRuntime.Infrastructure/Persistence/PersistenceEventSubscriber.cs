@@ -41,6 +41,10 @@ public sealed class PersistenceEventSubscriber(
         }
     }
 
+    private static int IntOf(RuntimeEvent evt, string key) =>
+        long.TryParse(evt.Data.GetValueOrDefault(key), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var v)
+            ? (int)Math.Clamp(v, int.MinValue, int.MaxValue) : 0;
+
     private async Task HandleAsync(RuntimeEvent evt, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
@@ -128,6 +132,30 @@ public sealed class PersistenceEventSubscriber(
                     ArgumentsJson = evt.Data.GetValueOrDefault("arguments", "{}"),
                     ResultJson = evt.Data.GetValueOrDefault("result"),
                     Success = evt.Data.GetValueOrDefault("success") == "True",
+                    DurationMs = int.TryParse(evt.Data.GetValueOrDefault("duration_ms"), out var toolMs) ? toolMs : null,
+                    Timestamp = evt.Timestamp
+                });
+                break;
+
+            case RuntimeEventType.LlmCallCompleted:
+                db.LlmCalls.Add(new LlmCallRecord
+                {
+                    TenantId = tenant,
+                    TaskId = evt.TaskId ?? string.Empty,
+                    WorkspaceId = evt.Data.GetValueOrDefault("workspace_id") is { Length: > 0 } ws ? ws : null,
+                    AgentId = evt.AgentId ?? string.Empty,
+                    Role = evt.Data.GetValueOrDefault("role", string.Empty),
+                    ProfileId = evt.Data.GetValueOrDefault("profile_id", "server"),
+                    ProfileName = evt.Data.GetValueOrDefault("profile_name", string.Empty),
+                    Provider = evt.Data.GetValueOrDefault("provider", string.Empty),
+                    Model = evt.Data.GetValueOrDefault("model", string.Empty),
+                    Purpose = evt.Data.GetValueOrDefault("purpose", "step"),
+                    InputTokens = IntOf(evt, "input_tokens"),
+                    OutputTokens = IntOf(evt, "output_tokens"),
+                    CachedInputTokens = IntOf(evt, "cached_input_tokens"),
+                    CostUsd = decimal.TryParse(evt.Data.GetValueOrDefault("cost_usd"), System.Globalization.NumberStyles.Number,
+                        System.Globalization.CultureInfo.InvariantCulture, out var callCost) ? callCost : 0,
+                    DurationMs = IntOf(evt, "duration_ms"),
                     Timestamp = evt.Timestamp
                 });
                 break;

@@ -48,7 +48,7 @@ and the first account created on a server takes it over.
 |---|---|
 | Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. |
 | Member | Also create workspaces, tasks and worlds, instruct agents, add triggers, and decide approvals. |
-| Admin | Also manage connections, safety policies, workspace budgets, members, invitations and API keys. |
+| Admin | Also manage connections, safety policies, workspace budgets, skills, the AI model ([llm-settings.md](llm-settings.md)), members, invitations and API keys. |
 | Owner | Also manage billing and who is an owner. An organization always keeps at least one owner. |
 
 **Accounts** are email and password.
@@ -191,6 +191,9 @@ only ones who can use **Reset all**, which wipes every organization's work but k
 | `GET` / `PUT` / `DELETE` | `/api/organization/members[/{id}[/role]]` | Viewer / Admin | Anyone may remove themselves. |
 | `GET` / `POST` / `DELETE` | `/api/organization/invitations` | Admin | `POST` returns the token once. |
 | `GET` / `POST` / `DELETE` | `/api/api-keys` | Admin | `POST` returns the key once. |
+| `GET` / `PUT` / `DELETE` | `/api/llm/settings` | Viewer / Admin | The organization's model; the key is never returned. See [llm-settings.md](llm-settings.md). |
+| `POST` | `/api/llm/test` / `models` | Admin | Test settings, or list the provider's models. |
+| `GET` | `/api/analytics` | Viewer | Spend, tokens and durations with filters. See [analytics.md](analytics.md). |
 | `GET` | `/api/billing` | Viewer | Plan, usage, quota, plans. |
 | `POST` | `/api/billing/checkout` / `portal` | Owner | Returns a Stripe URL. |
 | `POST` | `/api/billing/stripe/webhook` | signature | |

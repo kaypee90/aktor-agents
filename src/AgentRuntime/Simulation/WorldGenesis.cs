@@ -1,7 +1,6 @@
 using System.Text.Json;
 using AgentRuntime.Configuration;
 using AgentRuntime.LLM;
-using Microsoft.Extensions.Options;
 
 namespace AgentRuntime.Simulation;
 
@@ -9,14 +8,15 @@ namespace AgentRuntime.Simulation;
 /// the initial residents with personas and drives.</summary>
 public interface IWorldGenesis
 {
-    Task<WorldBlueprint> GenerateAsync(string seed, int population, CancellationToken cancellationToken = default);
+    /// <param name="tenantId">The organization the world is for: its own model is used if it chose one.</param>
+    Task<WorldBlueprint> GenerateAsync(string seed, int population, string? tenantId = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
 /// Asks the LLM to call a single <c>define_world</c> tool, so the blueprint arrives as structured
 /// arguments rather than prose that would have to be parsed (CLAUDE.md section 16).
 /// </summary>
-public sealed class LlmWorldGenesis(ILLMProvider llm, IOptions<LlmOptions> llmOptions) : IWorldGenesis
+public sealed class LlmWorldGenesis(ILLMProvider llm, ILlmSettingsResolver llmSettings) : IWorldGenesis
 {
     public const string ToolName = "define_world";
 
@@ -59,7 +59,7 @@ public sealed class LlmWorldGenesis(ILLMProvider llm, IOptions<LlmOptions> llmOp
         """
     };
 
-    public async Task<WorldBlueprint> GenerateAsync(string seed, int population, CancellationToken cancellationToken = default)
+    public async Task<WorldBlueprint> GenerateAsync(string seed, int population, string? tenantId = null, CancellationToken cancellationToken = default)
     {
         var messages = new List<ChatMessage>
         {
@@ -71,13 +71,15 @@ public sealed class LlmWorldGenesis(ILLMProvider llm, IOptions<LlmOptions> llmOp
             ChatMessage.User($"Create a world with exactly {population} residents based on this description:\n\n{seed}")
         };
 
+        var model = (await llmSettings.ResolveAsync(tenantId, cancellationToken: cancellationToken)).Model;
         for (var attempt = 1; attempt <= 2; attempt++)
         {
             var response = await llm.CompleteAsync(new LlmCompletionRequest
             {
                 Messages = messages,
                 Tools = [DefineWorldTool],
-                Model = llmOptions.Value.Model,
+                TenantId = tenantId,
+                Model = model,
                 Temperature = 0.9,
                 MaxTokens = 4096
             }, cancellationToken);

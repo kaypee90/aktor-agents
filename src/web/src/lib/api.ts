@@ -42,10 +42,29 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function createTask(goal: string, budget?: Partial<ResourceBudget>, previewId?: string) {
-  return apiFetch<{ task_id: string; root_agent_id: string }>("/api/tasks", {
+/** Team-shape rules for one task (docs/safety.md#team-shape); they can only tighten the server's. */
+export interface TeamPolicyInput {
+  max_agents?: number | null;
+  max_fan_out_by_depth?: number[];
+  spawner_roles?: string[];
+  prevent_duplicate_roles?: boolean;
+  goal_type?: string | null;
+}
+
+export interface CreateTaskInput {
+  goal: string;
+  budget?: Partial<ResourceBudget>;
+  preview_id?: string;
+  callback_url?: string;
+  callback_secret?: string;
+  correlation_id?: string;
+  team_policy?: TeamPolicyInput;
+}
+
+export function createTask(input: CreateTaskInput) {
+  return apiFetch<{ task_id: string; root_agent_id: string; correlation_id: string; dashboard_url: string }>("/api/tasks", {
     method: "POST",
-    body: JSON.stringify({ goal, budget, preview_id: previewId }),
+    body: JSON.stringify(input),
   });
 }
 
@@ -62,8 +81,47 @@ export function getTaskSpend(taskId: string) {
   return apiFetch<AgentSpend[]>(`/api/tasks/${taskId}/spend`);
 }
 
-export function listTasks() {
-  return apiFetch<TaskSummary[]>("/api/tasks");
+export interface TaskListItem {
+  task_id: string;
+  goal: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  source: string;
+  correlation_id: string | null;
+  replay_of_task_id: string | null;
+  replay_mode: string | null;
+  result_summary: string | null;
+  agents: number;
+  tokens_used: number;
+  cost_usd: number;
+}
+
+export function listTasks(limit = 100) {
+  return apiFetch<TaskListItem[]>(`/api/tasks?limit=${limit}`);
+}
+
+// ---- Shared memory (docs/memory.md) ----
+
+export interface KnowledgeEntry {
+  memory_id: string;
+  key: string;
+  value: string;
+  agent_id: string;
+  created_at: string;
+  score: number | null;
+}
+
+export function getMemoryStatus() {
+  return apiFetch<{ semantic: boolean; embedding_model: string | null; mode: string }>("/api/memory/status");
+}
+
+export function searchKnowledge(q: string, limit = 50) {
+  return apiFetch<KnowledgeEntry[]>(`/api/memory?q=${encodeURIComponent(q)}&limit=${limit}`);
+}
+
+export function addKnowledge(key: string, value: string) {
+  return apiFetch<void>("/api/memory", { method: "POST", body: JSON.stringify({ key, value }) });
 }
 
 export function getTask(taskId: string) {
@@ -477,4 +535,213 @@ export function replayTask(taskId: string, mode: "full" | "fork", forkAfterStep?
 
 export function diffTasks(a: string, b: string) {
   return apiFetch<RunDiff>(`/api/tasks/${a}/diff/${b}`);
+}
+
+// ---- Skills (docs/skills.md) ----
+
+export interface SkillSummary {
+  name: string;
+  description: string;
+  version: number;
+  enabled: boolean;
+  updated_at: string;
+  file_count: number;
+}
+
+export interface SkillFile {
+  path: string;
+  content: string;
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  instructions: string;
+  files: SkillFile[];
+  version: number;
+  enabled: boolean;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export function listSkills() {
+  return apiFetch<SkillSummary[]>("/api/skills");
+}
+
+export function getSkill(name: string) {
+  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}`);
+}
+
+/** Writes a new skill in the editor. */
+export function createSkill(skill: { name: string; description: string; instructions: string; files?: SkillFile[] }) {
+  return apiFetch<Skill>("/api/skills", { method: "POST", body: JSON.stringify(skill) });
+}
+
+/** Edits a skill (saved as a new version; the name stays). */
+export function updateSkill(name: string, skill: { description: string; instructions: string; files?: SkillFile[] }) {
+  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(skill) });
+}
+
+/** Uploads a SKILL.md or a .zip (SKILL.md plus resource files). */
+export async function uploadSkill(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  // Not apiFetch: the browser must set the multipart Content-Type (with its boundary) itself.
+  const res = await fetch(`${API_BASE}/api/skills/upload`, { method: "POST", body: form, credentials: "include" });
+  if (!res.ok) throw new Error(`POST /api/skills/upload failed: ${res.status} ${await res.text().catch(() => "")}`);
+  return (await res.json()) as Skill;
+}
+
+export function setSkillEnabled(name: string, enabled: boolean) {
+  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+}
+
+export function deleteSkill(name: string) {
+  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export function skillDownloadUrl(name: string) {
+  return `${API_BASE}/api/skills/${encodeURIComponent(name)}/download`;
+}
+
+// --- Model settings (docs/llm-settings.md) ---
+
+export type LlmProviderInfo = {
+  id: string;
+  label: string;
+  needs_api_key: boolean;
+  free: boolean;
+  default_base_url: string | null;
+  suggested_models: string[];
+  get_key_url: string | null;
+};
+
+export type LlmSettingsView = {
+  allow_organization_settings: boolean;
+  source: "server" | "organization";
+  server: { provider: string; model: string; fast_model: string | null };
+  organization: {
+    provider: string;
+    model: string;
+    fast_model: string | null;
+    base_url: string | null;
+    price_per_input_token_usd: number | null;
+    price_per_output_token_usd: number | null;
+    fast_price_per_input_token_usd: number | null;
+    fast_price_per_output_token_usd: number | null;
+    api_key_set: boolean;
+    uses_server_key: boolean;
+    updated_at: string;
+    updated_by: string | null;
+  } | null;
+  effective: {
+    provider: string;
+    model: string;
+    fast_model: string | null;
+    price_per_input_token_usd: number;
+    price_per_output_token_usd: number;
+    price_per_million_input_usd: number;
+    price_per_million_output_usd: number;
+  };
+};
+
+export type LlmSettingsInput = {
+  provider: string;
+  model?: string | null;
+  fast_model?: string | null;
+  base_url?: string | null;
+  api_key?: string | null;
+  price_per_input_token_usd?: number | null;
+  price_per_output_token_usd?: number | null;
+  fast_price_per_input_token_usd?: number | null;
+  fast_price_per_output_token_usd?: number | null;
+};
+
+export function listLlmProviders() {
+  return apiFetch<LlmProviderInfo[]>("/api/llm/providers");
+}
+
+export function getLlmSettings() {
+  return apiFetch<LlmSettingsView>("/api/llm/settings");
+}
+
+export function saveLlmSettings(input: LlmSettingsInput) {
+  return apiFetch<LlmSettingsView>("/api/llm/settings", { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function resetLlmSettings() {
+  return apiFetch<LlmSettingsView>("/api/llm/settings", { method: "DELETE" });
+}
+
+export function testLlmSettings(input: LlmSettingsInput) {
+  return apiFetch<{ ok: boolean; message: string; latency_ms: number; input_tokens: number | null; output_tokens: number | null }>(
+    "/api/llm/test", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listLlmModels(provider: string, baseUrl?: string | null, apiKey?: string | null) {
+  return apiFetch<{ models: string[] }>("/api/llm/models", {
+    method: "POST",
+    body: JSON.stringify({ provider, base_url: baseUrl || null, api_key: apiKey || null }),
+  });
+}
+
+// --- Analytics (docs/analytics.md) ---
+
+export type AnalyticsFilter = {
+  /** A preset window ending now (24h, 7d, 30d, 90d); otherwise from/to. */
+  range?: string | null;
+  from?: string | null;
+  to?: string | null;
+  source?: string | null;
+  status?: "running" | "completed" | "failed" | null;
+  q?: string | null;
+};
+
+export type AnalyticsTaskRow = {
+  task_id: string;
+  goal: string;
+  status: string;
+  source: string;
+  created_at: string;
+  duration_s: number | null;
+  tokens: number;
+  cost_usd: number;
+  agents: number;
+};
+
+export type Analytics = {
+  range: { from: string; to: string; bucket: "hour" | "day" };
+  totals: {
+    runs: number;
+    completed: number;
+    failed: number;
+    running: number;
+    tokens: number;
+    cost_usd: number;
+    avg_cost_usd: number;
+    avg_tokens: number;
+    avg_duration_s: number | null;
+    p50_duration_s: number | null;
+    p95_duration_s: number | null;
+    agents: number;
+    tool_calls: number;
+    tool_failures: number;
+  };
+  previous: { runs: number; tokens: number; cost_usd: number; avg_cost_usd: number; avg_duration_s: number | null };
+  series: { t: string; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
+  by_role: { role: string; agents: number; tokens: number; cost_usd: number; avg_tokens: number }[];
+  by_source: { source: string; runs: number; tokens: number; cost_usd: number }[];
+  by_status: { status: string; runs: number }[];
+  by_tool: { tool: string; calls: number; failures: number; avg_duration_ms: number | null; p95_duration_ms: number | null; total_duration_ms: number }[];
+  duration_histogram: { label: string; runs: number }[];
+  top_by_cost: AnalyticsTaskRow[];
+  slowest: AnalyticsTaskRow[];
+};
+
+export function getAnalytics(filter: AnalyticsFilter) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
+  // Days are counted in the viewer's timezone.
+  params.set("tz_offset_minutes", String(new Date().getTimezoneOffset()));
+  return apiFetch<Analytics>(`/api/analytics?${params.toString()}`);
 }

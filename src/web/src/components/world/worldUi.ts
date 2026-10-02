@@ -15,7 +15,7 @@ const ACCENTS = [
 ];
 
 export function accentFor(agentId: string | null | undefined): string {
-  if (!agentId) return "text-neutral-500";
+  if (!agentId) return "text-zinc-500";
   let h = 0;
   for (let i = 0; i < agentId.length; i++) h = (h * 31 + agentId.charCodeAt(i)) >>> 0;
   return ACCENTS[h % ACCENTS.length];

@@ -37,6 +37,10 @@ public sealed class TaskRecord
     public string? PreviewId { get; set; }
     public string? EstimateJson { get; set; }
 
+    /// <summary>The organization model profile the task runs on (docs/llm-settings.md); null for
+    /// the organization's default. Can change while the task runs.</summary>
+    public string? ModelProfileId { get; set; }
+
     /// <summary>Replays (roadmap P6): the task whose step journal this one replays, how, and from which step.</summary>
     public string? ReplayOfTaskId { get; set; }
     public string? ReplayMode { get; set; }
@@ -182,6 +186,8 @@ public sealed class ToolCallRecord
     public string ArgumentsJson { get; set; } = "{}";
     public string? ResultJson { get; set; }
     public bool Success { get; set; }
+    /// <summary>How long the tool took; null for calls recorded before this was measured.</summary>
+    public int? DurationMs { get; set; }
     public DateTimeOffset Timestamp { get; set; }
 }
 
@@ -347,4 +353,45 @@ public sealed class BillingEventRecord
     public required string EventId { get; set; }
     public required string Type { get; set; }
     public DateTimeOffset ReceivedAt { get; set; }
+}
+
+/// <summary>An organization's skill (docs/skills.md): SKILL.md's frontmatter and instructions, and its
+/// resource files as JSON. Unique by organization and name; saving again bumps the version.</summary>
+public sealed class SkillRecord
+{
+    public required string TenantId { get; set; }
+    public required string Name { get; set; }
+    public required string Description { get; set; }
+    public required string Instructions { get; set; }
+    public string FilesJson { get; set; } = "[]";
+    public int Version { get; set; } = 1;
+    public bool Enabled { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+}
+
+/// <summary>One model call (docs/analytics.md): which model answered, for which agent, task or
+/// workspace, with its tokens, cost and time. Written from LlmCallCompleted events.</summary>
+public sealed class LlmCallRecord
+{
+    public long Id { get; set; }
+    public string TenantId { get; set; } = "default";
+    /// <summary>The task, or for workspace agents the workspace, or for residents the world.</summary>
+    public string TaskId { get; set; } = string.Empty;
+    public string? WorkspaceId { get; set; }
+    public string AgentId { get; set; } = string.Empty;
+    public string Role { get; set; } = string.Empty;
+    public string ProfileId { get; set; } = "server";
+    public string ProfileName { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    /// <summary>"step" for an agent's decision, "summary" for compacting its history.</summary>
+    public string Purpose { get; set; } = "step";
+    public int InputTokens { get; set; }
+    public int OutputTokens { get; set; }
+    public int CachedInputTokens { get; set; }
+    public decimal CostUsd { get; set; }
+    public int DurationMs { get; set; }
+    public DateTimeOffset Timestamp { get; set; }
 }

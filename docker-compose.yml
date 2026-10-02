@@ -41,6 +41,8 @@ services:
       # Token efficiency (docs/efficiency.md): a cheaper model for routine event handling and
       # history summaries, e.g. claude-haiku-4-5 / gpt-4o-mini. Empty = use LLM_MODEL everywhere.
       Llm__FastModel: ${LLM_FAST_MODEL:-}
+      Llm__AllowOrganizationSettings: ${LLM_ALLOW_ORGANIZATION_SETTINGS:-true}
+      Llm__AllowPrivateBaseUrls: ${LLM_ALLOW_PRIVATE_BASE_URLS:-true}
       # Semantic memory (docs/memory.md): None (keyword search), Ollama or OpenAI.
       Memory__Embeddings__Provider: ${EMBEDDING_PROVIDER:-None}
       Memory__Embeddings__Model: ${EMBEDDING_MODEL:-}

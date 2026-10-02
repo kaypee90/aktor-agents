@@ -58,6 +58,13 @@ public sealed record LlmCompletionRequest
     /// <summary>Set when the call replays a past run: which recorded step to serve (see
     /// Durability.RecordedLlmProvider). Live providers ignore it.</summary>
     public LlmReplayContext? Replay { get; init; }
+
+    /// <summary>The organization the call is made for: it picks the provider, model and key when
+    /// the organization has its own model settings. Null uses the server configuration.</summary>
+    public string? TenantId { get; init; }
+
+    /// <summary>The organization's model profile to use; null for the organization's default.</summary>
+    public string? ModelProfileId { get; init; }
 }
 
 public sealed record LlmReplayContext(string SourceTaskId, string AgentPath, int Step);

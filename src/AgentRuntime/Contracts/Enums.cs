@@ -122,5 +122,11 @@ public enum RuntimeEventType
     WorkspaceCreated,
     WorkspaceMessage,
     TriggerFired,
-    WorkspaceChanged
+    WorkspaceChanged,
+
+    // Models (docs/llm-settings.md, docs/analytics.md).
+    /// <summary>One model call finished: model, tokens, cost and duration, for analytics.</summary>
+    LlmCallCompleted,
+    /// <summary>A running task was switched to another model.</summary>
+    TaskModelChanged
 }

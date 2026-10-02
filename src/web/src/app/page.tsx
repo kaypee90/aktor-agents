@@ -1,97 +1,145 @@
 "use client";
 
 import Link from "next/link";
-import { AccountMenu } from "@/components/platform/AccountMenu";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { getTask, getTaskSpend, listAgents, resetAll, subscribeToEvents } from "@/lib/api";
+import {
+  cancelTask,
+  getTask,
+  getTaskEvents,
+  getTaskSpend,
+  listAgents,
+  listTasks,
+  pauseTask,
+  resetAll,
+  resumeTask,
+  subscribeToEvents,
+  type TaskListItem,
+} from "@/lib/api";
 import type { AgentListItem, AgentSpend, RuntimeEvent, TaskPreview, TaskSummary } from "@/lib/types";
-import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
 import { AgentGraph } from "@/components/AgentGraph";
 import { EventStream } from "@/components/EventStream";
 import { FinalResultPanel } from "@/components/FinalResultPanel";
-import { GoalForm } from "@/components/GoalForm";
-import { TaskStatusBar } from "@/components/TaskStatusBar";
+import { TaskPreviewCard } from "@/components/TaskPreviewCard";
+import { TaskComposer } from "@/components/tasks/TaskComposer";
+import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, StatusBadge, Tabs, ago, compact, money } from "@/components/ui";
+import { Icons } from "@/components/ui/icons";
 
 const MAX_EVENTS = 500;
 const POLL_INTERVAL_MS = 2000;
+const TERMINAL = ["Completed", "Failed", "Terminated", "TimedOut", "Rejected"];
 
-export default function Home() {
+export default function TasksPage() {
+  return <Suspense><TasksFromUrl /></Suspense>;
+}
+
+/** The URL says which run is open (?task=<id>): every result from MCP, A2A or the API links to
+ * one. useSearchParams stays current on in-app navigation, unlike window.location. */
+function TasksFromUrl() {
+  const router = useRouter();
+  const taskId = useSearchParams().get("task");
+  // The pre-run estimate only exists in memory, for the run just started from this page.
+  const [preview, setPreview] = useState<{ taskId: string; preview: TaskPreview } | null>(null);
+
+  const openTask = useCallback((id: string | null, newPreview: TaskPreview | null = null) => {
+    setPreview(id && newPreview ? { taskId: id, preview: newPreview } : null);
+    router.push(id ? `/?task=${encodeURIComponent(id)}` : "/");
+  }, [router]);
+
+  return taskId
+    ? <TaskRun key={taskId} taskId={taskId} preview={preview?.taskId === taskId ? preview.preview : null} onBack={() => openTask(null)} />
+    : <TaskHome onOpen={openTask} />;
+}
+
+/** The start screen: compose a task, and pick up recent runs. */
+function TaskHome({ onOpen }: { onOpen: (id: string, preview?: TaskPreview | null) => void }) {
   const { me } = useAuth();
-  // Deep links (?task=<id>): every task result from MCP, A2A or the API carries one, so a run
-  // started elsewhere can be opened here.
-  const [taskId, setTaskId] = useState<string | null>(() =>
-    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("task"),
+  const [recent, setRecent] = useState<TaskListItem[] | null>(null);
+
+  useEffect(() => {
+    listTasks(8).then(setRecent).catch(() => setRecent([]));
+  }, []);
+
+  async function reset() {
+    if (!confirm("This permanently deletes all tasks, agents, messages, events and artifacts. Continue?")) return;
+    await resetAll();
+    setRecent([]);
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title="Tasks"
+        description="Give a goal to an agent team. It plans the work, starts the specialists it needs, works under a budget the runtime enforces, and reports back."
+        actions={me?.user?.platform_admin && (
+          <Button variant="danger" size="sm" onClick={reset}>Reset all data</Button>
+        )}
+      />
+      <div className="mx-auto max-w-5xl space-y-8 px-6 py-6">
+        <TaskComposer onStarted={(id, p) => onOpen(id, p)} />
+
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Recent runs</h2>
+            <Link href="/runs" className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+              All runs <Icons.ChevronRight className="h-3 w-3" />
+            </Link>
+          </div>
+          {recent === null ? (
+            <div className="h-24 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />
+          ) : recent.length === 0 ? (
+            <EmptyState icon={<Icons.Tasks className="h-5 w-5" />} title="No runs yet" description="Describe a goal above to start your first agent team." />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {recent.map((t) => (
+                <button key={t.task_id} onClick={() => onOpen(t.task_id)} className="text-left">
+                  <Card className="h-full p-4 transition hover:border-brand-300 hover:shadow-md dark:hover:border-brand-900">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="line-clamp-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">{t.goal}</div>
+                      <StatusBadge status={t.status} />
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                      <span>{ago(t.created_at)}</span>
+                      <span>{t.agents} agents</span>
+                      <span>{money(t.cost_usd)}</span>
+                      {t.source !== "api" && <Badge>{t.source.toUpperCase()}</Badge>}
+                    </div>
+                  </Card>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
   );
+}
+
+/** One run, live: the agent tree, events, the result, and controls. */
+function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPreview | null; onBack: () => void }) {
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<TaskPreview | null>(null);
   const [spend, setSpend] = useState<Record<string, AgentSpend>>({});
-  const [resetting, setResetting] = useState(false);
-  const sourceRef = useRef<EventSource | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [panel, setPanel] = useState<"activity" | "result" | "estimate">("activity");
+  const [copied, setCopied] = useState(false);
 
-  const handleTaskCreated = useCallback((newTaskId: string, _rootAgentId: string, newPreview: TaskPreview | null) => {
-    setTaskId(newTaskId);
-    setPreview(newPreview);
-    setSpend({});
-    setTask(null);
-    setAgents([]);
-    setEvents([]);
-    setSelectedAgentId(null);
-  }, []);
-
-  async function handleReset() {
-    if (!confirm("This permanently deletes all tasks, agents, messages, events, and artifacts. Continue?")) {
-      return;
-    }
-    setResetting(true);
-    try {
-      await resetAll();
-      setTaskId(null);
-      setTask(null);
-      setAgents([]);
-      setEvents([]);
-      setSelectedAgentId(null);
-      sourceRef.current?.close();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Reset failed");
-    } finally {
-      setResetting(false);
-    }
-  }
-
-  // Keep the address bar pointing at the task being watched, so it can be shared.
   useEffect(() => {
-    if (!taskId) return;
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("task") !== taskId) {
-      url.searchParams.set("task", taskId);
-      window.history.replaceState(null, "", url.toString());
-    }
-  }, [taskId]);
-
-  // Poll agent graph + task status (the source of truth is Postgres/the registry grain; polling is
-  // simple and sufficient at demo scale, while the event stream below gives real-time detail).
-  useEffect(() => {
-    if (!taskId) return;
-
     let cancelled = false;
     async function poll() {
       const [nextAgents, nextTask, nextSpend] = await Promise.all([
         listAgents(),
-        getTask(taskId!).catch(() => null),
-        getTaskSpend(taskId!).catch(() => null),
+        getTask(taskId).catch(() => null),
+        getTaskSpend(taskId).catch(() => null),
       ]);
       if (cancelled) return;
       if (nextSpend) setSpend(Object.fromEntries(nextSpend.map((s) => [s.agent_id, s])));
-      // listAgents() is system-wide; scope the graph to this task's own agent tree.
-      setAgents(nextTask ? nextAgents.filter((a) => a.root_agent_id === nextTask.root_agent_id) : nextAgents);
+      setAgents(nextTask ? nextAgents.filter((a) => a.root_agent_id === nextTask.root_agent_id) : []);
       if (nextTask) setTask(nextTask);
     }
-
     poll();
     const interval = setInterval(poll, POLL_INTERVAL_MS);
     return () => {
@@ -100,104 +148,117 @@ export default function Home() {
     };
   }, [taskId]);
 
-  // Live event stream via SSE, filtered server-side to this task.
   useEffect(() => {
-    if (!taskId) return;
-
-    // Events were cleared when the task was chosen (handleTaskCreated).
-    sourceRef.current?.close();
-    const source = subscribeToEvents((evt) => {
-      setEvents((prev) => {
-        const next = [...prev, evt];
-        return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
-      });
-    }, taskId);
-    sourceRef.current = source;
-
+    // Keep each event once, in time order: history and the live stream can overlap.
+    const merge = (incoming: RuntimeEvent[]) => setEvents((prev) => {
+      const seen = new Set(prev.map((e) => e.event_id));
+      const next = [...prev, ...incoming.filter((e) => !seen.has(e.event_id))]
+        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
+    });
+    const source = subscribeToEvents((evt) => merge([evt]), taskId);
+    // What happened before this page opened (or the whole run, if it already finished).
+    getTaskEvents(taskId, MAX_EVENTS)
+      .then((rows) => merge(rows.map((r) => {
+        let data: Record<string, string> = {};
+        try { data = JSON.parse(r.data_json) ?? {}; } catch { /* keep empty */ }
+        return { ...r, data };
+      })))
+      .catch(() => { /* live events still arrive */ });
     return () => source.close();
   }, [taskId]);
 
+  const running = task !== null && !TERMINAL.includes(task.status);
+  const artifactWrites = events.filter((e) => e.type === "ArtifactCreated").length;
+  const totalCost = Object.values(spend).reduce((n, s) => n + s.cost_usd, 0);
+  const totalTokens = Object.values(spend).reduce((n, s) => n + s.tokens_used, 0);
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard blocked.
+    }
+  }
+
   return (
-    <div className="flex h-screen flex-col bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <header className="flex items-start justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
-        <div>
-          <h1 className="text-lg font-semibold">Aktor Agents — Autonomous Agent Runtime</h1>
-          <p className="text-xs text-neutral-500">
-            Submit a goal and watch the agent hierarchy, messages, and tool calls unfold live.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-        <Link
-          href="/workspaces"
-          className="rounded border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950"
-        >
-          Workspaces →
-        </Link>
-        <Link
-          href="/simulation"
-          className="rounded border border-blue-300 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950"
-        >
-          World simulation →
-        </Link>
-        {me?.user?.platform_admin && (
-        <button
-          onClick={handleReset}
-          disabled={resetting}
-          title="Delete all tasks, agents, messages, events, and artifacts to start fresh"
-          className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-        >
-          {resetting ? "Resetting…" : "Reset all"}
-        </button>
-        )}
-        <AccountMenu />
-        </div>
-      </header>
-
-      <div className="border-b border-neutral-200 p-3 dark:border-neutral-800">
-        <GoalForm onTaskCreated={handleTaskCreated} />
-        {task && (
-          <div className="mt-2 flex items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <TaskStatusBar task={task} />
-            </div>
-            <Link
-              href={`/replay?task=${task.task_id}`}
-              title="Step through every decision and tool result, replay or fork the run, and compare runs"
-              className="shrink-0 rounded border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-            >
-              Journal &amp; replay
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-3">
+            <button onClick={onBack} className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800" title="All tasks">
+              <Icons.ChevronRight className="h-4 w-4 rotate-180" />
+            </button>
+            <span className="line-clamp-1">{task?.goal ?? "Loading…"}</span>
+          </span>
+        }
+        actions={
+          <>
+            {task && <StatusBadge status={task.status} />}
+            {running && (
+              <>
+                <Button size="sm" icon={<Icons.Pause className="h-3.5 w-3.5" />} onClick={() => pauseTask(taskId)}>Pause</Button>
+                <Button size="sm" icon={<Icons.Play className="h-3.5 w-3.5" />} onClick={() => resumeTask(taskId)}>Resume</Button>
+                <Button size="sm" variant="danger" icon={<Icons.Stop className="h-3.5 w-3.5" />}
+                  onClick={() => confirm("Stop every agent of this task?") && cancelTask(taskId)}>
+                  Cancel
+                </Button>
+              </>
+            )}
+            <Link href={`/replay?task=${taskId}`}>
+              <Button size="sm" icon={<Icons.Replay className="h-3.5 w-3.5" />}>Journal &amp; replay</Button>
             </Link>
-          </div>
-        )}
-        {task && preview && (
-          <details className="mt-2 rounded border border-neutral-200 px-3 py-2 dark:border-neutral-800">
-            <summary className="cursor-pointer text-xs font-medium text-neutral-600 dark:text-neutral-300">
-              Preview: {preview.team_size} agents, likely ${preview.estimate.cost_usd_expected.toFixed(2)} (up to $
-              {preview.estimate.cost_usd_high.toFixed(2)})
-            </summary>
-            <div className="mt-2">
-              <TaskPreviewCard preview={preview} />
-            </div>
-          </details>
-        )}
-      </div>
-
-      {task && <FinalResultPanel taskId={task.task_id} taskStatus={task.status} />}
+            <Button size="sm" variant="ghost" icon={copied ? <Icons.Check className="h-3.5 w-3.5" /> : <Icons.Link className="h-3.5 w-3.5" />} onClick={copyLink}>
+              {copied ? "Copied" : "Link"}
+            </Button>
+          </>
+        }
+      >
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
+          <span><span className="font-medium text-zinc-700 dark:text-zinc-300">{agents.length}</span> agents</span>
+          <span><span className="font-medium text-zinc-700 dark:text-zinc-300">{compact(totalTokens)}</span> tokens</span>
+          <span><span className="font-medium text-zinc-700 dark:text-zinc-300">{money(totalCost)}</span> spent</span>
+          {task && <span>Started {ago(task.created_at)}</span>}
+          {task?.correlation_id && <span className="font-mono">corr {task.correlation_id}</span>}
+          {task?.replay_of_task_id && <Badge tone="blue">{task.replay_mode} replay</Badge>}
+        </div>
+      </PageHeader>
 
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 border-r border-neutral-200 dark:border-neutral-800">
-          <AgentGraph agents={agents} spend={spend} selectedId={selectedAgentId} onSelect={setSelectedAgentId} />
+        <div className="relative min-w-0 flex-1">
+          <AgentGraph agents={agents} spend={spend} selectedId={selected} onSelect={setSelected} />
         </div>
 
-        {selectedAgentId && (
-          <div className="w-96 shrink-0 border-r border-neutral-200 dark:border-neutral-800">
-            <AgentDetailsPanel agentId={selectedAgentId} onClose={() => setSelectedAgentId(null)} />
-          </div>
-        )}
-
-        <div className="w-96 shrink-0">
-          <EventStream events={events} />
-        </div>
+        <aside className="flex w-[26rem] shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+          {selected ? (
+            <AgentDetailsPanel agentId={selected} onClose={() => setSelected(null)} />
+          ) : (
+            <>
+              <Tabs
+                className="px-3 pt-2"
+                value={panel}
+                onChange={setPanel}
+                tabs={[
+                  { id: "activity", label: "Activity", count: events.length },
+                  { id: "result", label: "Result" },
+                  ...(preview ? [{ id: "estimate" as const, label: "Estimate" }] : []),
+                ]}
+              />
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {panel === "activity" && <EventStream events={events} />}
+                {panel === "result" && (task
+                  ? <FinalResultPanel taskId={taskId} taskStatus={task.status} artifactWrites={artifactWrites} />
+                  : <div className="p-4 text-sm text-zinc-500">Loading…</div>)}
+                {panel === "result" && running && <div className="p-4 text-sm text-zinc-500">The result appears when the root agent reports.</div>}
+                {panel === "estimate" && preview && (
+                  <Card className="m-3"><CardHeader title="Pre-run estimate" description="From the planning call before this run." /><div className="p-4"><TaskPreviewCard preview={preview} /></div></Card>
+                )}
+              </div>
+            </>
+          )}
+        </aside>
       </div>
     </div>
   );

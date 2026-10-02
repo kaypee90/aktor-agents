@@ -10,16 +10,33 @@ using Microsoft.Extensions.Options;
 
 namespace AgentRuntime.Api.Controllers;
 
+/// <summary>A budget where every limit is optional: what's left out comes from the server's
+/// DefaultBudget, so asking only for a lower cost cap doesn't shrink everything else.</summary>
+public sealed record BudgetRequest(int? MaxTokens = null, int? MaxDurationSeconds = null, int? MaxChildren = null, int? MaxToolCalls = null, decimal? MaxCostUsd = null)
+{
+    public ResourceBudget? Merge(ResourceBudget defaults) =>
+        MaxTokens is null && MaxDurationSeconds is null && MaxChildren is null && MaxToolCalls is null && MaxCostUsd is null
+            ? null
+            : defaults with
+            {
+                MaxTokens = MaxTokens ?? defaults.MaxTokens,
+                MaxDurationSeconds = MaxDurationSeconds ?? defaults.MaxDurationSeconds,
+                MaxChildren = MaxChildren ?? defaults.MaxChildren,
+                MaxToolCalls = MaxToolCalls ?? defaults.MaxToolCalls,
+                MaxCostUsd = MaxCostUsd ?? defaults.MaxCostUsd
+            };
+}
+
 public sealed record CreateTaskRequest(
     string Goal,
-    ResourceBudget? Budget,
+    BudgetRequest? Budget,
     string? CallbackUrl = null,
     string? CallbackSecret = null,
     string? CorrelationId = null,
     AgentRuntime.Safety.TeamPolicy? TeamPolicy = null,
     string? PreviewId = null);
 
-public sealed record PreviewTaskRequest(string Goal, ResourceBudget? Budget);
+public sealed record PreviewTaskRequest(string Goal, BudgetRequest? Budget);
 
 /// <summary>mode: "full" or "fork"; fork_after_step: the journal sequence number the fork runs live after.</summary>
 public sealed record ReplayTaskRequest(string Mode = "full", long? ForkAfterStep = null);
@@ -27,7 +44,8 @@ public sealed record ReplayTaskRequest(string Mode = "full", long? ForkAfterStep
 [ApiController]
 [Route("api/tasks")]
 public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions, TenantAccess access,
-    TaskService tasks, TaskPreviewService previews, AgentRuntime.Durability.IStepJournal journal) : ControllerBase
+    TaskService tasks, TaskPreviewService previews, AgentRuntime.Durability.IStepJournal journal,
+    IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget) : ControllerBase
 {
     /// <summary>Submits a high-level human goal (CLAUDE.md section 1). This is the only manual step —
     /// everything after this is autonomous. The same task service runs MCP, A2A and ACP tasks.</summary>
@@ -40,7 +58,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             var task = await tasks.StartAsync(access.TenantId, new StartTaskRequest
             {
                 Goal = request.Goal,
-                Budget = request.Budget,
+                Budget = request.Budget?.Merge(defaultBudget.Value.ToBudget()),
                 CallbackUrl = request.CallbackUrl,
                 CallbackSecret = request.CallbackSecret,
                 CorrelationId = request.CorrelationId ?? Request.Headers["X-Correlation-Id"].FirstOrDefault(),
@@ -73,7 +91,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     {
         try
         {
-            return Ok(await previews.PreviewAsync(access.TenantId, request.Goal, request.Budget, ct));
+            return Ok(await previews.PreviewAsync(access.TenantId, request.Goal, request.Budget?.Merge(defaultBudget.Value.ToBudget()), ct));
         }
         catch (TaskServiceException ex)
         {
@@ -234,11 +252,35 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         });
     }
 
+    /// <summary>Recent tasks with what the run history needs: where they came from, their team and
+    /// spend, and whether they replay another task.</summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] int limit = 100, CancellationToken ct = default)
     {
-        var tasks = await db.Tasks.AsNoTracking().Where(t => t.TenantId == access.TenantId).OrderByDescending(t => t.CreatedAt).Take(100).ToListAsync(ct);
-        return Ok(tasks.Select(t => new { task_id = t.TaskId, goal = t.Goal, status = t.Status, created_at = t.CreatedAt }));
+        var tasks = await db.Tasks.AsNoTracking().Where(t => t.TenantId == access.TenantId)
+            .OrderByDescending(t => t.CreatedAt).Take(Math.Clamp(limit, 1, 500)).ToListAsync(ct);
+        var ids = tasks.Select(t => t.TaskId).ToList();
+        var teams = await db.Agents.AsNoTracking().Where(a => ids.Contains(a.TaskId))
+            .GroupBy(a => a.TaskId)
+            .Select(g => new { TaskId = g.Key, Agents = g.Count(), Tokens = g.Sum(a => (long)a.TokensUsed), Cost = g.Sum(a => a.CostUsd) })
+            .ToDictionaryAsync(g => g.TaskId, ct);
+
+        return Ok(tasks.Select(t => new
+        {
+            task_id = t.TaskId,
+            goal = t.Goal,
+            status = t.Status,
+            created_at = t.CreatedAt,
+            completed_at = t.CompletedAt,
+            source = t.Source,
+            correlation_id = t.CorrelationId,
+            replay_of_task_id = t.ReplayOfTaskId,
+            replay_mode = t.ReplayMode,
+            result_summary = t.ResultSummary,
+            agents = teams.TryGetValue(t.TaskId, out var team) ? team.Agents : 0,
+            tokens_used = team?.Tokens ?? 0,
+            cost_usd = team?.Cost ?? 0m
+        }));
     }
 
     [HttpPost("{id}/pause")]

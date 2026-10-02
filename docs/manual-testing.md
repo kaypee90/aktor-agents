@@ -1,6 +1,6 @@
 # Manual test prompts
 
-Prompts for testing Tasks, Simulation and Workspaces by hand. Each test says what it covers, the
+Prompts for testing Tasks, Simulation, Workspaces and the dashboard by hand. Each test says what it covers, the
 prompt to use, and what to check. Run them in order within a section: later tests build on
 earlier ones.
 
@@ -20,7 +20,8 @@ model makes good decisions with the runtime's tools and limits.
 
   | Area | Look at |
   |---|---|
-  | Tasks | the agent graph, Event Stream, agent details panel, Final Result panel |
+  | Tasks | the agent graph, the Activity and Result tabs, the agent details panel |
+  | Analytics | the trend, what consumes the most, tools, durations, runs to look at |
   | Simulation | the world map, the feed, resident details |
   | Workspaces | the team view, chat widget, and the Agents, Files, Triggers, Safety and Events tabs |
 
@@ -44,7 +45,7 @@ Write a one-paragraph explanation of what a webhook is, for a non-technical smal
 
 **Check:**
 - [ ] The root answers alone, with **0 agents spawned**.
-- [ ] It finishes with `complete_task` and a clear summary in the Final Result panel.
+- [ ] It finishes with `complete_task` and a clear summary in the Result tab.
 - [ ] Token use stays low: a few thousand tokens, not tens of thousands.
 
 ### T2. The flagship: parallel research with recursive spawning
@@ -73,9 +74,9 @@ should share findings with each other directly.
       and `AgentMessageSent` events), not only through the root.
 - [ ] Specialists finish before the root, and the root reads their completion notices rather than
       polling `get_agent_status` in a loop.
-- [ ] All four files appear under the Final Result's artifacts, and **Download all (.zip)** works.
+- [ ] All four files appear under the Result tab's artifacts without reloading the page, and **Download all (.zip)** works.
 - [ ] `final-recommendation.md` actually references the other three.
-- [ ] The Final Result lists the participating agents, findings and any unresolved items.
+- [ ] The Result tab lists the participating agents, findings and any unresolved items.
 
 ### T3. A sequence of steps stays with one agent
 
@@ -474,6 +475,36 @@ Write a detailed 2,000-word history of candle making, from ancient times to toda
       happened only once.
 - [ ] Schedules keep firing after the restart.
 - [ ] The chat history, files and triggers are all still there.
+
+---
+
+## Dashboard
+
+### D1. Choosing the AI model
+
+**Tests:** an Admin switches the organization's model in the dashboard (docs/llm-settings.md).
+
+**Check:**
+- [ ] **Settings → AI model** shows the model in use and "Server default".
+- [ ] Pick a provider, paste a key, click **Load models**: the provider's models appear in the picker.
+- [ ] **Test connection** with a wrong key says it didn't work and why; with the right key, it works.
+- [ ] After **Save**, the task composer shows the new model, and a new task's agents use it.
+- [ ] Reloading the page never shows the key; the field says a key is saved.
+- [ ] A Member sees the model but can't change it.
+- [ ] **Use server default** goes back to the `.env` model.
+
+### D2. Analytics
+
+**Tests:** the analytics page after running T1 and T2 (docs/analytics.md).
+
+**Check:**
+- [ ] The figures match Run history (runs, spend) for the same range.
+- [ ] Switching Spend / Tokens / Runs / Avg duration redraws the trend; clicking a bar zooms into that day.
+- [ ] "What consumes the most" lists the agent roles of T2; the root's role is among the top.
+- [ ] Clicking a source slice filters the whole page; **Clear** removes the filters.
+- [ ] Tools show times for new runs; failures show for a run where a tool failed.
+- [ ] The most expensive and slowest runs link to their agent graphs.
+- [ ] Copying the URL into another tab shows the same filtered view.
 
 ---
 

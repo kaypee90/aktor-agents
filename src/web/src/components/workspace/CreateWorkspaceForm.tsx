@@ -55,13 +55,13 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
     }
   }
 
-  const input = "w-full rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900";
+  const input = "w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
   return (
     <form onSubmit={submit} className="mx-auto max-w-2xl space-y-3 p-6">
       <div>
         <h2 className="text-base font-semibold">New workspace</h2>
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-zinc-500">
           Tell it what you want done, once or on an ongoing basis. A coordinator agent sets up the agents, schedules and
           webhooks it needs, keeps running, and takes new instructions from you at any time.
         </p>
@@ -73,8 +73,8 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
             <div key={t.id} className="flex items-start gap-3 text-xs">
               <div className="flex-1">
                 <div className="font-medium">{t.name}</div>
-                <div className="text-neutral-600 dark:text-neutral-400">{t.description}</div>
-                <div className="mt-0.5 text-[11px] text-neutral-500">
+                <div className="text-zinc-600 dark:text-zinc-400">{t.description}</div>
+                <div className="mt-0.5 text-[11px] text-zinc-500">
                   {t.autonomy} · webhooks: {t.webhooks.map((w) => w.name).join(", ") || "none"}
                 </div>
               </div>
@@ -88,7 +88,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
               </button>
             </div>
           ))}
-          <label className="flex items-center gap-2 text-[11px] text-neutral-600 dark:text-neutral-400">
+          <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
             <input type="checkbox" checked={useDemoSystem} onChange={(e) => setUseDemoSystem(e.target.checked)} />
             Connect the simulated production system, so it can be tried right away (add your real connections later)
           </label>
@@ -97,35 +97,35 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       <div className="flex flex-wrap gap-1">
         {EXAMPLES.map((ex) => (
           <button key={ex.name} type="button" onClick={() => { setName(ex.name); setGoal(ex.goal); }}
-            className="rounded-full border border-neutral-300 px-2 py-0.5 text-[11px] text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            className="rounded-full border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
             {ex.name}
           </button>
         ))}
       </div>
       <label className="block space-y-1 text-xs">
-        <span className="text-neutral-500">Name</span>
+        <span className="text-zinc-500">Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
       </label>
       <label className="block space-y-1 text-xs">
-        <span className="text-neutral-500">What should it do?</span>
+        <span className="text-zinc-500">What should it do?</span>
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} className={input} />
       </label>
       <div className="grid grid-cols-2 gap-3 text-xs">
         <label className="space-y-1">
-          <span className="text-neutral-500">Daily token budget</span>
+          <span className="text-zinc-500">Daily token budget</span>
           <input type="number" min={1000} step={1} value={tokens} onChange={(e) => setTokens(Number(e.target.value) || 1000)} className={input} />
         </label>
         <label className="space-y-1">
-          <span className="text-neutral-500">Daily cost budget (USD)</span>
+          <span className="text-zinc-500">Daily cost budget (USD)</span>
           <input type="number" min={0.01} step={0.01} value={dollars} onChange={(e) => setDollars(Number(e.target.value) || 0.01)} className={input} />
         </label>
       </div>
-      <p className="text-[11px] text-neutral-500">
+      <p className="text-[11px] text-zinc-500">
         The budget covers every agent in the workspace, all day. When it runs out, agents pause until midnight UTC. The
         runtime enforces it, not the agents.
       </p>
       {error && <div className="rounded border border-rose-300 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
-      <button type="submit" disabled={busy || !goal.trim()} className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+      <button type="submit" disabled={busy || !goal.trim()} className="rounded bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
         {busy ? "Creating…" : "Create workspace"}
       </button>
     </form>

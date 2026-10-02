@@ -25,8 +25,8 @@ export function ResidentNode({ data, selected }: NodeProps & { data: ResidentNod
   return (
     <div
       style={{ width: RESIDENT_NODE_WIDTH }}
-      className={`relative rounded-lg border bg-white px-2 py-1.5 shadow-sm dark:bg-neutral-900 ${
-        selected ? "border-blue-500 ring-2 ring-blue-500/40" : "border-neutral-200 dark:border-neutral-700"
+      className={`relative rounded-lg border bg-white px-2 py-1.5 shadow-sm dark:bg-zinc-900 ${
+        selected ? "border-blue-500 ring-2 ring-brand-500/40" : "border-zinc-200 dark:border-zinc-700"
       } ${dormant ? "opacity-50 grayscale" : ""}`}
     >
       {/* Invisible handles so message edges can attach to any resident. */}
@@ -38,7 +38,7 @@ export function ResidentNode({ data, selected }: NodeProps & { data: ResidentNod
           className={`absolute -top-2 left-2 right-2 -translate-y-full truncate rounded-md px-2 py-1 text-[10px] shadow ${
             bubble.private
               ? "border border-dashed border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800 dark:border-fuchsia-700 dark:bg-fuchsia-950 dark:text-fuchsia-200"
-              : "bg-neutral-800 text-white dark:bg-neutral-100 dark:text-neutral-900"
+              : "bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900"
           }`}
           title={bubble.text}
         >
@@ -49,21 +49,21 @@ export function ResidentNode({ data, selected }: NodeProps & { data: ResidentNod
       <div className="flex items-center gap-2">
         <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-current/30 ${accentFor(resident.agent_id)}`}>
           <BotIcon className="h-5 w-5" />
-          {busy && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-indigo-500 ring-2 ring-white dark:ring-neutral-900" />}
+          {busy && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-indigo-500 ring-2 ring-white dark:ring-zinc-900" />}
         </span>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{resident.name}</div>
-          <div className="truncate text-[11px] text-neutral-500">{resident.role}</div>
+          <div className="truncate text-[11px] text-zinc-500">{resident.role}</div>
         </div>
       </div>
 
       <div className="mt-1.5 flex items-center gap-1.5">
-        <div className="h-1.5 flex-1 overflow-hidden rounded bg-neutral-200 dark:bg-neutral-800">
+        <div className="h-1.5 flex-1 overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800">
           <div className={`h-full ${energyColor}`} style={{ width: `${energyPct}%` }} />
         </div>
-        <span className="w-12 text-right text-[10px] tabular-nums text-neutral-500">⚡{resident.energy}</span>
+        <span className="w-12 text-right text-[10px] tabular-nums text-zinc-500">⚡{resident.energy}</span>
       </div>
-      <div className="mt-0.5 truncate text-[10px] text-neutral-400">
+      <div className="mt-0.5 truncate text-[10px] text-zinc-400">
         {worldEnded ? "world ended" : dormant ? "dormant (needs energy)" : busy ? "thinking…" : resident.agent_status ?? ""}
       </div>
     </div>

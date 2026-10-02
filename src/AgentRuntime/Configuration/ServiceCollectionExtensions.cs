@@ -57,6 +57,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITool, WriteMemoryTool>();
         services.AddSingleton<ITool, SearchKnowledgeTool>();
 
+        // Skills (docs/skills.md): written or uploaded by the organization, loaded by agents on demand.
+        services.Configure<Skills.SkillOptions>(configuration.GetSection(Skills.SkillOptions.SectionName));
+        services.TryAddSingleton<Skills.ISkillStore, Skills.InMemorySkillStore>();
+        services.AddSingleton<ITool, Skills.LoadSkillTool>();
+        services.AddSingleton<ITool, Skills.ReadSkillFileTool>();
+
         // Simulation: world actions for residents (never granted to task agents), genesis, and a
         // no-op archive that the infrastructure layer replaces with Postgres.
         services.AddWorldTools();
@@ -85,6 +91,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, CurrentStateSection>();
         services.AddSingleton<ISystemPromptSection, CapabilitiesSection>();
         services.AddSingleton<ISystemPromptSection, ToolsSection>();
+        services.AddSingleton<ISystemPromptSection, Skills.SkillsSection>();
         services.AddSingleton<ISystemPromptSection, ResourceLimitsSection>();
         services.AddSingleton<ISystemPromptSection, MessagingRulesSection>();
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();
@@ -95,6 +102,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, EnvironmentInfoSection>();
         services.AddSingleton<ISystemPromptSection, ContextSummarySection>();
         services.AddSingleton<ContextCompactor>();
+        services.AddSingleton<LlmSettingsService>();
+        services.AddSingleton<ILlmSettingsResolver>(sp => sp.GetRequiredService<LlmSettingsService>());
+        services.TryAddSingleton<ITaskModelSelection, InMemoryTaskModelSelection>();
 
         return services;
     }

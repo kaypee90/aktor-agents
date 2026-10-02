@@ -48,6 +48,9 @@ public sealed class AgentGrain(
     IAuditLog audit,
     IStepJournal journal,
     RecordedLlmProvider recordedLlm,
+    Skills.ISkillStore skills,
+    ILlmSettingsResolver llmSettings,
+    ITaskModelSelection taskModels,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -61,7 +64,12 @@ public sealed class AgentGrain(
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
     private readonly SimulationOptions _simulation = simulationOptions.Value;
     private readonly SupervisionOptions _supervision = supervisionOptions.Value;
-    private readonly LlmOptions _llmOptions = llmOptions.Value;
+    /// <summary>The model settings in force: the server's, or the organization's own
+    /// (docs/llm-settings.md). Refreshed at the start of every step.</summary>
+    private LlmOptions _llmOptions = llmOptions.Value;
+
+    /// <summary>How long the last successful model call took, for analytics.</summary>
+    private long _lastLlmCallMs;
     private readonly DurabilityOptions _durability = durabilityOptions.Value;
 
     private bool _turnReminderRegistered;
@@ -474,6 +482,10 @@ public sealed class AgentGrain(
                 return;
             }
 
+            // The task's model (chosen at start, switchable while it runs) or the organization's
+            // default; a change made in the dashboard applies from the next step on.
+            _llmOptions = await llmSettings.ResolveAsync(s.TenantId, await taskModels.GetAsync(s.TaskId));
+
             // Also a safe point for compaction: no tool call is waiting for its result.
             if (await CompactIfNeededAsync())
             {
@@ -599,6 +611,7 @@ public sealed class AgentGrain(
             s.LlmStep++;
 
             var callCost = _llmOptions.CostOf(response, fast: s.UsesFastTier);
+            if (!replayed) await RecordLlmCallAsync(response, callCost, s.UsesFastTier, _lastLlmCallMs);
             s.Usage = s.Usage with
             {
                 TokensUsed = s.Usage.TokensUsed + response.InputTokens + response.OutputTokens,
@@ -673,7 +686,10 @@ public sealed class AgentGrain(
         {
             try
             {
-                return await CallLlmAsync();
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                var response = await CallLlmAsync();
+                _lastLlmCallMs = (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                return response;
             }
             catch (Exception ex) when (attempt < _supervision.MaxRetries)
             {
@@ -689,6 +705,35 @@ public sealed class AgentGrain(
                 return null;
             }
         }
+    }
+
+    /// <summary>The profile to name in a request so the provider resolves exactly these options:
+    /// the profile they came from, or the server's configuration.</summary>
+    internal static string ProfileIdOf(LlmOptions options) => options.ProfileId ?? ModelProfiles.ServerId;
+
+    /// <summary>Reports one model call (model, tokens, cost, time) for analytics (docs/analytics.md).</summary>
+    private Task RecordLlmCallAsync(LlmCompletionResponse response, decimal cost, bool fast, long durationMs, string purpose = "step")
+    {
+        var s = S;
+        var o = _llmOptions;
+        var model = o.ModelFor(fast);
+        return PublishAsync(RuntimeEventType.LlmCallCompleted,
+            $"Agent '{s.Name}' got an answer from {model} ({response.InputTokens + response.OutputTokens:N0} tokens, {durationMs / 1000.0:0.0}s).",
+            new Dictionary<string, string>
+            {
+                ["provider"] = o.Provider,
+                ["model"] = model,
+                ["profile_id"] = o.ProfileId ?? ModelProfiles.ServerId,
+                ["profile_name"] = o.ProfileName ?? "Server default",
+                ["role"] = s.Role,
+                ["workspace_id"] = s.WorkspaceId ?? string.Empty,
+                ["purpose"] = purpose,
+                ["input_tokens"] = response.InputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["output_tokens"] = response.OutputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["cached_input_tokens"] = response.CachedInputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["cost_usd"] = cost.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["duration_ms"] = durationMs.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            });
     }
 
     /// <summary>Tool calls from the latest LLM response that have no recorded result yet.</summary>
@@ -834,6 +879,8 @@ public sealed class AgentGrain(
                 GrantedPermissions = s.GrantedPermissions
             };
             ToolExecutionResult result;
+            // How long agents wait on each tool, for analytics (docs/analytics.md).
+            var toolStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (s.IsReplaying && !ReplayPolicy.ReRuns(call.Name))
             {
                 // Replays never reach outside: the original result is served instead.
@@ -848,9 +895,11 @@ public sealed class AgentGrain(
                     ? await integrations.ExecuteToolAsync(s.WorkspaceId!, connectionTool, toolRequest)
                     : ConnectionNames.IsConnectionTool(call.Name) && s.InWorkspace
                     ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
-                    : await toolRegistry.ExecuteAsync(toolRequest, s.AllowedTools, s.GrantedPermissions);
+                    : await toolRegistry.ExecuteAsync(toolRequest,
+                        s.IsResident ? s.AllowedTools : [.. s.AllowedTools, .. SkillToolNames], s.GrantedPermissions);
             }
 
+            var toolElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(toolStarted);
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
             if (!s.IsResident) await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
             s.InFlightToolCallIds.Remove(call.Id);
@@ -868,7 +917,8 @@ public sealed class AgentGrain(
                     ["arguments"] = call.ArgumentsJson,
                     ["success"] = result.Success.ToString(),
                     ["error"] = result.ErrorMessage ?? string.Empty,
-                    ["result"] = result.Success ? result.ResultJson : string.Empty
+                    ["result"] = result.Success ? result.ResultJson : string.Empty,
+                    ["duration_ms"] = ((long)toolElapsed.TotalMilliseconds).ToString(System.Globalization.CultureInfo.InvariantCulture)
                 });
 
             if (call.Name == "complete_task" && result.Success)
@@ -1004,6 +1054,24 @@ public sealed class AgentGrain(
         catch (Exception ex)
         {
             logger.LogError(ex, "Audit write failed for {Tool} by {AgentId}", call.Name, AgentId);
+        }
+    }
+
+    private static readonly string[] SkillToolNames = [Skills.LoadSkillTool.Name, Skills.ReadSkillFileTool.Name];
+
+    /// <summary>Enabled skills of the agent's organization (none for simulation residents). A store
+    /// outage costs the agent its skills for this step, never the step itself.</summary>
+    private async Task<IReadOnlyList<Skills.SkillSummary>> SkillsForAgentAsync()
+    {
+        if (S.IsResident) return [];
+        try
+        {
+            return await skills.ListAsync(Tenancy.TenantIds.Normalize(S.TenantId), enabledOnly: true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Agent {AgentId} could not list its organization's skills", AgentId);
+            return [];
         }
     }
 
@@ -1507,6 +1575,22 @@ public sealed class AgentGrain(
             }
         }
 
+        // The organization's skills: listed in the prompt, loaded on demand through two read-only
+        // tools every (non-resident) agent gets while the organization has any.
+        var orgSkills = await SkillsForAgentAsync();
+        if (orgSkills.Count > 0)
+        {
+            context = context with
+            {
+                Skills = orgSkills,
+                AvailableTools = context.AvailableTools
+                    .Concat(SkillToolNames.Where(n => !s.AllowedTools.Contains(n)).Select(n => toolRegistry.TryGet(n, out var st)
+                        ? new ToolDefinitionSummary(st.Definition.Name, st.Definition.Description)
+                        : new ToolDefinitionSummary(n, string.Empty)))
+                    .ToList()
+            };
+        }
+
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
         // Residents see only their recent past (their notes carry anything longer-lived). Everyone
@@ -1518,6 +1602,7 @@ public sealed class AgentGrain(
         messages.AddRange(history.Select(ToLlmMessage));
 
         var toolDefs = s.AllowedTools
+            .Concat(orgSkills.Count > 0 ? SkillToolNames.Except(s.AllowedTools) : [])
             .Where(name => toolRegistry.TryGet(name, out _))
             .Select(name =>
             {
@@ -1533,6 +1618,8 @@ public sealed class AgentGrain(
 
         return await llm.CompleteAsync(new LlmCompletionRequest
         {
+            TenantId = s.TenantId,
+            ModelProfileId = ProfileIdOf(_llmOptions),
             Messages = messages,
             Tools = toolDefs,
             // Routine event handling can run on the cheaper tier; planning and real work don't.
@@ -1590,7 +1677,7 @@ public sealed class AgentGrain(
 
         if (start <= 0) return false;
 
-        var summary = await compactor.SummarizeAsync(s, t.Take(start).ToList());
+        var summary = await compactor.SummarizeAsync(s, t.Take(start).ToList(), _llmOptions);
         s.ContextSummary = summary.Summary;
         t.RemoveRange(0, start);
         s.LastLlmInputTokens = 0; // measured on the longer history; re-estimated until the next call
@@ -1607,6 +1694,7 @@ public sealed class AgentGrain(
         if (summary.Usage is { } usage)
         {
             var cost = _llmOptions.CostOf(usage, fast: true);
+            await RecordLlmCallAsync(usage, cost, fast: true, durationMs: summary.DurationMs, purpose: "summary");
             s.Usage = s.Usage with
             {
                 TokensUsed = s.Usage.TokensUsed + usage.InputTokens + usage.OutputTokens,

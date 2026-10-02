@@ -90,6 +90,23 @@ public sealed class LlmOptions
 
     public string Provider { get; set; } = "Mock";
 
+    /// <summary>Organizations may pick their own provider, model and key in the dashboard
+    /// (docs/llm-settings.md). Off: every organization uses this server configuration.</summary>
+    public bool AllowOrganizationSettings { get; set; } = true;
+
+    /// <summary>Lets an organization point its provider at a private address (Ollama on this
+    /// machine or the local network). Turn off on a shared server: base URLs are chosen by
+    /// organization admins, and private ones reach your internal network.</summary>
+    public bool AllowPrivateBaseUrls { get; set; } = true;
+
+    /// <summary>The organization model profile these options came from; null for the server's own
+    /// configuration (docs/llm-settings.md). Recorded with every model call for analytics.</summary>
+    public string? ProfileId { get; set; }
+    public string? ProfileName { get; set; }
+
+    /// <summary>A copy to adjust for one organization without touching the server's options.</summary>
+    public LlmOptions Clone() => (LlmOptions)MemberwiseClone();
+
     /// <summary>True when the model runs on local hardware (Ollama): free per token, but slow and
     /// usually serving one request at a time.</summary>
     public bool IsLocal => Provider.Equals("Ollama", StringComparison.OrdinalIgnoreCase);
@@ -109,6 +126,15 @@ public sealed class LlmOptions
     /// <summary>Output cap for routine (fast-tier) calls; planning calls keep MaxOutputTokens.</summary>
     public int FastMaxOutputTokens { get; set; } = 1024;
     public int MaxOutputTokens { get; set; } = 4096;
+
+    /// <summary>Floor on the output cap sent to reasoning-era models (OpenAI's o-series, GPT-5
+    /// and later), which draw reasoning tokens from the same allowance as the answer: a cap sized
+    /// for a non-reasoning model (1024 here) can be spent before a single visible token is
+    /// written, and the call comes back empty. OpenAI suggests reserving at least 25,000 tokens
+    /// when starting with such a model. A cap is a ceiling, not a reservation — the call still
+    /// costs only what it uses, and per-agent budgets still bound the total — so this only ever
+    /// prevents a wasted call. 0 disables the floor.</summary>
+    public int ReasoningMinOutputTokens { get; set; } = 25_000;
 
     /// <summary>When an agent's history grows past roughly this many tokens, older steps are
     /// summarized (with the fast model) instead of being resent in full on every call.</summary>

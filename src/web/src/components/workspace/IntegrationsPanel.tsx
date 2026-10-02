@@ -27,7 +27,7 @@ const EFFECT_BADGE: Record<SideEffects, string> = {
 };
 const EFFECT_LABEL: Record<SideEffects, string> = { ReadOnly: "read", Idempotent: "safe write", NonIdempotent: "write" };
 
-const field = "w-full rounded border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900";
+const field = "w-full rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900";
 
 export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: string; onChanged: () => void }) {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -64,7 +64,7 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
     <div className="space-y-3 p-3 text-xs">
       {error && <div className="rounded bg-rose-50 p-2 text-rose-700 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
       {connections.length === 0 && !adding && (
-        <div className="text-neutral-500">
+        <div className="text-zinc-500">
           No connections yet. Connect an MCP server, any REST API (CRM, store, payments, ticketing…), or a messaging channel so agents
           can reach you by SMS, Slack, email or Telegram.
         </div>
@@ -79,7 +79,7 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
         <AddConnectionForm workspaceId={workspaceId} plugins={plugins}
           onDone={async () => { setAdding(false); await changed(); }} onCancel={() => setAdding(false)} />
       ) : (
-        <button onClick={() => { setAdding(true); setError(null); }} className="rounded bg-blue-600 px-3 py-1 font-medium text-white hover:bg-blue-700">
+        <button onClick={() => { setAdding(true); setError(null); }} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600">
           + Add connection
         </button>
       )}
@@ -115,11 +115,11 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
   };
 
   return (
-    <div className="space-y-2 rounded border border-neutral-200 p-2 dark:border-neutral-800">
+    <div className="space-y-2 rounded border border-zinc-200 p-2 dark:border-zinc-800">
       <div className="flex items-center justify-between gap-2">
         <div>
           <span className="font-semibold">{c.name}</span>
-          <span className="ml-1 text-neutral-500">· {plugin?.name ?? c.plugin_id}</span>
+          <span className="ml-1 text-zinc-500">· {plugin?.name ?? c.plugin_id}</span>
         </div>
         <div className="flex gap-2">
           {c.supports_tools && (
@@ -131,17 +131,17 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
         </div>
       </div>
       {c.last_error && <div className="text-[11px] text-amber-700 dark:text-amber-300">Last error: {c.last_error}</div>}
-      <div className="text-[10px] text-neutral-400">
+      <div className="text-[10px] text-zinc-400">
         {Object.entries(c.settings).map(([k, v]) => `${k}=${v}`).join(" · ")}
         {c.secret_keys.length > 0 && ` · secrets set: ${c.secret_keys.join(", ")}`}
       </div>
 
       {c.supports_notifications && (
         <label className="flex items-center gap-2">
-          <span className="text-neutral-500">Forward notifications:</span>
+          <span className="text-zinc-500">Forward notifications:</span>
           <select value={c.notify_level} disabled={busy}
             onChange={(e) => run(() => updateConnection(workspaceId, c.connection_id, { notify_level: e.target.value }))}
-            className="rounded border border-neutral-300 bg-white px-1 py-0.5 dark:border-neutral-700 dark:bg-neutral-900">
+            className="rounded border border-zinc-300 bg-white px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-900">
             {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_HELP[l]}</option>)}
           </select>
         </label>
@@ -149,7 +149,7 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
 
       {c.tools.length > 0 && (
         <div>
-          <div className="text-neutral-500">Tools ({c.tools.filter((t) => t.enabled).length}/{c.tools.length} enabled; each enabled tool costs tokens on every agent call)</div>
+          <div className="text-zinc-500">Tools ({c.tools.filter((t) => t.enabled).length}/{c.tools.length} enabled; each enabled tool costs tokens on every agent call)</div>
           <ul className="mt-1 max-h-48 space-y-0.5 overflow-y-auto">
             {c.tools.map((t) => (
               <li key={t.name} className="flex items-start gap-1.5" title={t.description}>
@@ -164,17 +164,17 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
 
       {c.supports_inbound && (
         <div className="space-y-1">
-          <div className="text-neutral-500">Commands from (allowed senders, comma-separated):</div>
+          <div className="text-zinc-500">Commands from (allowed senders, comma-separated):</div>
           <div className="flex gap-1">
             <input value={senders} onChange={(e) => setSenders(e.target.value)} placeholder="+15557654321" className={field} />
             <button disabled={busy}
               onClick={() => run(() => updateConnection(workspaceId, c.connection_id, { allowed_senders: senders.split(",").map((s) => s.trim()).filter(Boolean) }))}
-              className="shrink-0 rounded border border-neutral-300 px-2 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">save</button>
+              className="shrink-0 rounded border border-zinc-300 px-2 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">save</button>
           </div>
           {c.inbound_path && (
-            <div className="text-[10px] text-neutral-500">
+            <div className="text-[10px] text-zinc-500">
               Inbound URL (keep secret; set it as the provider&apos;s webhook):
-              <code className="mt-0.5 block break-all rounded bg-neutral-100 p-1 dark:bg-neutral-800">{API_BASE}{c.inbound_path}</code>
+              <code className="mt-0.5 block break-all rounded bg-zinc-100 p-1 dark:bg-zinc-800">{API_BASE}{c.inbound_path}</code>
             </div>
           )}
         </div>
@@ -234,21 +234,21 @@ function AddConnectionForm({ workspaceId, plugins, onDone, onCancel }: {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-2 rounded border border-dashed border-neutral-300 p-2 dark:border-neutral-700">
+    <form onSubmit={submit} className="space-y-2 rounded border border-dashed border-zinc-300 p-2 dark:border-zinc-700">
       <select value={pluginId} onChange={(e) => choose(e.target.value)} className={field}>
         {plugins.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       {plugin && (
         <>
-          <div className="text-neutral-500">{plugin.description}</div>
-          {plugin.setup_help && <div className="rounded bg-neutral-100 p-1.5 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">{plugin.setup_help}</div>}
+          <div className="text-zinc-500">{plugin.description}</div>
+          {plugin.setup_help && <div className="rounded bg-zinc-100 p-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{plugin.setup_help}</div>}
           <label className="block space-y-0.5">
-            <span className="text-neutral-500">Connection name (tool prefix)</span>
+            <span className="text-zinc-500">Connection name (tool prefix)</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className={field} />
           </label>
           {plugin.settings.map((s) => (
             <label key={s.key} className="block space-y-0.5">
-              <span className="text-neutral-500">{s.label}{s.required && " *"}{s.secret && " 🔒"}</span>
+              <span className="text-zinc-500">{s.label}{s.required && " *"}{s.secret && " 🔒"}</span>
               {s.options ? (
                 <select value={values[s.key] ?? s.default_value ?? ""} onChange={(e) => setValues({ ...values, [s.key]: e.target.value })} className={field}>
                   {s.options.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -263,7 +263,7 @@ function AddConnectionForm({ workspaceId, plugins, onDone, onCancel }: {
           ))}
           {plugin.supports_notifications && (
             <label className="block space-y-0.5">
-              <span className="text-neutral-500">Forward notifications</span>
+              <span className="text-zinc-500">Forward notifications</span>
               <select value={level} onChange={(e) => setLevel(e.target.value as NotifyLevel)} className={field}>
                 {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_HELP[l]}</option>)}
               </select>
@@ -271,19 +271,19 @@ function AddConnectionForm({ workspaceId, plugins, onDone, onCancel }: {
           )}
           {plugin.supports_inbound && (
             <label className="block space-y-0.5">
-              <span className="text-neutral-500">Accept commands from (your number / chat id, comma-separated)</span>
+              <span className="text-zinc-500">Accept commands from (your number / chat id, comma-separated)</span>
               <input value={senders} onChange={(e) => setSenders(e.target.value)} className={field} />
             </label>
           )}
-          <div className="text-[10px] text-neutral-500">🔒 Secret fields are encrypted in the vault and never shown again, or to agents.</div>
+          <div className="text-[10px] text-zinc-500">🔒 Secret fields are encrypted in the vault and never shown again, or to agents.</div>
         </>
       )}
       {error && <div className="text-rose-600">{error}</div>}
       <div className="flex gap-2">
-        <button type="submit" disabled={busy || !plugin} className="rounded bg-blue-600 px-3 py-1 font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+        <button type="submit" disabled={busy || !plugin} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600 disabled:opacity-50">
           {busy ? "Connecting…" : "Connect"}
         </button>
-        <button type="button" onClick={onCancel} className="rounded border border-neutral-300 px-3 py-1 dark:border-neutral-700">Cancel</button>
+        <button type="button" onClick={onCancel} className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700">Cancel</button>
       </div>
     </form>
   );

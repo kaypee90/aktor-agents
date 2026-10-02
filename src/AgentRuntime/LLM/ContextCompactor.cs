@@ -17,9 +17,10 @@ public sealed class ContextCompactor(ILLMProvider llm, IOptions<LlmOptions> opti
     public const string SystemMarker = "You compress an agent's working history";
     private const int MaxSummaryChars = 4000;
 
-    public sealed record Result(string Summary, LlmCompletionResponse? Usage);
+    public sealed record Result(string Summary, LlmCompletionResponse? Usage, long DurationMs = 0);
 
-    public async Task<Result> SummarizeAsync(AgentState agent, IReadOnlyList<AgentTranscriptEntry> dropped, CancellationToken ct = default)
+    /// <param name="settings">The model settings in force for the agent's organization; null uses the server's.</param>
+    public async Task<Result> SummarizeAsync(AgentState agent, IReadOnlyList<AgentTranscriptEntry> dropped, LlmOptions? settings = null, CancellationToken ct = default)
     {
         var history = new StringBuilder();
         foreach (var e in dropped)
@@ -42,9 +43,12 @@ public sealed class ContextCompactor(ILLMProvider llm, IOptions<LlmOptions> opti
 
         try
         {
-            var opts = options.Value;
+            var opts = settings ?? options.Value;
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
             var response = await llm.CompleteAsync(new LlmCompletionRequest
             {
+                TenantId = agent.TenantId,
+                ModelProfileId = settings is null ? null : settings.ProfileId ?? ModelProfiles.ServerId,
                 Messages =
                 [
                     ChatMessage.System(SystemMarker + " into a compact briefing it will rely on later. Keep: " +
@@ -59,7 +63,8 @@ public sealed class ContextCompactor(ILLMProvider llm, IOptions<LlmOptions> opti
 
             if (!string.IsNullOrWhiteSpace(response.Content))
             {
-                return new Result(Clip(response.Content.Trim(), MaxSummaryChars), response);
+                return new Result(Clip(response.Content.Trim(), MaxSummaryChars), response,
+                    (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

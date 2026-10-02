@@ -253,7 +253,7 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
         <Controls showInteractive={false} position="bottom-left" fitViewOptions={fitViewOptions} />
       </ReactFlow>
 
-      <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/85 px-2 py-1 text-[10px] text-neutral-500 shadow-sm dark:bg-neutral-900/85">
+      <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/85 px-2 py-1 text-[10px] text-zinc-500 shadow-sm dark:bg-zinc-900/85">
         <span><span className="text-blue-600">━</span> task / chat</span>
         <span><span className="text-emerald-600">━</span> done</span>
         <span><span className="text-violet-600">━</span> question / answer</span>
@@ -264,7 +264,7 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
       {hiddenFinished > 0 && (
         <button
           onClick={() => setShowAllFinished(true)}
-          className="absolute right-3 top-3 rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] text-neutral-600 shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
         >
           Show {hiddenFinished} earlier finished agent{hiddenFinished === 1 ? "" : "s"}
         </button>
@@ -272,7 +272,7 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
       {showAllFinished && (
         <button
           onClick={() => setShowAllFinished(false)}
-          className="absolute right-3 top-3 rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] text-neutral-600 shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
         >
           Hide earlier finished agents
         </button>

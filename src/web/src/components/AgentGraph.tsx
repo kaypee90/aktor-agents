@@ -57,7 +57,7 @@ export function AgentGraph({
 
   if (agents.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-neutral-500">
+      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
         No agents yet. Submit a goal to create the root agent.
       </div>
     );
@@ -75,7 +75,10 @@ export function AgentGraph({
     >
       <Background gap={24} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable className="!bg-neutral-100 dark:!bg-neutral-900" />
+      {/* A small tree fits on screen; the overview only helps once it doesn't. */}
+      {agents.length > 8 && (
+        <MiniMap pannable zoomable nodeBorderRadius={6} className="!rounded-lg !border !border-zinc-200 !bg-white dark:!border-zinc-800 dark:!bg-zinc-950" />
+      )}
     </ReactFlow>
   );
 }

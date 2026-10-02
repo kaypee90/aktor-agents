@@ -45,7 +45,7 @@ public sealed class TaskPreviewService(
     IAgentPromptBuilder prompts,
     IGrainFactory grains,
     IDbContextFactory<AgentDbContext> dbFactory,
-    IOptions<LlmOptions> llmOptions,
+    ILlmSettingsResolver llmSettings,
     IOptions<RuntimeLimitsOptions> limits,
     IOptions<PreviewOptions> options,
     IOptions<DefaultBudgetOptions> defaultBudget,
@@ -54,7 +54,8 @@ public sealed class TaskPreviewService(
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
-    public async Task<TaskPreviewView> PreviewAsync(string tenantId, string goal, ResourceBudget? requested, CancellationToken ct = default)
+    /// <param name="modelProfileId">The model the task would run on; null for the organization's default.</param>
+    public async Task<TaskPreviewView> PreviewAsync(string tenantId, string goal, ResourceBudget? requested, CancellationToken ct = default, string? modelProfileId = null)
     {
         if (string.IsNullOrWhiteSpace(goal)) throw new TaskServiceException("goal is required");
         var budget = ceiling.Value.Clamp(requested ?? defaultBudget.Value.ToBudget());
@@ -64,8 +65,13 @@ public sealed class TaskPreviewService(
         if (!quota.Allowed) throw new TaskServiceException(quota.Reason ?? "The organization's plan limit is reached.", StatusCodes.Status429TooManyRequests);
 
         var opts = options.Value;
-        var prices = llmOptions.Value;
-        var request = prompts.BuildTeamPreviewRequest(goal, budget, limits.Value, prices.Model, opts.PlanningMaxOutputTokens);
+        // The organization's own model and prices, if it chose them (docs/llm-settings.md).
+        var prices = await llmSettings.ResolveAsync(tenantId, modelProfileId, ct);
+        var request = prompts.BuildTeamPreviewRequest(goal, budget, limits.Value, prices.Model, opts.PlanningMaxOutputTokens) with
+        {
+            TenantId = tenantId,
+            ModelProfileId = prices.ProfileId ?? ModelProfiles.ServerId
+        };
 
         TeamPlan plan;
         var planningTokens = 0;

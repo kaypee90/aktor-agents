@@ -32,6 +32,8 @@ public sealed record StartTaskRequest
     public string? PreviewId { get; init; }
     /// <summary>Replay a past run from its step journal instead of starting fresh (roadmap P6).</summary>
     public Durability.ReplaySpec? Replay { get; init; }
+    /// <summary>The organization model profile to run on (docs/llm-settings.md); null for its default.</summary>
+    public string? ModelProfileId { get; init; }
 }
 
 /// <summary>A task (or a request to a workspace) as every protocol reports it.</summary>
@@ -95,6 +97,9 @@ public sealed class TaskService(
     IOptions<TaskLinkOptions> links,
     IOptions<DefaultBudgetOptions> defaultBudget,
     IOptions<TaskBudgetCeilingOptions> ceiling,
+    LLM.LlmSettingsService models,
+    LLM.ITaskModelSelection taskModels,
+    IEventPublisher publisher,
     ILogger<TaskService> logger)
 {
     /// <summary>Separates a workspace id from the chat sequence number in a workspace request's id.</summary>
@@ -118,6 +123,7 @@ public sealed class TaskService(
             return await StartInWorkspaceAsync(tenantId, request, correlationId);
         }
 
+        var modelProfileId = await CheckModelAsync(tenantId, request.ModelProfileId, ct);
         var taskId = Guid.NewGuid().ToString("n");
         var budget = ceiling.Value.Clamp(request.Budget ?? defaultBudget.Value.ToBudget());
 
@@ -151,6 +157,9 @@ public sealed class TaskService(
             });
             await db.SaveChangesAsync(ct);
         }
+
+        // Before the root agent exists, so its very first step uses the chosen model.
+        if (modelProfileId is not null) await taskModels.SetAsync(taskId, modelProfileId, ct);
 
         if (request.CallbackUrl is not null && !string.IsNullOrEmpty(request.CallbackSecret))
         {
@@ -205,8 +214,9 @@ public sealed class TaskService(
     /// <see cref="Durability.ReplayMode.Fork"/> does the same up to <paramref name="forkAfterStep"/>
     /// (a step's sequence number in the journal) and runs live from there.
     /// </summary>
+    /// <param name="modelProfileId">For a fork, the model the live part runs on: the original's when null.</param>
     public async Task<TaskView> ReplayAsync(string tenantId, string sourceTaskId, Durability.ReplayMode mode, long? forkAfterStep,
-        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default)
+        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var source = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == sourceTaskId && t.TenantId == tenantId, ct)
@@ -220,8 +230,60 @@ public sealed class TaskService(
             Budget = source.BudgetJson is null ? null : JsonSerializer.Deserialize<ResourceBudget>(source.BudgetJson),
             Source = "replay",
             CorrelationId = Clip($"replay-of-{source.CorrelationId ?? sourceTaskId}", 128),
-            Replay = new Durability.ReplaySpec { SourceTaskId = sourceTaskId, Mode = mode, ForkAfterSeq = forkAfterStep }
+            Replay = new Durability.ReplaySpec { SourceTaskId = sourceTaskId, Mode = mode, ForkAfterSeq = forkAfterStep },
+            ModelProfileId = modelProfileId ?? source.ModelProfileId
         }, ct);
+    }
+
+    /// <summary>
+    /// Moves a running task to another model profile (docs/llm-settings.md). Every agent of the task,
+    /// including ones spawned later, uses it from its next step; finished work is kept. Returns the
+    /// profile now in force.
+    /// </summary>
+    public async Task<string> SwitchModelAsync(string tenantId, string taskId, string profileId, string? by, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct)
+                   ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
+        if (task.CompletedAt is not null) throw new TaskServiceException("The task has finished; fork it to continue on another model.", StatusCodes.Status409Conflict);
+
+        var next = await CheckModelAsync(tenantId, profileId, ct) ?? LLM.ModelProfiles.ServerId;
+        var before = await models.ResolveAsync(tenantId, task.ModelProfileId, ct);
+        await taskModels.SetAsync(taskId, next, ct);
+        var after = await models.ResolveAsync(tenantId, next, ct);
+
+        await publisher.PublishAsync(new RuntimeEvent
+        {
+            Type = RuntimeEventType.TaskModelChanged,
+            TaskId = taskId,
+            TenantId = tenantId,
+            AgentId = task.RootAgentId,
+            Summary = $"Model switched from {ModelLabel(before)} to {ModelLabel(after)}{(by is null ? "" : $" by {by}")}. Agents use it from their next step.",
+            Data = new Dictionary<string, string>
+            {
+                ["from_profile_id"] = before.ProfileId ?? LLM.ModelProfiles.ServerId,
+                ["from_model"] = before.Model,
+                ["to_profile_id"] = after.ProfileId ?? LLM.ModelProfiles.ServerId,
+                ["to_model"] = after.Model,
+                ["to_provider"] = after.Provider
+            }
+        }, ct);
+        logger.LogInformation("Task {TaskId} switched to model profile {Profile}", taskId, next);
+        return next;
+    }
+
+    private static string ModelLabel(Configuration.LlmOptions o) =>
+        o.Provider == "Mock" ? "the demo model" : $"{o.ProfileName ?? "the server default"} ({o.Model})";
+
+    /// <summary>A profile the organization has (or "server"); null when none was named.</summary>
+    private async Task<string?> CheckModelAsync(string tenantId, string? profileId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(profileId)) return null;
+        var id = profileId.Trim();
+        if (id == LLM.ModelProfiles.ServerId) return id;
+        var org = await models.GetAsync(tenantId, ct);
+        return org.Profiles.Any(p => p.Id == id) ? id
+            : throw new TaskServiceException($"No model '{id}'. Use one set up under Settings → AI model, or \"{LLM.ModelProfiles.ServerId}\".");
     }
 
     /// <summary>Hands the goal to a workspace's coordinator. The handle is "workspace:chat-seq":

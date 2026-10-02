@@ -16,12 +16,34 @@ const TYPE_COLORS: Record<string, string> = {
   AgentCompleted: "text-emerald-600 dark:text-emerald-400",
   AgentFailed: "text-rose-600 dark:text-rose-400",
   AgentRestarted: "text-orange-600 dark:text-orange-400",
-  AgentTerminated: "text-neutral-500",
-  AgentStatusChanged: "text-neutral-500",
+  AgentTerminated: "text-zinc-500",
+  AgentStatusChanged: "text-zinc-500",
   TaskCreated: "text-sky-700 dark:text-sky-300 font-semibold",
   TaskCompleted: "text-emerald-700 dark:text-emerald-300 font-semibold",
   ArtifactCreated: "text-teal-600 dark:text-teal-400",
-  EnvironmentChanged: "text-neutral-500",
+  EnvironmentChanged: "text-zinc-500",
+};
+
+/** Friendlier names for the runtime's event types. */
+const LABELS: Record<string, string> = {
+  AgentCreated: "Created",
+  AgentStarted: "Started",
+  AgentThinking: "Thinking",
+  AgentToolCalled: "Tool call",
+  AgentToolCompleted: "Tool result",
+  AgentMessageSent: "Message",
+  AgentMessageReceived: "Received",
+  AgentSpawnRequested: "Spawn",
+  AgentSpawned: "Spawned",
+  AgentCompleted: "Completed",
+  AgentFailed: "Failed",
+  AgentRestarted: "Retry",
+  AgentTerminated: "Stopped",
+  AgentStatusChanged: "Status",
+  TaskCreated: "Task",
+  TaskCompleted: "Task done",
+  ArtifactCreated: "File",
+  EnvironmentChanged: "Environment",
 };
 
 export function EventStream({ events }: { events: RuntimeEvent[] }) {
@@ -32,18 +54,21 @@ export function EventStream({ events }: { events: RuntimeEvent[] }) {
   }, [events.length]);
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto p-2 font-mono text-xs">
+    <div className="flex h-full flex-col overflow-y-auto py-1 text-xs">
       {events.length === 0 && (
-        <div className="p-4 text-center text-neutral-500">Waiting for events…</div>
+        <div className="flex flex-col items-center gap-2 p-8 text-center text-zinc-500">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-brand-500" />
+          Waiting for activity…
+        </div>
       )}
       {events.map((evt) => (
-        <div key={evt.event_id} className="flex gap-2 border-b border-neutral-200/60 px-2 py-1 dark:border-neutral-800">
-          <span className="shrink-0 text-neutral-400">
-            {new Date(evt.timestamp).toLocaleTimeString()}
+        <div key={evt.event_id} className="group flex gap-2.5 px-4 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
+          <span className="w-14 shrink-0 whitespace-nowrap pt-px font-mono text-[10px] text-zinc-400">{new Date(evt.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })}</span>
+          <span className={`w-20 shrink-0 font-medium ${TYPE_COLORS[evt.type] ?? "text-zinc-500"}`}>{LABELS[evt.type] ?? evt.type}</span>
+          <span className="min-w-0 flex-1 text-zinc-700 dark:text-zinc-300">
+            {evt.summary}
+            {evt.agent_id && <span className="ml-1 font-mono text-[10px] text-zinc-400">{evt.agent_id}</span>}
           </span>
-          <span className={`shrink-0 ${TYPE_COLORS[evt.type] ?? "text-neutral-500"}`}>{evt.type}</span>
-          {evt.agent_id && <span className="shrink-0 text-neutral-400">[{evt.agent_id}]</span>}
-          <span className="truncate text-neutral-700 dark:text-neutral-300">{evt.summary}</span>
         </div>
       ))}
       <div ref={bottomRef} />

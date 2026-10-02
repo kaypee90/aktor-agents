@@ -62,11 +62,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [mustSignIn, router]);
 
   if (error && !me) {
-    return <div className="m-auto p-8 text-sm text-rose-600">{error}</div>;
+    return (
+      <div className="m-auto max-w-sm p-8 text-center">
+        <div className="text-sm font-medium text-rose-600 dark:text-rose-400">{error}</div>
+        <p className="mt-1 text-xs text-zinc-500">Check that the Aktor API is running, then reload.</p>
+      </div>
+    );
   }
 
   if (!isPublic && (me === null || mustSignIn)) {
-    return <div className="m-auto p-8 text-sm text-neutral-500">Loading…</div>;
+    return (
+      <div className="m-auto flex items-center gap-2 p-8 text-sm text-zinc-500">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-300 border-t-brand-500" /> Loading…
+      </div>
+    );
   }
 
   return <AuthContext.Provider value={{ me, refresh }}>{children}</AuthContext.Provider>;
