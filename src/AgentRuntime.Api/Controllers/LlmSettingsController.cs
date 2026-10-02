@@ -8,16 +8,20 @@ using Microsoft.AspNetCore.Mvc;
 namespace AgentRuntime.Api.Controllers;
 
 /// <summary>
-/// The organization's model settings (docs/llm-settings.md): which provider and model its agents
-/// use, its own API key, and the prices its budgets count in. Anyone in the organization can see
-/// which model is in use; changing it needs the Admin role. Keys are stored encrypted and never
-/// returned. Without settings of its own, an organization uses the server's configuration.
+/// The organization's models (docs/llm-settings.md): named profiles, each a provider, a model, its
+/// own API key and the prices budgets count in, plus which one tasks use by default. Anyone in the
+/// organization can see the models (to pick one for a task); changing them needs the Admin role.
+/// Keys are stored encrypted and never returned. The server's configuration is always available
+/// as the "server" profile.
 /// </summary>
 [ApiController]
 [Route("api/llm")]
 public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnectionTester tester, TenantAccess access) : ControllerBase
 {
-    public sealed record SettingsBody(
+    public sealed record ProfileBody(
+        string? Id,
+        string? Name,
+        string? Description,
         string Provider,
         string? Model,
         string? FastModel,
@@ -26,9 +30,14 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         decimal? PricePerInputTokenUsd,
         decimal? PricePerOutputTokenUsd,
         decimal? FastPricePerInputTokenUsd,
-        decimal? FastPricePerOutputTokenUsd);
+        decimal? FastPricePerOutputTokenUsd,
+        bool MakeDefault = false);
 
-    public sealed record ModelsBody(string Provider, string? BaseUrl, string? ApiKey);
+    public sealed record DefaultBody(string ProfileId);
+
+    public sealed record AgentChoiceBody(bool Enabled);
+
+    public sealed record ModelsBody(string Provider, string? BaseUrl, string? ApiKey, string? ProfileId);
 
     /// <summary>What the dashboard offers: each provider, whether it needs a key or an address,
     /// and a few well-known models to start from (any model id the provider serves works).</summary>
@@ -49,29 +58,58 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
     [HttpGet("settings")]
     public async Task<IActionResult> Get(CancellationToken ct) => Ok(await ViewAsync(ct));
 
-    [HttpPut("settings")]
+    /// <summary>Adds a model. Its id comes from the name unless given; 409 if the id is taken.</summary>
+    [HttpPost("profiles")]
     [Authorize(Policies.Admin)]
-    public async Task<IActionResult> Save([FromBody] SettingsBody body, CancellationToken ct)
+    public async Task<IActionResult> Create([FromBody] ProfileBody body, CancellationToken ct)
     {
         if (Disabled() is { } off) return off;
-        var (org, error) = Validate(body);
-        if (org is null) return BadRequest(new { error });
+        var id = string.IsNullOrWhiteSpace(body.Id) ? ModelProfiles.Slug(body.Name ?? body.Model ?? body.Provider) : body.Id.Trim();
+        var existing = await settings.GetAsync(access.TenantId, ct);
+        if (existing.Profiles.Any(p => p.Id == id)) return Conflict(new { error = $"There's already a model with the id '{id}'. Pick another name." });
+        return await SaveAsync(id, body, isNew: true, ct);
+    }
 
-        var hasKey = !string.IsNullOrWhiteSpace(body.ApiKey) || await settings.HasApiKeyAsync(access.TenantId, org.Provider, ct);
-        if (LlmProviders.NeedsApiKey(org.Provider) && !hasKey && !UsesServerKey(org))
-        {
-            return BadRequest(new { error = $"{org.Provider} needs an API key." });
-        }
+    /// <summary>Edits a model. A key left out keeps the saved one.</summary>
+    [HttpPut("profiles/{id}")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> Update(string id, [FromBody] ProfileBody body, CancellationToken ct)
+    {
+        if (Disabled() is { } off) return off;
+        var existing = await settings.GetAsync(access.TenantId, ct);
+        if (existing.Profiles.All(p => p.Id != id)) return NotFound(new { error = $"No model '{id}'." });
+        return await SaveAsync(id, body, isNew: false, ct);
+    }
 
-        await settings.SaveAsync(access.TenantId, org with
-        {
-            UpdatedAt = DateTimeOffset.UtcNow,
-            UpdatedBy = HttpContext.Caller().Email ?? HttpContext.Caller().UserId ?? "api key"
-        }, body.ApiKey, ct);
+    /// <summary>Removes a model and its key. Running tasks on it continue on the default.</summary>
+    [HttpDelete("profiles/{id}")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> Delete(string id, CancellationToken ct) =>
+        await settings.DeleteProfileAsync(access.TenantId, id, ct) ? Ok(await ViewAsync(ct)) : NotFound(new { error = $"No model '{id}'." });
+
+    /// <summary>Which model tasks use unless they pick one; "server" for the server's configuration.</summary>
+    [HttpPut("default")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> SetDefault([FromBody] DefaultBody body, CancellationToken ct)
+    {
+        if (Disabled() is { } off) return off;
+        return await settings.SetDefaultAsync(access.TenantId, body.ProfileId ?? string.Empty, ct)
+            ? Ok(await ViewAsync(ct))
+            : NotFound(new { error = $"No model '{body.ProfileId}'." });
+    }
+
+    /// <summary>Whether agents may pick one of the organization's models for the agents they spawn
+    /// (following the goal, or the models' descriptions). Off: every agent runs on the task's model.</summary>
+    [HttpPut("agent-choice")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> SetAgentChoice([FromBody] AgentChoiceBody body, CancellationToken ct)
+    {
+        if (Disabled() is { } off) return off;
+        await settings.SetAgentsMayChooseAsync(access.TenantId, body.Enabled, ct);
         return Ok(await ViewAsync(ct));
     }
 
-    /// <summary>Back to the server's configuration. The organization's saved keys are deleted.</summary>
+    /// <summary>Back to the server's configuration: every model and saved key is deleted.</summary>
     [HttpDelete("settings")]
     [Authorize(Policies.Admin)]
     public async Task<IActionResult> Reset(CancellationToken ct)
@@ -80,20 +118,20 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         return Ok(await ViewAsync(ct));
     }
 
-    /// <summary>One tiny call with the given settings (the saved key when none is given), so a
-    /// wrong key, model or address shows up before agents depend on it.</summary>
+    /// <summary>One tiny call with the given settings (with an id, that model's saved key when no key
+    /// is given), so a wrong key, model or address shows up before agents depend on it.</summary>
     [HttpPost("test")]
     [Authorize(Policies.Admin)]
-    public async Task<IActionResult> Test([FromBody] SettingsBody body, CancellationToken ct)
+    public async Task<IActionResult> Test([FromBody] ProfileBody body, CancellationToken ct)
     {
         if (Disabled() is { } off) return off;
-        var (org, error) = Validate(body);
-        if (org is null) return BadRequest(new { error });
+        var (profile, error) = Validate(body.Id ?? "test", body);
+        if (profile is null) return BadRequest(new { error });
 
-        var options = await CandidateAsync(org, body.ApiKey, ct);
-        if (LlmProviders.NeedsApiKey(org.Provider) && string.IsNullOrEmpty(options.ApiKey))
+        var options = await CandidateAsync(profile, body.ApiKey, body.Id, ct);
+        if (LlmProviders.NeedsApiKey(profile.Provider) && string.IsNullOrEmpty(options.ApiKey))
         {
-            return BadRequest(new { error = $"Enter your {org.Provider} API key to test it." });
+            return BadRequest(new { error = $"Enter your {profile.Provider} API key to test it." });
         }
 
         var result = await tester.TestAsync(options, ct);
@@ -110,7 +148,8 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         if (provider is null) return BadRequest(new { error = $"Unknown provider '{body.Provider}'." });
         if (BaseUrlError(body.BaseUrl) is { } urlError) return BadRequest(new { error = urlError });
 
-        var options = await CandidateAsync(new OrganizationLlmSettings { Provider = provider, BaseUrl = Blank(body.BaseUrl) }, body.ApiKey, ct);
+        var options = await CandidateAsync(new ModelProfile { Id = "list", Name = "list", Provider = provider, BaseUrl = Blank(body.BaseUrl) },
+            body.ApiKey, body.ProfileId, ct);
         if (LlmProviders.NeedsApiKey(provider) && string.IsNullOrEmpty(options.ApiKey))
         {
             return BadRequest(new { error = $"Enter your {provider} API key to list its models." });
@@ -126,60 +165,134 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         }
     }
 
+    private async Task<IActionResult> SaveAsync(string id, ProfileBody body, bool isNew, CancellationToken ct)
+    {
+        if (!ModelProfiles.IsValidId(id) || id == ModelProfiles.ServerId)
+        {
+            return BadRequest(new { error = "A model id uses lowercase letters, digits and dashes (and isn't \"server\")." });
+        }
+
+        var (profile, error) = Validate(id, body);
+        if (profile is null) return BadRequest(new { error });
+
+        if (!isNew && string.IsNullOrWhiteSpace(body.ApiKey)
+            && (await settings.GetAsync(access.TenantId, ct)).Profiles.FirstOrDefault(p => p.Id == id) is { } saved
+            && !SameEndpoint(saved, profile) && await settings.HasApiKeyAsync(access.TenantId, saved, ct))
+        {
+            // The saved key belongs to the old provider or address; it isn't carried over to a new one.
+            return BadRequest(new { error = "The provider or address changed: enter the API key for it again." });
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(body.ApiKey) || !isNew && await settings.HasApiKeyAsync(access.TenantId, profile, ct);
+        if (LlmProviders.NeedsApiKey(profile.Provider) && !hasKey && !UsesServerKey(profile))
+        {
+            return BadRequest(new { error = $"{profile.Provider} needs an API key." });
+        }
+
+        var caller = HttpContext.Caller();
+        await settings.SaveProfileAsync(access.TenantId, profile with
+        {
+            UpdatedAt = DateTimeOffset.UtcNow,
+            UpdatedBy = caller.Email ?? caller.UserId ?? "api key"
+        }, body.ApiKey, body.MakeDefault, ct);
+        return Ok(await ViewAsync(ct));
+    }
+
     private async Task<object> ViewAsync(CancellationToken ct)
     {
         var server = settings.Server;
-        var org = server.AllowOrganizationSettings ? await settings.GetAsync(access.TenantId, ct) : null;
-        var effective = await settings.ResolveAsync(access.TenantId, ct);
+        var org = server.AllowOrganizationSettings ? await settings.GetAsync(access.TenantId, ct) : new OrganizationModels();
+        var profiles = new List<object>();
+        foreach (var p in org.Profiles.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var hasKey = await settings.HasApiKeyAsync(access.TenantId, p, ct);
+            var o = LlmSettingsService.Apply(server, p, apiKey: null);
+            profiles.Add(new
+            {
+                id = p.Id,
+                name = p.Name,
+                description = p.Description,
+                provider = p.Provider,
+                model = p.Model,
+                fast_model = p.FastModel,
+                base_url = p.BaseUrl,
+                price_per_input_token_usd = p.PricePerInputTokenUsd,
+                price_per_output_token_usd = p.PricePerOutputTokenUsd,
+                fast_price_per_input_token_usd = p.FastPricePerInputTokenUsd,
+                fast_price_per_output_token_usd = p.FastPricePerOutputTokenUsd,
+                // What budgets count with, per million tokens as providers publish them.
+                price_per_million_input_usd = o.PricePerInputTokenUsd * 1_000_000,
+                price_per_million_output_usd = o.PricePerOutputTokenUsd * 1_000_000,
+                api_key_set = hasKey,
+                uses_server_key = !hasKey && UsesServerKey(p),
+                is_default = org.DefaultProfileId == p.Id,
+                updated_at = p.UpdatedAt,
+                updated_by = p.UpdatedBy
+            });
+        }
+
+        var effective = await settings.ResolveAsync(access.TenantId, cancellationToken: ct);
         return new
         {
             allow_organization_settings = server.AllowOrganizationSettings,
-            source = org is null ? "server" : "organization",
-            server = new { provider = server.Provider, model = server.Model, fast_model = Blank(server.FastModel) },
-            organization = org is null ? null : new
+            agents_may_choose = org.AgentsMayChoose,
+            default_profile_id = effective.ProfileId ?? ModelProfiles.ServerId,
+            server = new
             {
-                provider = org.Provider,
-                model = org.Model,
-                fast_model = org.FastModel,
-                base_url = org.BaseUrl,
-                price_per_input_token_usd = org.PricePerInputTokenUsd,
-                price_per_output_token_usd = org.PricePerOutputTokenUsd,
-                fast_price_per_input_token_usd = org.FastPricePerInputTokenUsd,
-                fast_price_per_output_token_usd = org.FastPricePerOutputTokenUsd,
-                api_key_set = await settings.HasApiKeyAsync(access.TenantId, org.Provider, ct),
-                uses_server_key = UsesServerKey(org) && !await settings.HasApiKeyAsync(access.TenantId, org.Provider, ct),
-                updated_at = org.UpdatedAt,
-                updated_by = org.UpdatedBy
+                id = ModelProfiles.ServerId,
+                name = "Server default",
+                provider = server.Provider,
+                model = server.Model,
+                fast_model = Blank(server.FastModel),
+                price_per_million_input_usd = server.PricePerInputTokenUsd * 1_000_000,
+                price_per_million_output_usd = server.PricePerOutputTokenUsd * 1_000_000,
+                is_default = effective.ProfileId is null
             },
+            profiles,
             effective = new
             {
+                profile_id = effective.ProfileId ?? ModelProfiles.ServerId,
+                name = effective.ProfileName ?? "Server default",
                 provider = effective.Provider,
                 model = effective.Model,
                 fast_model = Blank(effective.FastModel),
-                price_per_input_token_usd = effective.PricePerInputTokenUsd,
-                price_per_output_token_usd = effective.PricePerOutputTokenUsd,
-                // Per million tokens, as providers publish them.
                 price_per_million_input_usd = effective.PricePerInputTokenUsd * 1_000_000,
                 price_per_million_output_usd = effective.PricePerOutputTokenUsd * 1_000_000
             }
         };
     }
 
-    /// <summary>The options a test or model listing runs with: the server's with these settings
-    /// on top, and the given key, else the organization's saved key for the provider.</summary>
-    private async Task<LlmOptions> CandidateAsync(OrganizationLlmSettings org, string? apiKey, CancellationToken ct) =>
-        LlmSettingsService.Apply(settings.Server, org,
-            Blank(apiKey) ?? await settings.GetApiKeyAsync(access.TenantId, org.Provider, ct));
+    /// <summary>The options a test or model listing runs with: the server's with this profile on
+    /// top, and the given key, else the saved key of the named profile.</summary>
+    private async Task<LlmOptions> CandidateAsync(ModelProfile profile, string? apiKey, string? savedProfileId, CancellationToken ct)
+    {
+        var key = Blank(apiKey);
+        if (key is null && savedProfileId is not null)
+        {
+            var org = await settings.GetAsync(access.TenantId, ct);
+            // A saved key is reused only for the provider and address it was saved with: it is never
+            // sent somewhere new without being entered again.
+            if (org.Profiles.FirstOrDefault(p => p.Id == savedProfileId) is { } saved && SameEndpoint(saved, profile))
+            {
+                key = await settings.GetApiKeyAsync(access.TenantId, saved, ct);
+            }
+        }
+
+        return LlmSettingsService.Apply(settings.Server, profile, key);
+    }
+
+    private static bool SameEndpoint(ModelProfile a, ModelProfile b) =>
+        a.Provider == b.Provider && string.Equals(a.BaseUrl?.TrimEnd('/') ?? string.Empty, b.BaseUrl?.TrimEnd('/') ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The server's key may stand in only for its own provider at its own address.</summary>
-    private bool UsesServerKey(OrganizationLlmSettings org) =>
-        !string.IsNullOrEmpty(LlmSettingsService.Apply(settings.Server, org, apiKey: null).ApiKey);
+    private bool UsesServerKey(ModelProfile profile) =>
+        !string.IsNullOrEmpty(LlmSettingsService.Apply(settings.Server, profile, apiKey: null).ApiKey);
 
     private IActionResult? Disabled() => settings.Server.AllowOrganizationSettings
         ? null
         : StatusCode(StatusCodes.Status403Forbidden, new { error = "This server sets the model for every organization (Llm:AllowOrganizationSettings is off)." });
 
-    private static (OrganizationLlmSettings? Settings, string? Error) Validate(SettingsBody body)
+    private static (ModelProfile? Profile, string? Error) Validate(string id, ProfileBody body)
     {
         var provider = LlmProviders.Canonical(body.Provider);
         if (provider is null) return (null, $"Unknown provider '{body.Provider}'. Use one of: {string.Join(", ", LlmProviders.All)}.");
@@ -187,14 +300,20 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         var model = Blank(body.Model);
         if (model is null && provider != "Mock") return (null, "Choose a model.");
         if (model?.Length > 200 || body.FastModel?.Length > 200) return (null, "That model name is too long.");
+        var name = Blank(body.Name) ?? model ?? provider;
+        if (name.Length > 80) return (null, "Keep the name under 80 characters.");
+        if (body.Description?.Length > 200) return (null, "Keep the description under 200 characters.");
         if (BaseUrlError(body.BaseUrl) is { } urlError) return (null, urlError);
 
         decimal?[] prices = [body.PricePerInputTokenUsd, body.PricePerOutputTokenUsd, body.FastPricePerInputTokenUsd, body.FastPricePerOutputTokenUsd];
         // $1 per token is far beyond any real model: almost certainly a per-million price typed in.
         if (prices.Any(p => p is < 0 or > 1m)) return (null, "Prices are in USD per token, between 0 and 1 (e.g. 0.000003 for $3 per million).");
 
-        return (new OrganizationLlmSettings
+        return (new ModelProfile
         {
+            Id = id,
+            Name = name,
+            Description = Blank(body.Description),
             Provider = provider,
             Model = model ?? string.Empty,
             FastModel = Blank(body.FastModel),

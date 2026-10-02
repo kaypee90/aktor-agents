@@ -36,6 +36,8 @@ export interface AgentListItem {
   parent_agent_id: string | null;
   root_agent_id: string;
   depth: number;
+  /** A model given to this agent when it was spawned; absent when it follows the task's model. */
+  model_profile_id?: string | null;
 }
 
 export interface AgentSnapshot {
@@ -87,7 +89,9 @@ export type RuntimeEventType =
   | "WorkspaceCreated"
   | "WorkspaceMessage"
   | "TriggerFired"
-  | "WorkspaceChanged";
+  | "WorkspaceChanged"
+  | "LlmCallCompleted"
+  | "TaskModelChanged";
 
 export interface RuntimeEvent {
   event_id: string;
@@ -153,6 +157,8 @@ export interface TaskSummary {
   correlation_id?: string | null;
   replay_of_task_id?: string | null;
   replay_mode?: string | null;
+  /** The model the task runs on now (docs/llm-settings.md). */
+  model?: { profile_id: string; name: string; provider: string; model: string; chosen: boolean };
 }
 
 export interface MessageRecord {

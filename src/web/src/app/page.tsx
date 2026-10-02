@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import {
+  apiErrorMessage,
   cancelTask,
   getTask,
+  getLlmSettings,
   getTaskEvents,
   getTaskSpend,
   listAgents,
@@ -15,6 +17,9 @@ import {
   resetAll,
   resumeTask,
   subscribeToEvents,
+  modelChoices,
+  switchTaskModel,
+  type LlmSettingsView,
   type TaskListItem,
 } from "@/lib/api";
 import type { AgentListItem, AgentSpend, RuntimeEvent, TaskPreview, TaskSummary } from "@/lib/types";
@@ -23,6 +28,7 @@ import { AgentGraph } from "@/components/AgentGraph";
 import { EventStream } from "@/components/EventStream";
 import { FinalResultPanel } from "@/components/FinalResultPanel";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
+import { ModelPicker } from "@/components/tasks/ModelPicker";
 import { TaskComposer } from "@/components/tasks/TaskComposer";
 import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, StatusBadge, Tabs, ago, compact, money } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
@@ -126,6 +132,27 @@ function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPre
   const [selected, setSelected] = useState<string | null>(null);
   const [panel, setPanel] = useState<"activity" | "result" | "estimate">("activity");
   const [copied, setCopied] = useState(false);
+  const [models, setModels] = useState<LlmSettingsView | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getLlmSettings().then(setModels).catch(() => { /* the switcher is optional */ });
+  }, []);
+
+  /** Moves the whole team to another model from each agent's next step (docs/llm-settings.md). */
+  async function switchModel(profileId: string) {
+    setSwitching(profileId);
+    setSwitchError(null);
+    try {
+      const { model } = await switchTaskModel(taskId, profileId);
+      setTask((t) => (t ? { ...t, model } : t));
+    } catch (e) {
+      setSwitchError(apiErrorMessage(e));
+    } finally {
+      setSwitching(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -169,6 +196,10 @@ function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPre
   }, [taskId]);
 
   const running = task !== null && !TERMINAL.includes(task.status);
+  const modelNames = useMemo(
+    () => Object.fromEntries(models ? modelChoices(models).map((m) => [m.id, m.name]) : []),
+    [models],
+  );
   const artifactWrites = events.filter((e) => e.type === "ArtifactCreated").length;
   const totalCost = Object.values(spend).reduce((n, s) => n + s.cost_usd, 0);
   const totalTokens = Object.values(spend).reduce((n, s) => n + s.tokens_used, 0);
@@ -223,12 +254,24 @@ function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPre
           {task && <span>Started {ago(task.created_at)}</span>}
           {task?.correlation_id && <span className="font-mono">corr {task.correlation_id}</span>}
           {task?.replay_of_task_id && <Badge tone="blue">{task.replay_mode} replay</Badge>}
+          {task?.model && models && running && (
+            <ModelPicker view={models} value={switching ?? task.model.profile_id} allowDefault={false} disabled={switching !== null}
+              title="Switch the task to another model: agents use it from their next step (agents given their own model keep it)"
+              onChange={(id) => id !== task.model?.profile_id && switchModel(id)} />
+          )}
+          {task?.model && !running && (
+            <span title="The model this task ran on last">
+              Model <span className="font-medium text-zinc-700 dark:text-zinc-300">{task.model.provider === "Mock" ? "Mock (demo)" : task.model.name}</span>
+              {task.model.provider !== "Mock" && task.model.name !== task.model.model && <span className="font-mono"> · {task.model.model}</span>}
+            </span>
+          )}
+          {switchError && <span className="text-rose-600 dark:text-rose-400">{switchError}</span>}
         </div>
       </PageHeader>
 
       <div className="flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">
-          <AgentGraph agents={agents} spend={spend} selectedId={selected} onSelect={setSelected} />
+          <AgentGraph agents={agents} spend={spend} selectedId={selected} onSelect={setSelected} modelNames={modelNames} />
         </div>
 
         <aside className="flex w-[26rem] shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">

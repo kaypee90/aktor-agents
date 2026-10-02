@@ -51,6 +51,7 @@ public sealed class AgentGrain(
     Skills.ISkillStore skills,
     ILlmSettingsResolver llmSettings,
     ITaskModelSelection taskModels,
+    LlmSettingsService modelSettings,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -160,6 +161,7 @@ public sealed class AgentGrain(
         s.TeamPolicy = request.TeamPolicy;
         s.JournalPath = string.IsNullOrEmpty(request.JournalPath) ? "r" : request.JournalPath;
         s.Replay = request.Replay;
+        s.ModelProfileId = request.ModelProfileId;
         s.CreatedAt = DateTimeOffset.UtcNow;
         if (s.Budget.PeriodHours > 0) s.BudgetPeriodStartedAt = s.CreatedAt;
         foreach (var (key, value) in request.Metadata)
@@ -484,7 +486,8 @@ public sealed class AgentGrain(
 
             // The task's model (chosen at start, switchable while it runs) or the organization's
             // default; a change made in the dashboard applies from the next step on.
-            _llmOptions = await llmSettings.ResolveAsync(s.TenantId, await taskModels.GetAsync(s.TaskId));
+            // An agent given its own model at spawn keeps it; the rest follow the task's model.
+            _llmOptions = await llmSettings.ResolveAsync(s.TenantId, s.ModelProfileId ?? await taskModels.GetAsync(s.TaskId));
 
             // Also a safe point for compaction: no tool call is waiting for its result.
             if (await CompactIfNeededAsync())
@@ -712,12 +715,12 @@ public sealed class AgentGrain(
     internal static string ProfileIdOf(LlmOptions options) => options.ProfileId ?? ModelProfiles.ServerId;
 
     /// <summary>Reports one model call (model, tokens, cost, time) for analytics (docs/analytics.md).</summary>
-    private Task RecordLlmCallAsync(LlmCompletionResponse response, decimal cost, bool fast, long durationMs, string purpose = "step")
+    private async Task RecordLlmCallAsync(LlmCompletionResponse response, decimal cost, bool fast, long durationMs, string purpose = "step")
     {
         var s = S;
         var o = _llmOptions;
         var model = o.ModelFor(fast);
-        return PublishAsync(RuntimeEventType.LlmCallCompleted,
+        await PublishAsync(RuntimeEventType.LlmCallCompleted,
             $"Agent '{s.Name}' got an answer from {model} ({response.InputTokens + response.OutputTokens:N0} tokens, {durationMs / 1000.0:0.0}s).",
             new Dictionary<string, string>
             {
@@ -1591,6 +1594,31 @@ public sealed class AgentGrain(
             };
         }
 
+        // The organization's models, for agents that can spawn and may pick one for the new agent.
+        if (s.AllowedTools.Contains("spawn_agent") && !s.IsResident)
+        {
+            var models = await modelSettings.GetAsync(Tenancy.TenantIds.Normalize(s.TenantId));
+            if (models.AgentsMayChoose && models.Profiles.Count > 0)
+            {
+                var server = modelSettings.Server;
+                context = context with
+                {
+                    CurrentModel = $"{_llmOptions.ProfileName ?? "Server default"} ({ProfileIdOf(_llmOptions)})",
+                    Models =
+                    [
+                        new ModelOption(ModelProfiles.ServerId, "Server default", null, server.Provider, server.Model,
+                            server.PricePerInputTokenUsd * 1_000_000, server.PricePerOutputTokenUsd * 1_000_000),
+                        .. models.Profiles.Select(p =>
+                        {
+                            var o = LlmSettingsService.Apply(server, p, apiKey: null);
+                            return new ModelOption(p.Id, p.Name, p.Description, p.Provider, o.Model,
+                                o.PricePerInputTokenUsd * 1_000_000, o.PricePerOutputTokenUsd * 1_000_000);
+                        })
+                    ]
+                };
+            }
+        }
+
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
         // Residents see only their recent past (their notes carry anything longer-lived). Everyone
@@ -1867,6 +1895,7 @@ public sealed class AgentGrain(
         CorrelationId = s.Metadata.GetValueOrDefault(CorrelationKey),
         TeamPolicy = s.TeamPolicy,
         JournalPath = s.JournalPath,
-        Replay = s.Replay
+        Replay = s.Replay,
+        ModelProfileId = s.ModelProfileId
     };
 }

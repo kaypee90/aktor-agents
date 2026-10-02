@@ -59,6 +59,8 @@ export interface CreateTaskInput {
   callback_secret?: string;
   correlation_id?: string;
   team_policy?: TeamPolicyInput;
+  /** A model profile id (or "server"); the organization's default when left out. */
+  model?: string | null;
 }
 
 export function createTask(input: CreateTaskInput) {
@@ -69,10 +71,10 @@ export function createTask(input: CreateTaskInput) {
 }
 
 /** One cheap planning call: the team the root would likely build, and its cost range. */
-export function previewTask(goal: string, budget?: Partial<ResourceBudget>) {
+export function previewTask(goal: string, budget?: Partial<ResourceBudget>, model?: string | null) {
   return apiFetch<TaskPreview>("/api/tasks/preview", {
     method: "POST",
-    body: JSON.stringify({ goal, budget }),
+    body: JSON.stringify({ goal, budget, model: model || null }),
   });
 }
 
@@ -526,10 +528,11 @@ export function getTaskJournal(taskId: string) {
 
 /** Replays a task from its journal: "full" (no model or external calls) or a "fork" that runs live
  * after the given step. Returns the new task. */
-export function replayTask(taskId: string, mode: "full" | "fork", forkAfterStep?: number) {
+/** model: for a fork, the model the live part runs on (the original's when left out). */
+export function replayTask(taskId: string, mode: "full" | "fork", forkAfterStep?: number, model?: string | null) {
   return apiFetch<{ task_id: string; root_agent_id: string | null }>(`/api/tasks/${taskId}/replay`, {
     method: "POST",
-    body: JSON.stringify({ mode, fork_after_step: forkAfterStep }),
+    body: JSON.stringify({ mode, fork_after_step: forkAfterStep, model: model || null }),
   });
 }
 
@@ -604,7 +607,7 @@ export function skillDownloadUrl(name: string) {
   return `${API_BASE}/api/skills/${encodeURIComponent(name)}/download`;
 }
 
-// --- Model settings (docs/llm-settings.md) ---
+// --- Models (docs/llm-settings.md) ---
 
 export type LlmProviderInfo = {
   id: string;
@@ -616,36 +619,58 @@ export type LlmProviderInfo = {
   get_key_url: string | null;
 };
 
+export type ModelProfile = {
+  id: string;
+  name: string;
+  description: string | null;
+  provider: string;
+  model: string;
+  fast_model: string | null;
+  base_url: string | null;
+  price_per_input_token_usd: number | null;
+  price_per_output_token_usd: number | null;
+  fast_price_per_input_token_usd: number | null;
+  fast_price_per_output_token_usd: number | null;
+  price_per_million_input_usd: number;
+  price_per_million_output_usd: number;
+  api_key_set: boolean;
+  uses_server_key: boolean;
+  is_default: boolean;
+  updated_at: string;
+  updated_by: string | null;
+};
+
 export type LlmSettingsView = {
   allow_organization_settings: boolean;
-  source: "server" | "organization";
-  server: { provider: string; model: string; fast_model: string | null };
-  organization: {
+  /** Agents may pick one of these models for the agents they spawn. */
+  agents_may_choose: boolean;
+  default_profile_id: string;
+  server: {
+    id: "server";
+    name: string;
     provider: string;
     model: string;
     fast_model: string | null;
-    base_url: string | null;
-    price_per_input_token_usd: number | null;
-    price_per_output_token_usd: number | null;
-    fast_price_per_input_token_usd: number | null;
-    fast_price_per_output_token_usd: number | null;
-    api_key_set: boolean;
-    uses_server_key: boolean;
-    updated_at: string;
-    updated_by: string | null;
-  } | null;
+    price_per_million_input_usd: number;
+    price_per_million_output_usd: number;
+    is_default: boolean;
+  };
+  profiles: ModelProfile[];
   effective: {
+    profile_id: string;
+    name: string;
     provider: string;
     model: string;
     fast_model: string | null;
-    price_per_input_token_usd: number;
-    price_per_output_token_usd: number;
     price_per_million_input_usd: number;
     price_per_million_output_usd: number;
   };
 };
 
-export type LlmSettingsInput = {
+export type ModelProfileInput = {
+  id?: string | null;
+  name?: string | null;
+  description?: string | null;
   provider: string;
   model?: string | null;
   fast_model?: string | null;
@@ -655,7 +680,20 @@ export type LlmSettingsInput = {
   price_per_output_token_usd?: number | null;
   fast_price_per_input_token_usd?: number | null;
   fast_price_per_output_token_usd?: number | null;
+  make_default?: boolean;
 };
+
+/** A model a task can run on: the server's default or one of the organization's profiles. */
+export type ModelChoice = { id: string; name: string; provider: string; model: string; in_per_million: number; out_per_million: number; is_default: boolean };
+
+export function modelChoices(view: LlmSettingsView): ModelChoice[] {
+  return [
+    { id: "server", name: "Server default", provider: view.server.provider, model: view.server.model,
+      in_per_million: view.server.price_per_million_input_usd, out_per_million: view.server.price_per_million_output_usd, is_default: view.server.is_default },
+    ...view.profiles.map((p) => ({ id: p.id, name: p.name, provider: p.provider, model: p.model,
+      in_per_million: p.price_per_million_input_usd, out_per_million: p.price_per_million_output_usd, is_default: p.is_default })),
+  ];
+}
 
 export function listLlmProviders() {
   return apiFetch<LlmProviderInfo[]>("/api/llm/providers");
@@ -665,24 +703,47 @@ export function getLlmSettings() {
   return apiFetch<LlmSettingsView>("/api/llm/settings");
 }
 
-export function saveLlmSettings(input: LlmSettingsInput) {
-  return apiFetch<LlmSettingsView>("/api/llm/settings", { method: "PUT", body: JSON.stringify(input) });
+export function createModelProfile(input: ModelProfileInput) {
+  return apiFetch<LlmSettingsView>("/api/llm/profiles", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function updateModelProfile(id: string, input: ModelProfileInput) {
+  return apiFetch<LlmSettingsView>(`/api/llm/profiles/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function deleteModelProfile(id: string) {
+  return apiFetch<LlmSettingsView>(`/api/llm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function setDefaultModel(profileId: string) {
+  return apiFetch<LlmSettingsView>("/api/llm/default", { method: "PUT", body: JSON.stringify({ profile_id: profileId }) });
+}
+
+export function setAgentsMayChoose(enabled: boolean) {
+  return apiFetch<LlmSettingsView>("/api/llm/agent-choice", { method: "PUT", body: JSON.stringify({ enabled }) });
 }
 
 export function resetLlmSettings() {
   return apiFetch<LlmSettingsView>("/api/llm/settings", { method: "DELETE" });
 }
 
-export function testLlmSettings(input: LlmSettingsInput) {
+export function testLlmSettings(input: ModelProfileInput) {
   return apiFetch<{ ok: boolean; message: string; latency_ms: number; input_tokens: number | null; output_tokens: number | null }>(
     "/api/llm/test", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function listLlmModels(provider: string, baseUrl?: string | null, apiKey?: string | null) {
+export function listLlmModels(provider: string, baseUrl?: string | null, apiKey?: string | null, profileId?: string | null) {
   return apiFetch<{ models: string[] }>("/api/llm/models", {
     method: "POST",
-    body: JSON.stringify({ provider, base_url: baseUrl || null, api_key: apiKey || null }),
+    body: JSON.stringify({ provider, base_url: baseUrl || null, api_key: apiKey || null, profile_id: profileId || null }),
   });
+}
+
+export type TaskModel = { profile_id: string; name: string; provider: string; model: string; chosen: boolean };
+
+/** Moves a running task to another model; every agent uses it from its next step. */
+export function switchTaskModel(taskId: string, model: string) {
+  return apiFetch<{ model: TaskModel }>(`/api/tasks/${taskId}/model`, { method: "POST", body: JSON.stringify({ model }) });
 }
 
 // --- Analytics (docs/analytics.md) ---
@@ -695,6 +756,56 @@ export type AnalyticsFilter = {
   source?: string | null;
   status?: "running" | "completed" | "failed" | null;
   q?: string | null;
+  /** "tasks" (default) or "workspaces". */
+  scope?: "tasks" | "workspaces" | null;
+  workspace?: string | null;
+  /** A model profile id: only what ran on it. */
+  model?: string | null;
+};
+
+/** Spend and response time per model: which one is cheaper or faster for the same work. */
+export type AnalyticsModelRow = {
+  profile_id: string;
+  profile_name: string;
+  provider: string;
+  model: string;
+  label: string;
+  calls: number;
+  tokens: number;
+  cost_usd: number;
+  avg_cost_per_call_usd: number;
+  avg_duration_ms: number;
+  p95_duration_ms: number | null;
+};
+
+export type AnalyticsToolRow = { tool: string; calls: number; failures: number; avg_duration_ms: number | null; p95_duration_ms: number | null; total_duration_ms: number };
+
+export type WorkspaceAnalytics = {
+  scope: "workspaces";
+  range: { from: string; to: string; bucket: "hour" | "day" };
+  totals: {
+    workspaces: number;
+    active_workspaces: number;
+    calls: number;
+    tokens: number;
+    cost_usd: number;
+    avg_cost_per_day_usd: number;
+    avg_call_ms: number | null;
+    p95_call_ms: number | null;
+    triggers_fired: number;
+    approvals_requested: number;
+    approvals_approved: number;
+    approvals_rejected: number;
+    approvals_expired: number;
+    tool_calls: number;
+    tool_failures: number;
+  };
+  previous: { calls: number; tokens: number; cost_usd: number };
+  series: { t: string; calls: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
+  by_workspace: { workspace_id: string; name: string; status: string; calls: number; tokens: number; cost_usd: number; triggers_fired: number; approvals_requested: number }[];
+  by_role: { role: string; calls: number; tokens: number; cost_usd: number; avg_tokens: number }[];
+  by_model: AnalyticsModelRow[];
+  by_tool: AnalyticsToolRow[];
 };
 
 export type AnalyticsTaskRow = {
@@ -710,7 +821,9 @@ export type AnalyticsTaskRow = {
 };
 
 export type Analytics = {
+  scope: "tasks";
   range: { from: string; to: string; bucket: "hour" | "day" };
+  by_model: AnalyticsModelRow[];
   totals: {
     runs: number;
     completed: number;
@@ -743,5 +856,5 @@ export function getAnalytics(filter: AnalyticsFilter) {
   for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
   // Days are counted in the viewer's timezone.
   params.set("tz_offset_minutes", String(new Date().getTimezoneOffset()));
-  return apiFetch<Analytics>(`/api/analytics?${params.toString()}`);
+  return apiFetch<Analytics | WorkspaceAnalytics>(`/api/analytics?${params.toString()}`);
 }

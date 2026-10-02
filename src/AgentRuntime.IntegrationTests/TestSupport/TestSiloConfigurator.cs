@@ -54,6 +54,13 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
             // Likewise one step journal, so a replay can read a run recorded before a silo restart.
             services.AddSingleton<AgentRuntime.Durability.IStepJournal>(TestJournal.Instance);
             services.AddSingleton<AgentRuntime.Skills.ISkillStore>(TestSkills.Store);
+
+            // Organization model profiles and per-task model choices, reachable from tests. The
+            // profiles live in a shared store; the service uses the silo's own server options.
+            services.AddSingleton(sp => new LlmSettingsService(TestModels.Secrets,
+                sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<LlmOptions>>()));
+            services.AddSingleton<ILlmSettingsResolver>(sp => sp.GetRequiredService<LlmSettingsService>());
+            services.AddSingleton<ITaskModelSelection>(TestModels.Selection);
         }
     }
 }
@@ -61,6 +68,17 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
 public static class TestJournal
 {
     public static readonly AgentRuntime.Durability.InMemoryStepJournal Instance = new();
+}
+
+/// <summary>Model profiles and task model choices shared by the test silo and the tests.</summary>
+public static class TestModels
+{
+    public static readonly InMemorySecretStore Secrets = new();
+
+    /// <summary>For tests to save profiles into the store the silo reads.</summary>
+    public static readonly LlmSettingsService Settings = new(Secrets, Microsoft.Extensions.Options.Options.Create(new LlmOptions()));
+
+    public static readonly InMemoryTaskModelSelection Selection = new();
 }
 
 public static class TestSkills

@@ -5,7 +5,7 @@ import { STATUS_STYLES } from "@/lib/status";
 import type { AgentListItem, AgentSpend } from "@/lib/types";
 import { BotIcon } from "./BotIcon";
 
-export type AgentNodeData = { agent: AgentListItem; spend?: AgentSpend };
+export type AgentNodeData = { agent: AgentListItem; spend?: AgentSpend; model?: string };
 
 /** The branch's spend (this agent and everything below it) against this agent's own budget, which
  * every child's budget was carved from: the runtime keeps the branch inside it. */
@@ -25,7 +25,7 @@ function SpendBar({ spend }: { spend: AgentSpend }) {
 }
 
 export function AgentNode({ data, selected }: NodeProps & { data: AgentNodeData }) {
-  const { agent, spend } = data;
+  const { agent, spend, model } = data;
   const style = STATUS_STYLES[agent.status];
 
   return (
@@ -48,6 +48,12 @@ export function AgentNode({ data, selected }: NodeProps & { data: AgentNodeData 
         <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
         {agent.status}
       </div>
+      {model && (
+        <div className="ml-1.5 mt-2 inline-flex max-w-[7.5rem] items-center gap-1 truncate rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+          title={`Runs on ${model} (chosen when it was spawned)`}>
+          <span className="text-brand-500">⚡</span>{model}
+        </div>
+      )}
       {spend && <SpendBar spend={spend} />}
       <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !border-0 !bg-zinc-400 dark:!bg-zinc-600" />
     </div>

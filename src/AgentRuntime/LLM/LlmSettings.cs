@@ -45,6 +45,25 @@ public sealed record OrganizationModels
     /// <summary>The profile used when a task names none; null or <see cref="ModelProfiles.ServerId"/>
     /// means the server's configuration.</summary>
     public string? DefaultProfileId { get; init; }
+
+    /// <summary>Agents may pick one of these models for the agents they spawn, following the goal
+    /// ("use the cheap model for data collection") or the models' descriptions. Off: every agent
+    /// runs on the task's model.</summary>
+    public bool AgentsMayChoose { get; init; } = true;
+
+    /// <summary>A profile by id, or by name as people (and agents) write it; "server" for the
+    /// server's configuration (returned as null with found = true).</summary>
+    public (bool Found, ModelProfile? Profile) Find(string? idOrName)
+    {
+        var key = idOrName?.Trim();
+        if (string.IsNullOrEmpty(key)) return (false, null);
+        if (key.Equals(ModelProfiles.ServerId, StringComparison.OrdinalIgnoreCase)
+            || key.Equals("server default", StringComparison.OrdinalIgnoreCase)) return (true, null);
+        var match = Profiles.FirstOrDefault(p => p.Id.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    ?? Profiles.FirstOrDefault(p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    ?? Profiles.FirstOrDefault(p => p.Id == ModelProfiles.Slug(key));
+        return (match is not null, match);
+    }
 }
 
 public static partial class ModelProfiles
@@ -247,6 +266,13 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
 
         await WriteAsync(tenant, current with { DefaultProfileId = profileId == ModelProfiles.ServerId ? null : profileId }, ct);
         return true;
+    }
+
+    /// <summary>Whether agents may pick models for the agents they spawn.</summary>
+    public async Task SetAgentsMayChooseAsync(string tenantId, bool allowed, CancellationToken ct = default)
+    {
+        var tenant = Tenancy.TenantIds.Normalize(tenantId);
+        await WriteAsync(tenant, await LoadAsync(tenant, ct) with { AgentsMayChoose = allowed }, ct);
     }
 
     /// <summary>Back to the server configuration: every profile and saved key is deleted.</summary>

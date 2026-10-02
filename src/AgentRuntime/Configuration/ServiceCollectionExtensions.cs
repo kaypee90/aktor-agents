@@ -92,6 +92,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, CapabilitiesSection>();
         services.AddSingleton<ISystemPromptSection, ToolsSection>();
         services.AddSingleton<ISystemPromptSection, Skills.SkillsSection>();
+        services.AddSingleton<ISystemPromptSection, ModelsSection>();
         services.AddSingleton<ISystemPromptSection, ResourceLimitsSection>();
         services.AddSingleton<ISystemPromptSection, MessagingRulesSection>();
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();

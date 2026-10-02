@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import type { RuntimeEvent } from "@/lib/types";
 
 const TYPE_COLORS: Record<string, string> = {
+  LlmCallCompleted: "text-zinc-500 dark:text-zinc-400",
+  TaskModelChanged: "text-brand-600 dark:text-brand-400",
   AgentCreated: "text-sky-600 dark:text-sky-400",
   AgentStarted: "text-sky-600 dark:text-sky-400",
   AgentThinking: "text-indigo-600 dark:text-indigo-400",
@@ -26,6 +28,8 @@ const TYPE_COLORS: Record<string, string> = {
 
 /** Friendlier names for the runtime's event types. */
 const LABELS: Record<string, string> = {
+  LlmCallCompleted: "Model",
+  TaskModelChanged: "Model switch",
   AgentCreated: "Created",
   AgentStarted: "Started",
   AgentThinking: "Thinking",

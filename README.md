@@ -226,11 +226,11 @@ LLM_API_KEY=sk-...
 The API never exposes this key to an agent or a tool call — it's held by the provider
 implementation and injected via configuration, per CLAUDE.md §44.
 
-**Or choose it in the dashboard.** Under **Settings → AI model**, an organization's Admin picks
-the provider and model, pastes its own API key (stored encrypted, never shown again), lists the
-models the key can use, sets the prices budgets count in, and tests the connection before saving.
-The change applies from each agent's next step. The `.env` settings above are the default for
-organizations that don't choose. See [docs/llm-settings.md](docs/llm-settings.md).
+**Or set up several models in the dashboard.** Under **Settings → AI model**, an organization's
+Admin adds any number of named models (a provider, a model id, its own API key stored encrypted,
+and the prices budgets count in), tests each one, and picks a default. Each task picks its model
+when it starts and can switch to another while it runs. The `.env` settings above are always
+available as the "Server default" model. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ### Local models with Ollama
 
@@ -289,9 +289,9 @@ produces.
 
 - **Dashboard** (`src/web`): a sidebar app with dark, light and system themes (system, the default,
   follows the OS; the switch is at the bottom of the sidebar). Its pages:
-  - **Tasks**: a composer with budget (cost, tokens, minutes, sub-agents), team shape (max agents,
-    fan-out, spawner roles, goal type), delivery (webhook, secret, correlation id) and a cost
-    estimate; then the run itself, with a live React Flow graph colour-coded by status, the run's
+  - **Tasks**: a composer with a model picker, budget (cost, tokens, minutes, sub-agents), team
+    shape (max agents, fan-out, spawner roles, goal type), delivery (webhook, secret, correlation
+    id) and a cost estimate; then the run itself, with a switch to move the team to another model, with a live React Flow graph colour-coded by status, the run's
     full activity (history plus live events via `/ws/events`), the result, and a details panel
     per agent (goal, budget and usage, granted tools, structured reasoning trace).
   - **Workspaces** and **Templates**: standing teams, their triggers, integrations, safety policy
@@ -299,14 +299,15 @@ produces.
   - **Skills**: write a skill in the browser or upload a `SKILL.md` or `.zip`; enable, edit,
     download or delete it.
   - **Shared memory**: search what agents saved with `write_memory`, and add facts for them.
-  - **Analytics**: spend, tokens, runs and durations over time; what consumes the most by agent
-    role; spend by source; tool timings and failures; the most expensive and slowest runs. Filter
-    by date range, source, status and goal; click a chart to drill in
+  - **Analytics**, for tasks and for workspaces: spend, tokens, runs and durations over time; what
+    consumes the most by agent role; spend and response time by model; spend by source or by
+    workspace; tool timings and failures; triggers and approvals; the most expensive and slowest
+    runs. Filter by date range, model, source, status, goal or workspace; click a chart to drill in
     ([docs/analytics.md](docs/analytics.md)).
   - **Run history**: every run with its source (API, MCP, A2A, ACP, replay), status, agents and
     cost, with links to its graph and its journal (step through, replay, fork, diff).
   - **Simulation**, **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
-    snippets), and **Settings** (organization, members, the AI model, API keys, usage and billing,
+    snippets), and **Settings** (organization, members, AI models, API keys, usage and billing,
     your account).
 - **Result tab**: once the root agent finishes (Completed/Failed/Terminated/TimedOut), the run's
   **Result** tab shows the aggregated summary,
@@ -500,21 +501,25 @@ agent sees each skill's name and description and loads the instructions with `lo
 work matches. Skills are per organization and never grant permissions. See
 [docs/skills.md](docs/skills.md).
 
-## 10b-8c. Choosing the model
+## 10b-8c. Choosing models
 
-Each organization can pick its own provider (Anthropic, OpenAI or any OpenAI-compatible service,
-Gemini, Ollama) and model under **Settings → AI model**, with its own key and prices, and test it
-before saving. Without a choice, the server's `.env` configuration applies. Keys are encrypted and
-never sent to an address an organization chose unless they're its own. See
-[docs/llm-settings.md](docs/llm-settings.md).
+Each organization sets up the models it wants under **Settings → AI model**: Anthropic, OpenAI or
+any OpenAI-compatible service, Gemini or Ollama, each with its own key and prices, tested before
+saving, one of them the default. A task picks its model when it starts, can **switch to another
+while it runs** (the whole team moves from each agent's next step), and can be forked onto another
+model after it finishes to compare them from the same start. Agents can also give different models
+to the agents they spawn, so a goal can say it in plain language: "use Careful for the analysis and
+Quick for collecting prices". Keys are encrypted, never returned, and never sent to an address they
+weren't saved for. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ## 10b-8d. Analytics
 
-**Analytics** shows where tokens and money go and what takes long: trends per hour or day,
-consumption by agent role, spend by source, tool timings and failures, run durations, and the
-most expensive and slowest runs, with changes against the previous period. Filters (date range,
-source, status, goal search) stay in the URL, so a view can be shared. See
-[docs/analytics.md](docs/analytics.md).
+**Analytics** shows where tokens and money go and what takes long, for tasks and for workspaces:
+trends per hour or day, consumption by agent role, spend and response time **by model** (which one
+is cheaper or faster), spend by source or by workspace, tool timings and failures, triggers and
+approvals, run durations, and the most expensive and slowest runs, with changes against the
+previous period. Filters (date range, model, source, status, goal, workspace) stay in the URL, so a
+view can be shared. See [docs/analytics.md](docs/analytics.md).
 
 ## 10b-9. Flagship: incident response
 
@@ -561,8 +566,9 @@ State lives in Postgres through Orleans' ADO.NET storage (installed automaticall
   API key all live in server-side configuration; tools accept only the parameters an agent should
   see (a URL, a SQL string, a search query) and the runtime supplies the credential.
 - **Organization model keys** (Settings → AI model) are encrypted with the secrets master key,
-  only Admins can set them, and the API never returns them. The server's own key is used only for
-  the server's provider at the server's address. On a shared server, set
+  only Admins can set them, and the API never returns them. A key is used only for the provider
+  and address it was saved with, and the server's own key only for the server's provider at the
+  server's address. On a shared server, set
   `LLM_ALLOW_PRIVATE_BASE_URLS=false` so organization admins can't point a provider at your
   internal network ([docs/llm-settings.md](docs/llm-settings.md)).
 

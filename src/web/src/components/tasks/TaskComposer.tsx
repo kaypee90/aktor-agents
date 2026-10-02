@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiErrorMessage, createTask, getLlmSettings, previewTask, type CreateTaskInput } from "@/lib/api";
+import { apiErrorMessage, createTask, getLlmSettings, previewTask, type CreateTaskInput, type LlmSettingsView } from "@/lib/api";
+import { ModelPicker } from "./ModelPicker";
 import type { TaskPreview } from "@/lib/types";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { Button, Card, ErrorBanner, Field, Modal, Toggle, cx, inputClass } from "@/components/ui";
@@ -81,9 +82,11 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
     }
   }, []);
   // Which model the team will use, with a way to change it (docs/llm-settings.md).
-  const [model, setModel] = useState<{ provider: string; model: string } | null>(null);
+  // Which model the team runs on: the organization's default unless one is picked (docs/llm-settings.md).
+  const [models, setModels] = useState<LlmSettingsView | null>(null);
+  const [model, setModel] = useState("");
   useEffect(() => {
-    getLlmSettings().then((v) => setModel(v.effective)).catch(() => { /* the chip is optional */ });
+    getLlmSettings().then(setModels).catch(() => { /* the picker is optional */ });
   }, []);
   const [options, setOptions] = useState<Options>(EMPTY);
   const [showOptions, setShowOptions] = useState(false);
@@ -97,7 +100,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
   async function start(preview: TaskPreview | null) {
     setBusy("starting");
     try {
-      const { task_id } = await createTask(toInput(goal.trim(), options, preview?.preview_id));
+      const { task_id } = await createTask({ ...toInput(goal.trim(), options, preview?.preview_id), model: model || null });
       setEstimate(null);
       setGoal("");
       onStarted(task_id, preview);
@@ -115,7 +118,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
     setBusy("estimating");
     let preview: TaskPreview | null = null;
     try {
-      preview = await previewTask(goal.trim(), budgetForPreview());
+      preview = await previewTask(goal.trim(), budgetForPreview(), model || null);
     } catch {
       // The preview is advice: if it fails, start without one.
     }
@@ -132,7 +135,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
     setError(null);
     setBusy("estimating");
     try {
-      setEstimate({ preview: await previewTask(goal.trim(), budgetForPreview()), mustConfirm: false });
+      setEstimate({ preview: await previewTask(goal.trim(), budgetForPreview(), model || null), mustConfirm: false });
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -226,12 +229,13 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
             {showOptions ? "Hide options" : "Budget, team & delivery"}
             <Icons.ChevronDown className={cx("h-3 w-3 transition-transform", showOptions && "rotate-180")} />
           </button>
-          {model && (
-            <Link href="/settings?tab=model" title="Change the AI model"
-              className="mr-auto inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
-              <Icons.Bolt className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate font-mono">{model.provider === "Mock" ? "Mock (demo)" : model.model}</span>
-            </Link>
+          {models && (
+            <div className="mr-auto flex min-w-0 items-center gap-1">
+              <ModelPicker view={models} value={model} onChange={(id) => { setModel(id); setEstimate(null); }} />
+              <Link href="/settings?tab=model" title="Add or change models" className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
+                <Icons.Settings className="h-3.5 w-3.5" />
+              </Link>
+            </div>
           )}
           <div className="flex items-center gap-2">
             <span className="hidden text-[11px] text-zinc-400 sm:inline">Ctrl + Enter to run</span>

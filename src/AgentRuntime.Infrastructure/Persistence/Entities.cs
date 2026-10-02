@@ -111,6 +111,9 @@ public sealed class AgentRecord
     public int ChildrenSpawned { get; set; }
     public decimal CostUsd { get; set; }
     public string? FailureReason { get; set; }
+    /// <summary>The model the agent was given at spawn (docs/llm-settings.md); null when it
+    /// follows its task's model.</summary>
+    public string? ModelProfileId { get; set; }
 }
 
 public sealed class MessageRecord

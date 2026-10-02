@@ -34,18 +34,22 @@ public sealed record CreateTaskRequest(
     string? CallbackSecret = null,
     string? CorrelationId = null,
     AgentRuntime.Safety.TeamPolicy? TeamPolicy = null,
-    string? PreviewId = null);
+    string? PreviewId = null,
+    string? Model = null);
 
-public sealed record PreviewTaskRequest(string Goal, BudgetRequest? Budget);
+public sealed record PreviewTaskRequest(string Goal, BudgetRequest? Budget, string? Model = null);
 
 /// <summary>mode: "full" or "fork"; fork_after_step: the journal sequence number the fork runs live after.</summary>
-public sealed record ReplayTaskRequest(string Mode = "full", long? ForkAfterStep = null);
+public sealed record ReplayTaskRequest(string Mode = "full", long? ForkAfterStep = null, string? Model = null);
+
+/// <summary>model: a model profile id from /api/llm/settings, or "server".</summary>
+public sealed record SwitchModelRequest(string Model);
 
 [ApiController]
 [Route("api/tasks")]
 public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions, TenantAccess access,
     TaskService tasks, TaskPreviewService previews, AgentRuntime.Durability.IStepJournal journal,
-    IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget) : ControllerBase
+    IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget, AgentRuntime.LLM.LlmSettingsService models) : ControllerBase
 {
     /// <summary>Submits a high-level human goal (CLAUDE.md section 1). This is the only manual step —
     /// everything after this is autonomous. The same task service runs MCP, A2A and ACP tasks.</summary>
@@ -64,7 +68,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
                 CorrelationId = request.CorrelationId ?? Request.Headers["X-Correlation-Id"].FirstOrDefault(),
                 Source = "api",
                 TeamPolicy = request.TeamPolicy,
-                PreviewId = request.PreviewId
+                PreviewId = request.PreviewId,
+                ModelProfileId = request.Model
             }, ct);
 
             return CreatedAtAction(nameof(Get), new { id = task.TaskId }, new
@@ -91,7 +96,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     {
         try
         {
-            return Ok(await previews.PreviewAsync(access.TenantId, request.Goal, request.Budget?.Merge(defaultBudget.Value.ToBudget()), ct));
+            return Ok(await previews.PreviewAsync(access.TenantId, request.Goal, request.Budget?.Merge(defaultBudget.Value.ToBudget()), ct, request.Model));
         }
         catch (TaskServiceException ex)
         {
@@ -160,13 +165,47 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
 
         try
         {
-            var replay = await tasks.ReplayAsync(access.TenantId, id, mode, request?.ForkAfterStep, await journal.ListAsync(id, ct), ct);
+            var replay = await tasks.ReplayAsync(access.TenantId, id, mode, request?.ForkAfterStep, await journal.ListAsync(id, ct), ct, request?.Model);
             return CreatedAtAction(nameof(Get), new { id = replay.TaskId }, replay);
         }
         catch (TaskServiceException ex)
         {
             return StatusCode(ex.StatusCode, new { error = ex.Message });
         }
+    }
+
+    /// <summary>Moves a running task to another model (docs/llm-settings.md): every agent uses it from
+    /// its next step, including agents spawned later. Finished work is kept.</summary>
+    [HttpPost("{id}/model")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
+    public async Task<IActionResult> SwitchModel(string id, [FromBody] SwitchModelRequest request, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(id, ct)) return NotFound();
+        try
+        {
+            var caller = HttpContext.Caller();
+            await tasks.SwitchModelAsync(access.TenantId, id, request.Model ?? string.Empty, caller.Email ?? caller.UserId, ct);
+            return Ok(new { model = await ModelViewAsync(id, ct) });
+        }
+        catch (TaskServiceException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>The model a task runs on now: its chosen profile, or the organization's default.</summary>
+    private async Task<object> ModelViewAsync(string taskId, CancellationToken ct)
+    {
+        var chosen = await db.Tasks.AsNoTracking().Where(t => t.TaskId == taskId).Select(t => t.ModelProfileId).FirstOrDefaultAsync(ct);
+        var o = await models.ResolveAsync(access.TenantId, chosen, ct);
+        return new
+        {
+            profile_id = o.ProfileId ?? AgentRuntime.LLM.ModelProfiles.ServerId,
+            name = o.ProfileName ?? "Server default",
+            provider = o.Provider,
+            model = o.Model,
+            chosen = chosen is not null
+        };
     }
 
     /// <summary>Every recorded step of the task, in order: each LLM decision and tool result, by
@@ -248,7 +287,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             source = task.Source,
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
-            fork_after_step = task.ForkAfterStep
+            fork_after_step = task.ForkAfterStep,
+            model = await ModelViewAsync(task.TaskId, ct)
         });
     }
 

@@ -157,6 +157,10 @@ public sealed class AgentState
     /// <summary>A fork's agent past its fork point (or with nothing recorded): it runs live from here.</summary>
     [Id(55)] public bool ReplayDiverged { get; set; }
 
+    /// <summary>The model this agent was given when it was spawned (docs/llm-settings.md); null
+    /// follows the task's model, including when the task is switched.</summary>
+    [Id(56)] public string? ModelProfileId { get; set; }
+
     /// <summary>Replaying and still on the recording.</summary>
     public bool IsReplaying => Replay is not null && !ReplayDiverged;
 

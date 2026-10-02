@@ -213,7 +213,8 @@ public sealed class PersistenceEventSubscriber(
                 ToolCallsUsed = snapshot.Usage.ToolCallsUsed,
                 ChildrenSpawned = snapshot.Usage.ChildrenSpawned,
                 CostUsd = snapshot.Usage.CostUsd,
-                FailureReason = snapshot.FailureReason
+                FailureReason = snapshot.FailureReason,
+                ModelProfileId = snapshot.ModelProfileId
             });
         }
         else

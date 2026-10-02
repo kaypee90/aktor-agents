@@ -480,24 +480,30 @@ Write a detailed 2,000-word history of candle making, from ancient times to toda
 
 ## Dashboard
 
-### D1. Choosing the AI model
+### D1. Several models, per task, switched mid-run
 
-**Tests:** an Admin switches the organization's model in the dashboard (docs/llm-settings.md).
+**Tests:** models set up in the dashboard and chosen per task (docs/llm-settings.md). Set up two
+models, e.g. a strong cloud one and a cheap or local one.
 
 **Check:**
-- [ ] **Settings → AI model** shows the model in use and "Server default".
+- [ ] **Settings → AI model** lists "Server default"; **Add model** opens the editor.
 - [ ] Pick a provider, paste a key, click **Load models**: the provider's models appear in the picker.
 - [ ] **Test connection** with a wrong key says it didn't work and why; with the right key, it works.
-- [ ] After **Save**, the task composer shows the new model, and a new task's agents use it.
-- [ ] Reloading the page never shows the key; the field says a key is saved.
-- [ ] A Member sees the model but can't change it.
-- [ ] **Use server default** goes back to the `.env` model.
+- [ ] Reloading never shows a key; editing a model without retyping the key keeps it; changing its address asks for the key again.
+- [ ] **Make default** moves the Default badge; the composer's picker shows the default first.
+- [ ] Start T2 on the strong model. While specialists work, switch to the cheap one on the run page: Activity shows the switch, and the next "Model" entries name the cheap model, also for agents spawned afterwards.
+- [ ] After it finishes, fork it from an early step onto the other model, and compare the two runs.
+- [ ] A Member sees the models and can pick and switch, but can't add or edit them.
+- [ ] Start a goal that names models per kind of work ("use Careful for the market analysis, Quick for collecting competitor pricing"): the spawn events and agent cards show each specialist on the model named, and "By model" splits the spend.
+- [ ] Turn off **Let agents choose models**: a new run's agents all use the task's model.
 
 ### D2. Analytics
 
-**Tests:** the analytics page after running T1 and T2 (docs/analytics.md).
+**Tests:** the analytics page after running T1, T2 and D1, and a workspace for a while (docs/analytics.md).
 
 **Check:**
+- [ ] **By model** shows both models of D1 with their spend, cost per call and response time; clicking one filters the page by it.
+- [ ] The **Workspaces** view shows spend per workspace, triggers fired and approvals; clicking a workspace focuses on it.
 - [ ] The figures match Run history (runs, spend) for the same range.
 - [ ] Switching Spend / Tokens / Runs / Avg duration redraws the trend; clicking a bar zooms into that day.
 - [ ] "What consumes the most" lists the agent roles of T2; the root's role is among the top.

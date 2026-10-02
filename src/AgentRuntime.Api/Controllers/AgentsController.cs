@@ -15,8 +15,14 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var agents = await orchestrator.FindAgentsAsync(new AgentRuntime.Contracts.FindAgentsQuery { TenantId = access.TenantId }, ct);
+        // Agents given their own model at spawn (docs/llm-settings.md); the rest follow their task's.
+        var ids = agents.Select(a => a.AgentId).ToList();
+        var models = await db.Agents.AsNoTracking()
+            .Where(a => ids.Contains(a.AgentId) && a.ModelProfileId != null)
+            .ToDictionaryAsync(a => a.AgentId, a => a.ModelProfileId, ct);
         return Ok(agents.Select(a => new
         {
+            model_profile_id = models.GetValueOrDefault(a.AgentId),
             agent_id = a.AgentId,
             role = a.Role,
             goal = a.Goal,

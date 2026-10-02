@@ -11,7 +11,14 @@ public sealed record AgentPromptContext
     public required string EnvironmentSummary { get; init; }
     /// <summary>The organization's enabled skills (name and description only).</summary>
     public IReadOnlyList<Skills.SkillSummary> Skills { get; init; } = [];
+    /// <summary>The organization's models an agent may give the agents it spawns (empty when it can't).</summary>
+    public IReadOnlyList<ModelOption> Models { get; init; } = [];
+    /// <summary>The model this agent runs on now.</summary>
+    public string? CurrentModel { get; init; }
 }
+
+/// <summary>A model an agent can pick for an agent it spawns, as listed in its prompt.</summary>
+public sealed record ModelOption(string Id, string Name, string? Description, string Provider, string Model, decimal InPerMillion, decimal OutPerMillion);
 
 public sealed record ToolDefinitionSummary(string Name, string Description);
 

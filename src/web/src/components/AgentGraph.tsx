@@ -21,8 +21,11 @@ export function AgentGraph({
   spend = {},
   selectedId,
   onSelect,
+  modelNames = {},
 }: {
   agents: AgentListItem[];
+  /** Model names by id, to label agents given their own model at spawn. */
+  modelNames?: Record<string, string>;
   /** Spend per agent and branch, when known (tasks only). */
   spend?: Record<string, AgentSpend>;
   selectedId: string | null;
@@ -37,7 +40,11 @@ export function AgentGraph({
         id: agent.agent_id,
         type: "agent",
         position: { x: pos.x, y: pos.y },
-        data: { agent, spend: spend[agent.agent_id] },
+        data: {
+          agent,
+          spend: spend[agent.agent_id],
+          model: agent.model_profile_id ? modelNames[agent.model_profile_id] ?? agent.model_profile_id : undefined,
+        },
         selected: agent.agent_id === selectedId,
       };
     });
@@ -53,7 +60,7 @@ export function AgentGraph({
       }));
 
     return { nodes, edges };
-  }, [agents, spend, selectedId]);
+  }, [agents, spend, selectedId, modelNames]);
 
   if (agents.length === 0) {
     return (

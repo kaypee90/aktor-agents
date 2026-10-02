@@ -33,6 +33,9 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         [FromQuery] string? status,
         [FromQuery] string? q,
         [FromQuery(Name = "tz_offset_minutes")] int tzOffsetMinutes,
+        [FromQuery] string? scope,
+        [FromQuery] string? workspace,
+        [FromQuery] string? model,
         CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
@@ -52,9 +55,13 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         if (start >= end) return BadRequest(new { error = "from must be before to." });
         if (end - start > TimeSpan.FromDays(400)) return BadRequest(new { error = "Choose a range of at most 400 days." });
         if (status is not (null or "" or "running" or "completed" or "failed")) return BadRequest(new { error = "status is running, completed or failed." });
+        if (scope is not (null or "" or "tasks" or "workspaces")) return BadRequest(new { error = "scope is tasks or workspaces." });
+
+        var offset = TimeSpan.FromMinutes(Math.Clamp(-tzOffsetMinutes, -14 * 60, 14 * 60));
+        if (scope == "workspaces") return Ok(await WorkspacesAsync(start, end, workspace, model, offset, ct));
 
         var tenant = access.TenantId;
-        var runs = Filtered(tenant, start, end, source, status, q);
+        var runs = Filtered(tenant, start, end, source, status, q, model);
         var tasks = await runs
             .OrderByDescending(t => t.CreatedAt)
             .Take(MaxRuns)
@@ -107,14 +114,16 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         }).ToList();
         var finished = rows.Where(r => r.DurationS is not null).Select(r => r.DurationS!.Value).ToList();
 
-        var previous = await PreviousAsync(tenant, start - (end - start), start, source, status, q, ct);
-        var offset = TimeSpan.FromMinutes(Math.Clamp(-tzOffsetMinutes, -14 * 60, 14 * 60));
+        var previous = await PreviousAsync(tenant, start - (end - start), start, source, status, q, model, ct);
+        var byModel = await ByModelAsync(db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId)), ct);
         var hourly = end - start <= TimeSpan.FromDays(2);
 
         return Ok(new
         {
+            scope = "tasks",
             range = new { from = start, to = end, bucket = hourly ? "hour" : "day" },
             truncated = tasks.Count == MaxRuns,
+            by_model = byModel,
             totals = new
             {
                 runs = rows.Count,
@@ -179,7 +188,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         agents = r.Agents
     };
 
-    private IQueryable<TaskRecord> Filtered(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q)
+    private IQueryable<TaskRecord> Filtered(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model)
     {
         var runs = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.CreatedAt >= start && t.CreatedAt < end);
         if (!string.IsNullOrWhiteSpace(source)) runs = runs.Where(t => t.Source == source);
@@ -196,13 +205,19 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             runs = runs.Where(t => EF.Functions.ILike(t.Goal, pattern));
         }
 
+        // Runs that used the model for at least one call (a run can switch models part-way).
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            runs = runs.Where(t => db.LlmCalls.Any(c => c.TaskId == t.TaskId && c.ProfileId == model));
+        }
+
         return runs;
     }
 
     /// <summary>The same filters over the period just before, for the "vs previous" figures.</summary>
-    private async Task<object> PreviousAsync(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, CancellationToken ct)
+    private async Task<object> PreviousAsync(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model, CancellationToken ct)
     {
-        var runs = Filtered(tenant, start, end, source, status, q);
+        var runs = Filtered(tenant, start, end, source, status, q, model);
         var ids = runs.Select(t => t.TaskId);
         var count = await runs.CountAsync(ct);
         var agents = db.Agents.AsNoTracking().Where(a => a.TenantId == tenant && ids.Contains(a.TaskId));
@@ -249,6 +264,186 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 avg_duration_s = done.Count == 0 ? (double?)null : done.Average()
             };
         }
+    }
+
+    /// <summary>Spend and response times per model (profile and model id): which model is cheaper
+    /// or faster for the same work. Only calls made since model calls are recorded count.</summary>
+    private static async Task<List<object>> ByModelAsync(IQueryable<LlmCallRecord> calls, CancellationToken ct)
+    {
+        var rows = await calls
+            .GroupBy(c => new { c.ProfileId, c.ProfileName, c.Provider, c.Model })
+            .Select(g => new
+            {
+                g.Key.ProfileId,
+                g.Key.ProfileName,
+                g.Key.Provider,
+                g.Key.Model,
+                Calls = g.Count(),
+                Tokens = g.Sum(c => (long)c.InputTokens + c.OutputTokens),
+                Cost = g.Sum(c => c.CostUsd),
+                AvgMs = g.Average(c => (double)c.DurationMs)
+            })
+            .OrderByDescending(x => x.Cost)
+            .Take(20)
+            .ToListAsync(ct);
+        var samples = (await calls.OrderByDescending(c => c.Id).Take(MaxToolSamples)
+                .Select(c => new { c.ProfileId, c.Model, c.DurationMs }).ToListAsync(ct))
+            .GroupBy(c => (c.ProfileId, c.Model))
+            .ToDictionary(g => g.Key, g => Percentile(g.Select(c => (double)c.DurationMs).ToList(), 0.95));
+        return rows.Select(r => (object)new
+        {
+            profile_id = r.ProfileId,
+            profile_name = r.ProfileName,
+            provider = r.Provider,
+            model = r.Model,
+            label = r.ProfileName is { Length: > 0 } n && n != r.Model ? $"{n} · {r.Model}" : r.Model,
+            calls = r.Calls,
+            tokens = r.Tokens,
+            cost_usd = r.Cost,
+            avg_cost_per_call_usd = r.Calls == 0 ? 0 : r.Cost / r.Calls,
+            avg_duration_ms = r.AvgMs,
+            p95_duration_ms = samples.TryGetValue((r.ProfileId, r.Model), out var p95) ? p95 : (double?)null
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Workspaces: their model calls (tokens, spend, time), tools, triggers that fired and approvals,
+    /// per workspace, role and model, within the range. Workspaces have no runs, so everything is
+    /// counted when it happened. Model calls are recorded from this release on.
+    /// </summary>
+    private async Task<object> WorkspacesAsync(DateTimeOffset start, DateTimeOffset end, string? workspaceFilter, string? modelFilter, TimeSpan offset, CancellationToken ct)
+    {
+        var tenant = access.TenantId;
+        var workspaces = await db.Workspaces.AsNoTracking().Where(w => w.TenantId == tenant)
+            .Select(w => new { w.WorkspaceId, w.Name, w.Status }).ToListAsync(ct);
+        var ids = workspaces.Select(w => w.WorkspaceId).Where(id => string.IsNullOrEmpty(workspaceFilter) || id == workspaceFilter).ToList();
+
+        IQueryable<LlmCallRecord> Calls(DateTimeOffset from, DateTimeOffset to)
+        {
+            var q = db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && c.WorkspaceId != null && ids.Contains(c.WorkspaceId)
+                                                          && c.Timestamp >= from && c.Timestamp < to);
+            return string.IsNullOrEmpty(modelFilter) ? q : q.Where(c => c.ProfileId == modelFilter);
+        }
+
+        var calls = Calls(start, end);
+        var rows = await calls.OrderByDescending(c => c.Id).Take(MaxToolSamples)
+            .Select(c => new { c.WorkspaceId, c.Role, c.Timestamp, Tokens = (long)c.InputTokens + c.OutputTokens, c.CostUsd, c.DurationMs })
+            .ToListAsync(ct);
+        var durations = rows.Select(r => (double)r.DurationMs).ToList();
+
+        var tools = await db.ToolCalls.AsNoTracking()
+            .Where(c => c.TenantId == tenant && ids.Contains(c.TaskId) && c.Timestamp >= start && c.Timestamp < end)
+            .GroupBy(c => c.ToolName)
+            .Select(g => new { Tool = g.Key, Calls = g.Count(), Failures = g.Count(c => !c.Success), Avg = g.Average(c => (double?)c.DurationMs), Total = g.Sum(c => (long?)c.DurationMs) ?? 0 })
+            .OrderByDescending(x => x.Total)
+            .Take(25)
+            .ToListAsync(ct);
+
+        var triggers = await db.Events.AsNoTracking()
+            .Where(e => e.TenantId == tenant && e.Type == "TriggerFired" && e.TaskId != null && ids.Contains(e.TaskId) && e.Timestamp >= start && e.Timestamp < end)
+            .GroupBy(e => e.TaskId!)
+            .Select(g => new { WorkspaceId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.WorkspaceId, x => x.Count, ct);
+
+        var approvals = await db.AuditEntries.AsNoTracking()
+            .Where(a => ids.Contains(a.Scope) && a.Action.StartsWith("approval.") && a.At >= start && a.At < end)
+            .GroupBy(a => new { a.Scope, a.Action })
+            .Select(g => new { g.Key.Scope, g.Key.Action, Count = g.Count() })
+            .ToListAsync(ct);
+        int Approvals(string action, string? workspaceId = null) =>
+            approvals.Where(a => a.Action == action && (workspaceId is null || a.Scope == workspaceId)).Sum(a => a.Count);
+
+        var previous = await Calls(start - (end - start), start)
+            .GroupBy(_ => 1)
+            .Select(g => new { Calls = g.Count(), Tokens = g.Sum(c => (long)c.InputTokens + c.OutputTokens), Cost = g.Sum(c => c.CostUsd) })
+            .FirstOrDefaultAsync(ct);
+
+        var hourly = end - start <= TimeSpan.FromDays(2);
+        var step = hourly ? TimeSpan.FromHours(1) : TimeSpan.FromDays(1);
+        DateTimeOffset Bucket(DateTimeOffset t)
+        {
+            var local = t.ToOffset(offset);
+            return (hourly
+                ? new DateTimeOffset(local.Year, local.Month, local.Day, local.Hour, 0, 0, offset)
+                : new DateTimeOffset(local.Year, local.Month, local.Day, 0, 0, 0, offset)).ToUniversalTime();
+        }
+
+        var buckets = rows.GroupBy(r => Bucket(r.Timestamp)).ToDictionary(g => g.Key);
+        var series = new List<object>();
+        for (var t = Bucket(start); t < end; t += step)
+        {
+            buckets.TryGetValue(t, out var g);
+            series.Add(new
+            {
+                t,
+                calls = g?.Count() ?? 0,
+                tokens = g?.Sum(r => r.Tokens) ?? 0,
+                cost_usd = g?.Sum(r => r.CostUsd) ?? 0,
+                avg_duration_s = g is null || !g.Any() ? (double?)null : g.Average(r => r.DurationMs) / 1000.0
+            });
+        }
+
+        var names = workspaces.ToDictionary(w => w.WorkspaceId);
+        var perWorkspace = rows.GroupBy(r => r.WorkspaceId!).ToDictionary(g => g.Key);
+        return new
+        {
+            scope = "workspaces",
+            range = new { from = start, to = end, bucket = hourly ? "hour" : "day" },
+            truncated = rows.Count == MaxToolSamples,
+            totals = new
+            {
+                workspaces = ids.Count,
+                active_workspaces = perWorkspace.Count,
+                calls = rows.Count,
+                tokens = rows.Sum(r => r.Tokens),
+                cost_usd = rows.Sum(r => r.CostUsd),
+                avg_cost_per_day_usd = rows.Sum(r => r.CostUsd) / (decimal)Math.Max(1, (end - start).TotalDays),
+                avg_call_ms = durations.Count == 0 ? (double?)null : durations.Average(),
+                p95_call_ms = durations.Count == 0 ? (double?)null : Percentile(durations, 0.95),
+                triggers_fired = triggers.Values.Sum(),
+                approvals_requested = Approvals("approval.requested"),
+                approvals_approved = Approvals("approval.approved"),
+                approvals_rejected = Approvals("approval.rejected"),
+                approvals_expired = Approvals("approval.expired"),
+                tool_calls = tools.Sum(t => t.Calls),
+                tool_failures = tools.Sum(t => t.Failures)
+            },
+            previous = new { calls = previous?.Calls ?? 0, tokens = previous?.Tokens ?? 0, cost_usd = previous?.Cost ?? 0 },
+            series,
+            by_workspace = ids.Select(id =>
+            {
+                perWorkspace.TryGetValue(id, out var g);
+                return new
+                {
+                    workspace_id = id,
+                    name = names[id].Name,
+                    status = names[id].Status,
+                    calls = g?.Count() ?? 0,
+                    tokens = g?.Sum(r => r.Tokens) ?? 0,
+                    cost_usd = g?.Sum(r => r.CostUsd) ?? 0,
+                    triggers_fired = triggers.GetValueOrDefault(id),
+                    approvals_requested = Approvals("approval.requested", id)
+                };
+            }).OrderByDescending(w => w.cost_usd).ThenByDescending(w => w.triggers_fired).ToList(),
+            by_role = rows.GroupBy(r => r.Role).Select(g => new
+            {
+                role = g.Key,
+                calls = g.Count(),
+                tokens = g.Sum(r => r.Tokens),
+                cost_usd = g.Sum(r => r.CostUsd),
+                avg_tokens = g.Average(r => (double)r.Tokens)
+            }).OrderByDescending(x => x.tokens).Take(25).ToList(),
+            by_model = await ByModelAsync(calls, ct),
+            by_tool = tools.Select(t => new
+            {
+                tool = t.Tool,
+                calls = t.Calls,
+                failures = t.Failures,
+                avg_duration_ms = t.Avg,
+                p95_duration_ms = (double?)null,
+                total_duration_ms = t.Total
+            })
+        };
     }
 
     private static double Percentile(List<double> values, double p)

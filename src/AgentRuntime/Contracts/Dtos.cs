@@ -34,6 +34,8 @@ public sealed record AgentInitializationRequest
     /// <summary>Where the agent sits in its tree, for the step journal: "r", then "/{spawn call id}" per level.</summary>
     [Id(22)] public string? JournalPath { get; init; }
     [Id(23)] public Durability.ReplaySpec? Replay { get; init; }
+    /// <summary>A model chosen for this agent; null follows the task's model.</summary>
+    [Id(24)] public string? ModelProfileId { get; init; }
 }
 
 /// <summary>How a task's root agent is launched. Every entry point (REST, MCP, A2A, ACP) goes
@@ -65,6 +67,9 @@ public sealed record SpawnAgentRequest
     [Id(6)] public bool Standing { get; init; }
     /// <summary>The spawning agent's stated reason for not doing the work itself (shown in events).</summary>
     [Id(7)] public string? Justification { get; init; }
+    /// <summary>The model the new agent should run on: an organization model's id or name.
+    /// Without one it runs on its parent's model.</summary>
+    [Id(8)] public string? Model { get; init; }
 }
 
 [GenerateSerializer]
@@ -178,6 +183,8 @@ public sealed record AgentSnapshot
     [Id(29)] public Safety.TeamPolicy? TeamPolicy { get; init; }
     [Id(30)] public string JournalPath { get; init; } = "r";
     [Id(31)] public Durability.ReplaySpec? Replay { get; init; }
+    /// <summary>The model chosen for this agent at spawn; null when it follows the task's model.</summary>
+    [Id(32)] public string? ModelProfileId { get; init; }
 }
 
 [GenerateSerializer]

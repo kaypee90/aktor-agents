@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Button, PageHeader } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import { diffTasks, getTask, getTaskJournal, replayTask } from "@/lib/api";
+import { diffTasks, getLlmSettings, getTask, getTaskJournal, replayTask, type LlmSettingsView } from "@/lib/api";
+import { ModelPicker } from "@/components/tasks/ModelPicker";
 import type { JournalStep, RunDiff, StepDiffStatus, TaskSummary } from "@/lib/types";
 
 const STATUS_TONE: Record<StepDiffStatus, string> = {
@@ -68,13 +69,20 @@ function Replay({ taskId, initialCompare }: { taskId: string | null; initialComp
     }
   }, [taskId, compareId]);
 
+  // A fork's live part can run on another model, to compare models from the same starting point.
+  const [models, setModels] = useState<LlmSettingsView | null>(null);
+  const [forkModel, setForkModel] = useState("");
+  useEffect(() => {
+    getLlmSettings().then(setModels).catch(() => { /* the picker is optional */ });
+  }, []);
+
   async function startReplay(mode: "full" | "fork") {
     if (!taskId) return;
     setBusy(true);
     setError(null);
     try {
       const forkAfter = mode === "fork" ? steps[index]?.seq : undefined;
-      const { task_id } = await replayTask(taskId, mode, forkAfter);
+      const { task_id } = await replayTask(taskId, mode, forkAfter, mode === "fork" ? forkModel || null : null);
       router.push(`/?task=${task_id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -133,6 +141,10 @@ function Replay({ taskId, initialCompare }: { taskId: string | null; initialComp
         >
           Fork after step #{current?.seq ?? "–"}
         </button>
+        {models && (
+          <ModelPicker view={models} value={forkModel} onChange={setForkModel} className="ml-1" defaultLabel="Fork on the original's model"
+            title="The model the fork continues on after the selected step (the original's when left on Default)" />
+        )}
         <span className="mx-2 h-5 w-px bg-zinc-200 dark:bg-zinc-800" />
         <input
           value={compareId}

@@ -20,7 +20,8 @@ public sealed class AgentOrchestrator(
     IOptions<DefaultBudgetOptions> defaultBudgetOptions,
     IOptions<SimulationOptions> simulationOptions,
     IOptions<WorkspaceOptions> workspaceOptions,
-    IOptions<TaskBudgetCeilingOptions> ceilingOptions) : IAgentOrchestrator
+    IOptions<TaskBudgetCeilingOptions> ceilingOptions,
+    LLM.LlmSettingsService modelSettings) : IAgentOrchestrator
 {
     private readonly TaskBudgetCeilingOptions _ceiling = ceilingOptions.Value;
     private readonly WorkspaceOptions _workspaces = workspaceOptions.Value;
@@ -246,6 +247,31 @@ public sealed class AgentOrchestrator(
             childPermissions |= parentSnapshot.GrantedPermissions & (ToolPermission.WorkspaceActions | ToolPermission.Integrations);
         }
 
+        // The model the child runs on (docs/llm-settings.md): one the organization set up, when it
+        // lets agents choose; without a choice, its parent's. Checked here, not trusted from the model.
+        var childModel = parentSnapshot.ModelProfileId;
+        if (!string.IsNullOrWhiteSpace(request.Model))
+        {
+            var models = await modelSettings.GetAsync(tenant, cancellationToken);
+            if (!models.AgentsMayChoose)
+            {
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    "Your organization doesn't let agents choose models: spawn without a model and the agent runs on yours.",
+                    cancellationToken, "model_choice_disabled");
+            }
+
+            var (found, profile) = models.Find(request.Model);
+            if (!found)
+            {
+                var ids = models.Profiles.Select(p => p.Id).Prepend(LLM.ModelProfiles.ServerId).ToList();
+                return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
+                    $"No model '{request.Model}'. Use one of: {string.Join(", ", ids)}, or leave model out.",
+                    cancellationToken, "unknown_model", System.Text.Json.JsonSerializer.Serialize(new { available = ids }));
+            }
+
+            childModel = profile?.Id ?? LLM.ModelProfiles.ServerId;
+        }
+
         // Validate and register atomically in one registry turn so concurrent spawns from
         // different parents can't both pass the total/active-agent limit checks.
         var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
@@ -307,7 +333,8 @@ public sealed class AgentOrchestrator(
             // Keyed by the spawn call, not the new id, so a replay (whose agents get new ids) finds
             // this agent's recorded steps under the same path.
             JournalPath = $"{parentSnapshot.JournalPath}/{SpawnCallId(parentAgentId, idempotencyKey) ?? childId}",
-            Replay = parentSnapshot.Replay
+            Replay = parentSnapshot.Replay,
+            ModelProfileId = childModel
         });
         await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
 
@@ -319,8 +346,8 @@ public sealed class AgentOrchestrator(
             TargetAgentId = childId,
             TaskId = parentSnapshot.TaskId,
             TenantId = tenant,
-            Summary = $"Spawned '{request.Role}' agent {childId}.",
-            Data = JustificationData(request)
+            Summary = $"Spawned '{request.Role}' agent {childId}" + (childModel is null || childModel == parentSnapshot.ModelProfileId ? "." : $" on model '{childModel}'."),
+            Data = childModel is null ? JustificationData(request) : new Dictionary<string, string>(JustificationData(request)) { ["model_profile_id"] = childModel }
         }, cancellationToken);
 
         return new SpawnAgentResult
