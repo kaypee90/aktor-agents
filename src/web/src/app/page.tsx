@@ -29,8 +29,10 @@ import { EventStream } from "@/components/EventStream";
 import { FinalResultPanel } from "@/components/FinalResultPanel";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { ModelPicker } from "@/components/tasks/ModelPicker";
+import { TaskChat } from "@/components/tasks/TaskChat";
 import { TaskComposer } from "@/components/tasks/TaskComposer";
-import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, StatusBadge, Tabs, ago, compact, money } from "@/components/ui";
+import { TaskToolsButton } from "@/components/tasks/TaskTools";
+import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, StatusBadge, Tabs, ago, compact, cx, money } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 
 const MAX_EVENTS = 500;
@@ -45,7 +47,10 @@ export default function TasksPage() {
  * one. useSearchParams stays current on in-app navigation, unlike window.location. */
 function TasksFromUrl() {
   const router = useRouter();
-  const taskId = useSearchParams().get("task");
+  const params = useSearchParams();
+  const taskId = params.get("task");
+  // Conversation by default; the agent graph on request (kept in the URL so a reload keeps it).
+  const view = params.get("view") === "agents" ? "agents" : "chat";
   // The pre-run estimate only exists in memory, for the run just started from this page.
   const [preview, setPreview] = useState<{ taskId: string; preview: TaskPreview } | null>(null);
 
@@ -54,8 +59,13 @@ function TasksFromUrl() {
     router.push(id ? `/?task=${encodeURIComponent(id)}` : "/");
   }, [router]);
 
+  const setView = useCallback((next: "chat" | "agents") => {
+    if (taskId) router.replace(`/?task=${encodeURIComponent(taskId)}${next === "agents" ? "&view=agents" : ""}`, { scroll: false });
+  }, [router, taskId]);
+
   return taskId
-    ? <TaskRun key={taskId} taskId={taskId} preview={preview?.taskId === taskId ? preview.preview : null} onBack={() => openTask(null)} />
+    ? <TaskRun key={taskId} taskId={taskId} preview={preview?.taskId === taskId ? preview.preview : null} onBack={() => openTask(null)}
+        view={view} onView={setView} />
     : <TaskHome onOpen={openTask} />;
 }
 
@@ -75,56 +85,59 @@ function TaskHome({ onOpen }: { onOpen: (id: string, preview?: TaskPreview | nul
   }
 
   return (
-    <div>
-      <PageHeader
-        title="Tasks"
-        description="Give a goal to an agent team. It plans the work, starts the specialists it needs, works under a budget the runtime enforces, and reports back."
-        actions={me?.user?.platform_admin && (
-          <Button variant="danger" size="sm" onClick={reset}>Reset all data</Button>
-        )}
-      />
-      <div className="mx-auto max-w-5xl space-y-8 px-6 py-6">
+    <div className="min-h-full">
+      {me?.user?.platform_admin && (
+        <div className="flex justify-end px-6 pt-4">
+          <Button variant="ghost" size="sm" onClick={reset}>Reset all data</Button>
+        </div>
+      )}
+      <div className="mx-auto max-w-3xl px-4 pb-12 pt-[8vh]">
+        <div className="mb-8 text-center">
+          <Icons.Logo className="mx-auto h-11 w-11" />
+          <h1 className="mt-5 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">What should your agents work on?</h1>
+          <p className="mx-auto mt-2 max-w-xl text-sm text-zinc-500">
+            Ask for an outcome: a report, an analysis, a spreadsheet, a slide deck. Attach files for context. A team of agents plans the
+            work, does it and hands you the result, and you can keep refining it in the conversation.
+          </p>
+        </div>
         <TaskComposer onStarted={(id, p) => onOpen(id, p)} />
-
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Recent runs</h2>
-            <Link href="/runs" className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
-              All runs <Icons.ChevronRight className="h-3 w-3" />
-            </Link>
-          </div>
-          {recent === null ? (
-            <div className="h-24 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />
-          ) : recent.length === 0 ? (
-            <EmptyState icon={<Icons.Tasks className="h-5 w-5" />} title="No runs yet" description="Describe a goal above to start your first agent team." />
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {recent.map((t) => (
-                <button key={t.task_id} onClick={() => onOpen(t.task_id)} className="text-left">
-                  <Card className="h-full p-4 transition hover:border-brand-300 hover:shadow-md dark:hover:border-brand-900">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="line-clamp-2 text-sm font-medium text-zinc-900 dark:text-zinc-100">{t.goal}</div>
-                      <StatusBadge status={t.status} />
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-                      <span>{ago(t.created_at)}</span>
-                      <span>{t.agents} agents</span>
-                      <span>{money(t.cost_usd)}</span>
-                      {t.source !== "api" && <Badge>{t.source.toUpperCase()}</Badge>}
-                    </div>
-                  </Card>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
       </div>
+
+      <section className="mx-auto max-w-3xl px-4 pb-12">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Recent</h2>
+          <Link href="/runs" className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+            All runs <Icons.ChevronRight className="h-3 w-3" />
+          </Link>
+        </div>
+        {recent === null ? (
+          <div className="h-24 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />
+        ) : recent.length === 0 ? (
+          <EmptyState icon={<Icons.Chat className="h-5 w-5" />} title="No conversations yet" description="Ask for something above to start your first one." />
+        ) : (
+          <ul className="divide-y divide-zinc-200 overflow-hidden rounded-2xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+            {recent.map((t) => (
+              <li key={t.task_id}>
+                <button onClick={() => onOpen(t.task_id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+                  <Icons.Chat className="h-4 w-4 shrink-0 text-zinc-400" />
+                  <span className="min-w-0 flex-1 truncate text-sm text-zinc-800 dark:text-zinc-200">{t.goal}</span>
+                  {t.source !== "api" && <Badge>{t.source.toUpperCase()}</Badge>}
+                  <StatusBadge status={t.status} />
+                  <span className="hidden w-20 shrink-0 text-right text-[11px] text-zinc-400 sm:inline">{ago(t.created_at)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
 
 /** One run, live: the agent tree, events, the result, and controls. */
-function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPreview | null; onBack: () => void }) {
+function TaskRun({ taskId, preview, onBack, view, onView }: {
+  taskId: string; preview: TaskPreview | null; onBack: () => void; view: "chat" | "agents"; onView: (v: "chat" | "agents") => void;
+}) {
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
@@ -214,6 +227,47 @@ function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPre
     }
   }
 
+  const viewToggle = (
+    <div className="flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs dark:border-zinc-700 dark:bg-zinc-900" role="tablist">
+      {([["chat", "Chat", Icons.Chat], ["agents", "Agents", Icons.Graph]] as const).map(([id, label, Icon]) => (
+        <button key={id} role="tab" aria-selected={view === id} onClick={() => onView(id)}
+          className={cx("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition",
+            view === id ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100" : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200")}>
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const stop = () => {
+    if (confirm("Stop the team? What it has done so far is kept, and you can follow up later.")) cancelTask(taskId);
+  };
+
+  if (view === "chat") {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="flex items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950">
+          <button onClick={onBack} className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800" title="All tasks">
+            <Icons.ChevronRight className="h-4 w-4 rotate-180" />
+          </button>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900 dark:text-zinc-100" title={task?.goal}>{task?.goal ?? "Loading…"}</span>
+          {task && <StatusBadge status={task.status} />}
+          <span className="hidden text-xs text-zinc-500 md:inline">{agents.length} agents · {money(totalCost)}</span>
+          <TaskToolsButton taskId={taskId} />
+          {viewToggle}
+          <Button size="sm" variant="ghost" icon={copied ? <Icons.Check className="h-3.5 w-3.5" /> : <Icons.Link className="h-3.5 w-3.5" />} onClick={copyLink}>
+            <span className="hidden sm:inline">{copied ? "Copied" : "Share"}</span>
+          </Button>
+        </header>
+        <div className="min-h-0 flex-1">
+          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop}
+            budget={task?.budget} ceiling={task?.budget_ceiling}
+            onShowAgents={(id) => { if (id) setSelected(id); onView("agents"); }} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <PageHeader
@@ -227,6 +281,8 @@ function TaskRun({ taskId, preview, onBack }: { taskId: string; preview: TaskPre
         }
         actions={
           <>
+            {viewToggle}
+            <TaskToolsButton taskId={taskId} />
             {task && <StatusBadge status={task.status} />}
             {running && (
               <>

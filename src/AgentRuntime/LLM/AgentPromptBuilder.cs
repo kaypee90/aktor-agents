@@ -48,7 +48,20 @@ public sealed class RoleSection : ISystemPromptSection
 public sealed class GoalSection : ISystemPromptSection
 {
     public string Header => "GOAL";
-    public string Render(AgentPromptContext context) => context.State.Goal;
+    public string Render(AgentPromptContext context)
+    {
+        var followUps = context.State.FollowUps;
+        if (followUps.Count == 0) return context.State.Goal;
+
+        // The task owner's follow-ups extend the goal; the latest is what to work on now.
+        var lines = followUps.Select((f, i) => $"{i + 1}. {(f.Length > 1500 ? f[..1500] + "…" : f)}");
+        return $"""
+            {context.State.Goal}
+
+            Follow-up instructions from the user since then, oldest first (the last one is your current focus):
+            {string.Join("\n", lines)}
+            """;
+    }
 }
 
 public sealed class CurrentStateSection : ISystemPromptSection
@@ -177,7 +190,9 @@ public sealed class CompletionCriteriaSection : ISystemPromptSection
     public string Render(AgentPromptContext context) => context.State.Standing ? string.Empty : context.State.IsResident ? string.Empty : """
         If your goal produces a deliverable (code, a report, data), write it to your task workspace
         with filesystem_write and list the file in complete_task's artifacts — work that only exists
-        in your messages is not a deliverable.
+        in your messages is not a deliverable. When the user asks for (or would expect) a Word, PDF,
+        Excel, PowerPoint or CSV file, write it with create_document in that format. Files the user
+        attached are in attachments/; filesystem_read returns the text of PDF and Office files too.
         Call complete_task once your goal is satisfied, providing a summary, artifacts, and
         evidence. Do not assume another agent's work is done without evidence (a message, an
         artifact, or a status check). Report blockers explicitly in remaining_work rather than

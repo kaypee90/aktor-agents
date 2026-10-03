@@ -9,6 +9,7 @@ using AgentRuntime.Messaging;
 using AgentRuntime.Resources;
 using AgentRuntime.Safety;
 using AgentRuntime.Simulation;
+using AgentRuntime.Skills;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Logging;
@@ -247,6 +248,17 @@ public sealed class AgentGrain(
         return new AgentMessageAck { MessageId = message.MessageId, Accepted = true };
     }
 
+    public async Task FollowUp(TaskFollowUp followUp)
+    {
+        // Read-only checks: this interleaves with a running turn, so it never touches state.
+        if (!IsInitialized || S.ParentAgentId is not null || S.InWorkspace || S.IsResident)
+        {
+            throw new InvalidOperationException("Only a task's root agent takes follow-up instructions.");
+        }
+
+        await Mailbox.Enqueue(new MailItem { Id = followUp.Id, Kind = MailKind.FollowUp, FollowUp = followUp });
+    }
+
     public Task HandleEvent(EnvironmentEvent environmentEvent) =>
         Mailbox.Enqueue(new MailItem { Id = environmentEvent.EventId, Kind = MailKind.Event, Event = environmentEvent });
 
@@ -306,10 +318,23 @@ public sealed class AgentGrain(
     private async Task<DrainResult> DrainMailboxAsync()
     {
         var s = S;
-        if (s.IsTerminal) return default;
+        if (s.IsTerminal && s.ParentAgentId is not null) return default;
 
         var items = await Mailbox.Peek(s.LastConsumedMailSeq);
         if (items.Count == 0) return default;
+
+        // A finished root reads nothing until its owner follows up; then it reopens and reads
+        // everything waiting, the follow-up included.
+        var reopenedNow = false;
+        if (s.IsTerminal)
+        {
+            if (items.FirstOrDefault(i => i.Kind == MailKind.FollowUp && i.FollowUp is not null) is not { } first) return default;
+            Reopen(first.FollowUp!.RoundBudget);
+            reopenedNow = true;
+        }
+
+        // Words the first follow-up for a reopened agent differently from one mid-run.
+        var reopened = reopenedNow;
 
         // Not a safe point for inputs (a tool call awaits its result, e.g. an approval), but a stop
         // must still work: an agent parked for days on an approval can always be stopped.
@@ -348,6 +373,26 @@ public sealed class AgentGrain(
                     if (m.FromAgentId == "user") StartNewRequest();
                     s.InputsReceived++;
                     newInput = true;
+                    break;
+
+                case MailKind.FollowUp when item.FollowUp is { } f && !parked:
+                    s.FollowUps.Add(f.Text);
+                    var attached = string.IsNullOrWhiteSpace(f.AttachmentContext) ? string.Empty : $"\n\n{f.AttachmentContext}";
+                    AppendTranscript(new AgentTranscriptEntry
+                    {
+                        Role = "user",
+                        Content = $"[Follow-up from the user (the task owner)]\n{f.Text}{attached}\n\n" + (reopened
+                            ? "You had finished your goal; your earlier work, findings and files are in your history and " +
+                              "your task workspace. Do what this follow-up asks, building on that work rather than redoing it. " +
+                              "Agents you spawned earlier have finished and can't be messaged; spawn new ones only if this " +
+                              "needs them. When it's done, call complete_task with a summary of what this follow-up produced."
+                            : "Fold this into your current work; it takes priority where it conflicts with your plan.")
+                    });
+                    // Workspace-style "new request" accounting: a follow-up is planned on its own.
+                    StartNewRequest();
+                    s.InputsReceived++;
+                    newInput = true;
+                    reopened = false;
                     break;
 
                 case MailKind.Event when item.Event is { } e && !parked:
@@ -406,6 +451,14 @@ public sealed class AgentGrain(
 
         await state.WriteStateAsync();
         await Mailbox.Acknowledge(s.LastConsumedMailSeq);
+
+        if (reopenedNow && !stopped)
+        {
+            await RegisterDeadlineReminderAsync();
+            await UpdateRegistryStatusAsync(s.Status);
+            await PublishAsync(RuntimeEventType.TaskReopened, $"Agent '{s.Name}' reopened the task for a follow-up from the user.",
+                new Dictionary<string, string> { ["follow_up"] = Clip(s.FollowUps.LastOrDefault() ?? string.Empty, 500) });
+        }
 
         if (stopped)
         {
@@ -800,11 +853,13 @@ public sealed class AgentGrain(
             // Resolve what the call can do first: the safety policy decides on it, and it drives
             // crash recovery below. Connection tools (MCP servers, APIs, messaging) are resolved
             // through the workspace, with the side-effect class their plugin declared.
+            // A task's own connections (added by its owner) work the same way.
             ConnectionToolTarget? connectionTool = null;
-            if (s.WorkspaceId is { } toolWorkspace && ConnectionNames.IsConnectionTool(call.Name) &&
-                s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+            if (ConnectionNames.IsConnectionTool(call.Name) && s.GrantedPermissions.HasFlag(ToolPermission.Integrations) && !s.IsResident)
             {
-                connectionTool = await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name);
+                connectionTool = s.WorkspaceId is { } toolWorkspace
+                    ? await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name)
+                    : await GrainFactory.GetGrain<ITaskConnectionsGrain>(s.TaskId).ResolveConnectionTool(call.Name);
             }
 
             var sideEffects = connectionTool?.SideEffects
@@ -895,8 +950,8 @@ public sealed class AgentGrain(
             else
             {
                 result = connectionTool is not null
-                    ? await integrations.ExecuteToolAsync(s.WorkspaceId!, connectionTool, toolRequest)
-                    : ConnectionNames.IsConnectionTool(call.Name) && s.InWorkspace
+                    ? await integrations.ExecuteToolAsync(s.WorkspaceId ?? s.TaskId, connectionTool, toolRequest)
+                    : ConnectionNames.IsConnectionTool(call.Name) && (s.InWorkspace || s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
                     ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
                     : await toolRegistry.ExecuteAsync(toolRequest,
                         s.IsResident ? s.AllowedTools : [.. s.AllowedTools, .. SkillToolNames], s.GrantedPermissions);
@@ -1069,7 +1124,8 @@ public sealed class AgentGrain(
         if (S.IsResident) return [];
         try
         {
-            return await skills.ListAsync(Tenancy.TenantIds.Normalize(S.TenantId), enabledOnly: true);
+            // The organization's skills, plus its own workspace's (only that workspace's agents see those).
+            return await skills.ListForAgentAsync(Tenancy.TenantIds.Normalize(S.TenantId), S.WorkspaceId);
         }
         catch (Exception ex)
         {
@@ -1086,6 +1142,51 @@ public sealed class AgentGrain(
     {
         S.SpawnsThisRequest = 0;
         S.PlannedWorkersLeft = 0;
+    }
+
+    /// <summary>
+    /// Brings a finished root agent back for a follow-up (task chat). Its transcript, context
+    /// summary and completed work stay as they are: that is the context the follow-up builds on.
+    /// It gets <paramref name="round"/> on top of what it has already spent or handed to children,
+    /// and a new deadline; usage keeps counting, so the task's totals stay true. Saved by the caller
+    /// with the follow-up itself.
+    /// </summary>
+    private void Reopen(ResourceBudget round)
+    {
+        var s = S;
+        s.Reopen();
+
+        // Calls left unanswered when it finished (after complete_task in the same response, or cut
+        // off by a stop) must not run now, and every call needs a result before the next LLM call.
+        foreach (var call in PendingToolCalls())
+        {
+            AppendToolResult(call, ToolExecutionResult.Fail("Not run: you had already finished before this call."));
+        }
+        s.InFlightToolCallIds.Clear();
+
+        static int Add(long a, long b) => (int)Math.Min(int.MaxValue, a + b);
+        s.Budget = s.Budget with
+        {
+            MaxTokens = Add(s.Usage.TokensUsed + (long)s.Usage.ReservedTokens, round.MaxTokens),
+            MaxToolCalls = Add(s.Usage.ToolCallsUsed + (long)s.Usage.ReservedToolCalls, round.MaxToolCalls),
+            MaxCostUsd = s.Usage.CostUsd + s.Usage.ReservedCostUsd + round.MaxCostUsd,
+            MaxChildren = Add(s.Usage.ChildrenSpawned, round.MaxChildren),
+            MaxDurationSeconds = round.MaxDurationSeconds
+        };
+
+        s.StartedExecutionAt = DateTimeOffset.UtcNow;
+        s.CompletedAt = null;
+        s.FailureReason = null;
+        s.WrapUp = WrapUpStage.None;
+        s.Metadata.Remove("wrap_up_reason");
+        s.Metadata.Remove("terminated_reason");
+        s.Paused = false;
+        s.PauseReason = null;
+        s.PausedUntil = null;
+        s.TurnInProgress = false;
+        s.ResumeRequested = false;
+        // A replayed task goes live from here: the recording has nothing for this follow-up.
+        if (s.Replay is not null) s.ReplayDiverged = true;
     }
 
     private static bool ReadBool(string json, string name)
@@ -1564,9 +1665,11 @@ public sealed class AgentGrain(
         // A workspace's connection tools are looked up per call, so a newly connected service (or
         // a tool the user just switched off) takes effect on the agents' very next step.
         IReadOnlyList<ConnectionToolDescriptor> connectionTools = [];
-        if (s.WorkspaceId is { } workspaceId && s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
+        if (s.GrantedPermissions.HasFlag(ToolPermission.Integrations) && !s.IsResident)
         {
-            connectionTools = await GrainFactory.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools();
+            connectionTools = s.WorkspaceId is { } workspaceId
+                ? await GrainFactory.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools()
+                : await GrainFactory.GetGrain<ITaskConnectionsGrain>(s.TaskId).GetConnectionTools();
             if (connectionTools.Count > 0)
             {
                 context = context with
@@ -1896,6 +1999,8 @@ public sealed class AgentGrain(
         TeamPolicy = s.TeamPolicy,
         JournalPath = s.JournalPath,
         Replay = s.Replay,
-        ModelProfileId = s.ModelProfileId
+        ModelProfileId = s.ModelProfileId,
+        StartedExecutionAt = s.StartedExecutionAt,
+        FollowUps = s.FollowUps
     };
 }

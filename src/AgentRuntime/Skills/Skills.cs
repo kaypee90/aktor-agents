@@ -5,8 +5,10 @@ using System.Text.RegularExpressions;
 
 namespace AgentRuntime.Skills;
 
-/// <summary>What every agent sees about a skill: enough to decide whether to load it.</summary>
-public sealed record SkillSummary(string Name, string Description, int Version, bool Enabled, DateTimeOffset UpdatedAt, int FileCount);
+/// <summary>What every agent sees about a skill: enough to decide whether to load it.
+/// <see cref="WorkspaceId"/> is set for a skill only one workspace can use.</summary>
+public sealed record SkillSummary(string Name, string Description, int Version, bool Enabled, DateTimeOffset UpdatedAt, int FileCount,
+    string? WorkspaceId = null);
 
 /// <summary>A skill's resource file (reference docs, templates, scripts), stored as text.</summary>
 public sealed record SkillFile(string Path, string Content);
@@ -28,48 +30,88 @@ public sealed record SkillDocument
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string? UpdatedBy { get; init; }
 
-    public SkillSummary Summary => new(Name, Description, Version, Enabled, UpdatedAt, Files.Count);
+    public SkillSummary Summary => new(Name, Description, Version, Enabled, UpdatedAt, Files.Count, WorkspaceId);
+
+    /// <summary>The workspace this skill belongs to; null for one the whole organization uses.</summary>
+    public string? WorkspaceId { get; init; }
 }
 
-/// <summary>An organization's skills. Everything is scoped by tenant: a skill is never visible to
-/// another organization's agents or users.</summary>
+/// <summary>
+/// An organization's skills. Everything is scoped by tenant: a skill is never visible to another
+/// organization's agents or users. A skill belongs to the whole organization (workspace null) or to
+/// one workspace, whose agents alone can use it. Each method works on exactly one of those scopes;
+/// <see cref="SkillStoreExtensions"/> combines them the way an agent sees skills.
+/// </summary>
 public interface ISkillStore
 {
-    Task<IReadOnlyList<SkillSummary>> ListAsync(string tenantId, bool enabledOnly, CancellationToken cancellationToken = default);
-    Task<SkillDocument?> GetAsync(string tenantId, string name, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SkillSummary>> ListAsync(string tenantId, bool enabledOnly, string? workspaceId = null, CancellationToken cancellationToken = default);
+    Task<SkillDocument?> GetAsync(string tenantId, string name, string? workspaceId = null, CancellationToken cancellationToken = default);
     /// <summary>Creates the skill, or replaces it as a new version.</summary>
-    Task<SkillDocument> SaveAsync(string tenantId, SkillDocument skill, CancellationToken cancellationToken = default);
-    Task<bool> SetEnabledAsync(string tenantId, string name, bool enabled, CancellationToken cancellationToken = default);
-    Task<bool> DeleteAsync(string tenantId, string name, CancellationToken cancellationToken = default);
+    Task<SkillDocument> SaveAsync(string tenantId, SkillDocument skill, string? workspaceId = null, CancellationToken cancellationToken = default);
+    Task<bool> SetEnabledAsync(string tenantId, string name, bool enabled, string? workspaceId = null, CancellationToken cancellationToken = default);
+    Task<bool> DeleteAsync(string tenantId, string name, string? workspaceId = null, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Skills as an agent sees them: its organization's, plus its own workspace's (which take
+/// precedence over an organization skill of the same name).</summary>
+public static class SkillStoreExtensions
+{
+    public static async Task<IReadOnlyList<SkillSummary>> ListForAgentAsync(this ISkillStore store, string tenantId, string? workspaceId,
+        CancellationToken cancellationToken = default)
+    {
+        var organization = await store.ListAsync(tenantId, enabledOnly: true, cancellationToken: cancellationToken);
+        if (string.IsNullOrEmpty(workspaceId)) return organization;
+        var own = await store.ListAsync(tenantId, enabledOnly: true, workspaceId, cancellationToken);
+        var ownNames = own.Select(s => s.Name).ToHashSet();
+        return own.Concat(organization.Where(s => !ownNames.Contains(s.Name))).OrderBy(s => s.Name).ToList();
+    }
+
+    /// <summary>The enabled skill of that name the agent can use: its workspace's first, then its organization's.</summary>
+    public static async Task<SkillDocument?> ResolveAsync(this ISkillStore store, string tenantId, string name, string? workspaceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.IsNullOrEmpty(workspaceId) &&
+            await store.GetAsync(tenantId, name, workspaceId, cancellationToken) is { Enabled: true } own)
+        {
+            return own;
+        }
+
+        return await store.GetAsync(tenantId, name, cancellationToken: cancellationToken) is { Enabled: true } organization ? organization : null;
+    }
 }
 
 public sealed class InMemorySkillStore : ISkillStore
 {
-    private readonly ConcurrentDictionary<(string Tenant, string Name), SkillDocument> _skills = new();
+    private readonly ConcurrentDictionary<(string Tenant, string Workspace, string Name), SkillDocument> _skills = new();
 
-    public Task<IReadOnlyList<SkillSummary>> ListAsync(string tenantId, bool enabledOnly, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<SkillSummary>>(_skills.Where(kv => kv.Key.Tenant == tenantId && (!enabledOnly || kv.Value.Enabled))
+    private static string Ws(string? workspaceId) => workspaceId ?? string.Empty;
+
+    public Task<IReadOnlyList<SkillSummary>> ListAsync(string tenantId, bool enabledOnly, string? workspaceId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<SkillSummary>>(_skills
+            .Where(kv => kv.Key.Tenant == tenantId && kv.Key.Workspace == Ws(workspaceId) && (!enabledOnly || kv.Value.Enabled))
             .Select(kv => kv.Value.Summary).OrderBy(s => s.Name).ToList());
 
-    public Task<SkillDocument?> GetAsync(string tenantId, string name, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_skills.GetValueOrDefault((tenantId, name)));
+    public Task<SkillDocument?> GetAsync(string tenantId, string name, string? workspaceId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_skills.GetValueOrDefault((tenantId, Ws(workspaceId), name)));
 
-    public Task<SkillDocument> SaveAsync(string tenantId, SkillDocument skill, CancellationToken cancellationToken = default)
+    public Task<SkillDocument> SaveAsync(string tenantId, SkillDocument skill, string? workspaceId = null, CancellationToken cancellationToken = default)
     {
-        var saved = _skills.AddOrUpdate((tenantId, skill.Name), skill with { Version = 1 },
-            (_, old) => skill with { Version = old.Version + 1, Enabled = old.Enabled });
+        var scoped = skill with { WorkspaceId = string.IsNullOrEmpty(workspaceId) ? null : workspaceId };
+        var saved = _skills.AddOrUpdate((tenantId, Ws(workspaceId), skill.Name), scoped with { Version = 1 },
+            (_, old) => scoped with { Version = old.Version + 1, Enabled = old.Enabled });
         return Task.FromResult(saved);
     }
 
-    public Task<bool> SetEnabledAsync(string tenantId, string name, bool enabled, CancellationToken cancellationToken = default)
+    public Task<bool> SetEnabledAsync(string tenantId, string name, bool enabled, string? workspaceId = null, CancellationToken cancellationToken = default)
     {
-        if (!_skills.TryGetValue((tenantId, name), out var s)) return Task.FromResult(false);
-        _skills[(tenantId, name)] = s with { Enabled = enabled, UpdatedAt = DateTimeOffset.UtcNow };
+        var key = (tenantId, Ws(workspaceId), name);
+        if (!_skills.TryGetValue(key, out var s)) return Task.FromResult(false);
+        _skills[key] = s with { Enabled = enabled, UpdatedAt = DateTimeOffset.UtcNow };
         return Task.FromResult(true);
     }
 
-    public Task<bool> DeleteAsync(string tenantId, string name, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_skills.TryRemove((tenantId, name), out _));
+    public Task<bool> DeleteAsync(string tenantId, string name, string? workspaceId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_skills.TryRemove((tenantId, Ws(workspaceId), name), out _));
 }
 
 public sealed class SkillPackageException(string message) : Exception(message);

@@ -91,7 +91,9 @@ export type RuntimeEventType =
   | "TriggerFired"
   | "WorkspaceChanged"
   | "LlmCallCompleted"
-  | "TaskModelChanged";
+  | "TaskModelChanged"
+  | "TaskFollowUp"
+  | "TaskReopened";
 
 export interface RuntimeEvent {
   event_id: string;
@@ -159,6 +161,51 @@ export interface TaskSummary {
   replay_mode?: string | null;
   /** The model the task runs on now (docs/llm-settings.md). */
   model?: { profile_id: string; name: string; provider: string; model: string; chosen: boolean };
+  /** What each round of work may spend (the default for a continue), and the server's cap. */
+  budget?: ResourceBudget | null;
+  budget_ceiling?: ResourceBudget;
+}
+
+/** A file in a task's chat: attached by the user (created_by "user") or produced by an agent. */
+export interface TaskChatFile {
+  artifact_id: string;
+  path: string;
+  file_name: string;
+  size_bytes: number;
+  created_by: string;
+}
+
+/** One turn of a task's chat (GET /api/tasks/{id}/chat): the goal or a follow-up from the user,
+ * or the root agent's report for a round, with the files attached to or produced for it. */
+export interface TaskChatEntry {
+  id: string;
+  author: "user" | "agent";
+  text: string;
+  at: string;
+  /** Agent reports: completed, partial, failed or terminated. */
+  status: string | null;
+  by: string | null;
+  files: TaskChatFile[];
+  /** Agent reports that stopped partway: what was left to do. */
+  remaining_work: string[];
+}
+
+/** A file shown in place (GET .../preview); `kind` picks the viewer. */
+export interface FilePreview {
+  file_name: string;
+  path: string;
+  kind: "markdown" | "code" | "text" | "table" | "slides" | "pdf" | "image" | "html" | "binary";
+  format: string;
+  content_type: string;
+  size_bytes: number;
+  created_by: string;
+  created_at: string;
+  language: string | null;
+  text: string | null;
+  sheets: { name: string; rows: string[][]; truncated: boolean }[] | null;
+  slides: { number: number; title: string | null; paragraphs: string[]; notes: string | null }[] | null;
+  truncated: boolean;
+  note: string | null;
 }
 
 export interface MessageRecord {

@@ -80,8 +80,9 @@ something happens:
 
 Workers that finished over 30 minutes ago are hidden behind a "Show earlier finished agents"
 button. The chat is a floating widget in the corner: minimise it to watch, and it counts replies and
-pending approvals while minimised. The side panel keeps the Agents, Files, Triggers, Integrations,
-Safety and Events tabs.
+pending approvals while minimised. The side panel keeps the Agents, Files, Skills & knowledge,
+Triggers, Integrations, Safety and Events tabs. **Skills & knowledge** opens the workspace's own skills
+and knowledge, which only its agents use ([skills.md](skills.md), [memory.md](memory.md#organization-and-workspace-knowledge)).
 
 ## Files
 

@@ -10,7 +10,10 @@ public enum MailKind
 {
     Message,
     Event,
-    Control
+    Control,
+    /// <summary>A follow-up from the task's owner (<see cref="MailItem.FollowUp"/>); the only input
+    /// that reopens a finished root agent.</summary>
+    FollowUp
 }
 
 public enum ControlKind
@@ -35,6 +38,7 @@ public sealed record MailItem
     /// <summary>Stop reason (retire), recorded on the termination event.</summary>
     [Id(6)] public string? Reason { get; init; }
     [Id(7)] public DateTimeOffset EnqueuedAt { get; init; } = DateTimeOffset.UtcNow;
+    [Id(8)] public Contracts.TaskFollowUp? FollowUp { get; init; }
 }
 
 [GenerateSerializer]

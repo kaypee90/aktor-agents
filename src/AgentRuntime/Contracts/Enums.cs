@@ -128,5 +128,11 @@ public enum RuntimeEventType
     /// <summary>One model call finished: model, tokens, cost and duration, for analytics.</summary>
     LlmCallCompleted,
     /// <summary>A running task was switched to another model.</summary>
-    TaskModelChanged
+    TaskModelChanged,
+
+    // Task chat (follow-up instructions on a task).
+    /// <summary>The task's owner sent a follow-up instruction (Data["text"]).</summary>
+    TaskFollowUp,
+    /// <summary>A finished task's root agent took up a follow-up: the task is running again.</summary>
+    TaskReopened
 }

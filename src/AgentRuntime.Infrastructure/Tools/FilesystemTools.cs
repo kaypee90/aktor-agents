@@ -55,7 +55,8 @@ public sealed class FilesystemReadTool(IOptions<ToolsOptions> options) : ITool
     {
         Name = "filesystem_read",
         SideEffects = ToolSideEffects.ReadOnly,
-        Description = "Read a text file from your task's sandboxed workspace.",
+        Description = "Read a file from your task's sandboxed workspace. Text and code come back as they are; PDF, Word (.docx), " +
+                      "Excel (.xlsx) and PowerPoint (.pptx) files come back as their text (Markdown, tables per sheet, one section per slide).",
         RequiredPermissions = ToolPermission.ReadFilesystem,
         JsonSchema = """{ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] }"""
     };
@@ -71,8 +72,23 @@ public sealed class FilesystemReadTool(IOptions<ToolsOptions> options) : ITool
             return ToolExecutionResult.Fail($"File '{args.Path}' does not exist.");
         }
 
-        var content = await File.ReadAllTextAsync(fullPath, request.CancellationToken);
-        return ToolExecutionResult.Ok(JsonSerializer.Serialize(new { path = args.Path, content }, ToolJson.Options));
+        var kind = Documents.DocumentFormats.KindOf(fullPath);
+        if (kind is Documents.DocumentKind.Text or Documents.DocumentKind.Markdown or Documents.DocumentKind.Csv or Documents.DocumentKind.Html)
+        {
+            var content = await File.ReadAllTextAsync(fullPath, request.CancellationToken);
+            return ToolExecutionResult.Ok(JsonSerializer.Serialize(new { path = args.Path, content }, ToolJson.Options));
+        }
+
+        // Documents and binary files (attachments, generated reports): their text, not raw bytes.
+        var read = await Documents.DocumentReader.ReadAsync(fullPath, new Documents.ReadLimits(MaxChars: 60_000), request.CancellationToken);
+        return ToolExecutionResult.Ok(JsonSerializer.Serialize(new
+        {
+            path = args.Path,
+            format = kind.ToString().ToLowerInvariant(),
+            content = read.Text,
+            truncated = read.Truncated,
+            note = read.Note
+        }, ToolJson.Options));
     }
 
     private sealed record PathArgs(string Path);

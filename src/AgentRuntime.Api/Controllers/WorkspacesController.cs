@@ -204,7 +204,27 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             return NotFound();
         }
 
-        return PhysicalFile(Path.GetFullPath(artifact.Location), "application/octet-stream", Path.GetFileName(artifact.Location));
+        return PhysicalFile(Path.GetFullPath(artifact.Location),
+            AgentRuntime.Infrastructure.Documents.DocumentFormats.ContentTypeOf(artifact.Location), Path.GetFileName(artifact.Location));
+    }
+
+    /// <summary>A file shown in place: see <see cref="AgentRuntime.Api.Platform.FilePreviews"/>.</summary>
+    [HttpGet("{id}/files/{artifactId}/preview")]
+    public async Task<IActionResult> FilePreview(string id, string artifactId, CancellationToken ct)
+    {
+        var artifact = await db.Artifacts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId && a.TenantId == access.TenantId, ct);
+        var opts = toolsOptions.Value;
+        if (artifact is null ||
+            !AgentRuntime.Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(opts, id, artifact.Location) ||
+            !System.IO.File.Exists(artifact.Location))
+        {
+            return NotFound();
+        }
+
+        var relative = Path.GetRelativePath(AgentRuntime.Infrastructure.Tools.WorkspacePath.TaskRoot(opts, id), artifact.Location)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        return Ok(await AgentRuntime.Api.Platform.FilePreviews.BuildAsync(artifact.Location, relative, artifact.CreatedByAgent, artifact.CreatedAt, ct));
     }
 
     /// <summary>Every file as one zip, keeping the folders agents used.</summary>

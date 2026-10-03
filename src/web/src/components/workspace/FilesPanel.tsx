@@ -1,6 +1,8 @@
 "use client";
 
-import { workspaceFileUrl, workspaceFilesZipUrl } from "@/lib/api";
+import { useState } from "react";
+import { workspaceFileSource, workspaceFileUrl, workspaceFilesZipUrl, type FileSource } from "@/lib/api";
+import { FilePreviewDialog } from "../files/FilePreview";
 import type { WorkspaceFile, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 
 function formatSize(bytes: number) {
@@ -21,6 +23,7 @@ function fileState(file: WorkspaceFile, workspace: WorkspaceSnapshot) {
 
 export function FilesPanel({ workspace, files }: { workspace: WorkspaceSnapshot; files: WorkspaceFile[] }) {
   const agentName = (id: string) => workspace.agents.find((a) => a.agent_id === id)?.role ?? id;
+  const [preview, setPreview] = useState<FileSource | null>(null);
 
   if (files.length === 0) {
     return (
@@ -50,7 +53,8 @@ export function FilesPanel({ workspace, files }: { workspace: WorkspaceSnapshot;
             <li key={f.artifact_id} className="flex items-start gap-2 p-3">
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
-                  <span className="truncate font-semibold" title={f.path}>{f.path}</span>
+                  <button onClick={() => setPreview(workspaceFileSource(workspace.workspace_id, f.artifact_id))}
+                    className="truncate text-left font-semibold hover:underline" title={`Preview ${f.path}`}>{f.path}</button>
                   <span className={`ml-auto shrink-0 text-[10px] ${state.className}`}>{state.label}</span>
                 </span>
                 <span className="block text-[10px] text-zinc-400">
@@ -68,6 +72,7 @@ export function FilesPanel({ workspace, files }: { workspace: WorkspaceSnapshot;
           );
         })}
       </ul>
+      <FilePreviewDialog source={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }

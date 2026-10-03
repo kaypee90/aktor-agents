@@ -35,12 +35,21 @@ public sealed record CreateTaskRequest(
     string? CorrelationId = null,
     AgentRuntime.Safety.TeamPolicy? TeamPolicy = null,
     string? PreviewId = null,
-    string? Model = null);
+    string? Model = null,
+    List<string>? Attachments = null,
+    List<ConnectionsController.AddBody>? Connections = null);
 
 public sealed record PreviewTaskRequest(string Goal, BudgetRequest? Budget, string? Model = null);
 
 /// <summary>mode: "full" or "fork"; fork_after_step: the journal sequence number the fork runs live after.</summary>
 public sealed record ReplayTaskRequest(string Mode = "full", long? ForkAfterStep = null, string? Model = null);
+
+/// <summary>A follow-up instruction on a task. budget: this round's budget (defaults to the task's own);
+/// attachments: ids of files uploaded with POST /api/tasks/{id}/attachments.</summary>
+public sealed record TaskFollowUpRequest(string? Text, BudgetRequest? Budget = null, List<string>? Attachments = null);
+
+/// <summary>Continue a finished task. budget: this round's budget (defaults to the task's own); note: extra instructions.</summary>
+public sealed record ContinueTaskRequest(BudgetRequest? Budget = null, string? Note = null);
 
 /// <summary>model: a model profile id from /api/llm/settings, or "server".</summary>
 public sealed record SwitchModelRequest(string Model);
@@ -49,7 +58,8 @@ public sealed record SwitchModelRequest(string Model);
 [Route("api/tasks")]
 public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions, TenantAccess access,
     TaskService tasks, TaskPreviewService previews, AgentRuntime.Durability.IStepJournal journal,
-    IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget, AgentRuntime.LLM.LlmSettingsService models) : ControllerBase
+    IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget, AgentRuntime.LLM.LlmSettingsService models,
+    IOptions<AgentRuntime.Configuration.TaskBudgetCeilingOptions> ceilingOptions) : ControllerBase
 {
     /// <summary>Submits a high-level human goal (CLAUDE.md section 1). This is the only manual step —
     /// everything after this is autonomous. The same task service runs MCP, A2A and ACP tasks.</summary>
@@ -57,11 +67,15 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> Create([FromBody] CreateTaskRequest request, CancellationToken ct)
     {
+        var caller = HttpContext.Caller();
         try
         {
             var task = await tasks.StartAsync(access.TenantId, new StartTaskRequest
             {
-                Goal = request.Goal,
+                // Files alone are a request too: work with what was attached.
+                Goal = string.IsNullOrWhiteSpace(request.Goal) && request.Attachments is { Count: > 0 }
+                    ? "Review the attached files and tell me what's important in them."
+                    : request.Goal,
                 Budget = request.Budget?.Merge(defaultBudget.Value.ToBudget()),
                 CallbackUrl = request.CallbackUrl,
                 CallbackSecret = request.CallbackSecret,
@@ -69,7 +83,16 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
                 Source = "api",
                 TeamPolicy = request.TeamPolicy,
                 PreviewId = request.PreviewId,
-                ModelProfileId = request.Model
+                ModelProfileId = request.Model,
+                UploadIds = request.Attachments,
+                By = caller.Email ?? caller.UserId,
+                Connections = request.Connections?.Select(c => new AgentRuntime.Integrations.ConnectionRequest
+                {
+                    PluginId = c.PluginId ?? string.Empty,
+                    Name = c.Name ?? string.Empty,
+                    Settings = c.Settings ?? [],
+                    Secrets = c.Secrets ?? []
+                }).ToList()
             }, ct);
 
             return CreatedAtAction(nameof(Get), new { id = task.TaskId }, new
@@ -193,6 +216,113 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         }
     }
 
+    /// <summary>Task chat: a follow-up instruction for the task's root agent. A running task folds it
+    /// into its work; a finished one picks up again from where it stopped, with all its context and
+    /// a new round of budget. Answered once the follow-up is safely queued, not when it's done:
+    /// watch the task (or GET chat) for the reply.</summary>
+    [HttpPost("{id}/messages")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
+    public async Task<IActionResult> FollowUp(string id, [FromBody] TaskFollowUpRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var caller = HttpContext.Caller();
+            var entry = await tasks.FollowUpAsync(access.TenantId, id, request.Text ?? string.Empty, caller.Email ?? caller.UserId,
+                request.Budget?.Merge(defaultBudget.Value.ToBudget()), ct, request.Attachments);
+            return Accepted(ChatView(entry));
+        }
+        catch (TaskServiceException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>Continues a task that stopped before finishing (partial, out of budget or time):
+    /// the root agent picks up the remaining work with the budget given here, on top of what it spent.</summary>
+    [HttpPost("{id}/continue")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
+    public async Task<IActionResult> Continue(string id, [FromBody] ContinueTaskRequest? request, CancellationToken ct)
+    {
+        try
+        {
+            var caller = HttpContext.Caller();
+            var entry = await tasks.ContinueAsync(access.TenantId, id, request?.Budget?.Merge(defaultBudget.Value.ToBudget()), request?.Note,
+                caller.Email ?? caller.UserId, ct);
+            return Accepted(ChatView(entry));
+        }
+        catch (TaskServiceException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>Attaches files to the task (any type), multipart field "files". They're saved under
+    /// attachments/ in the task's workspace, where its agents can read them; pass the returned ids
+    /// in a follow-up's "attachments" to hand them to the root agent.</summary>
+    [HttpPost("{id}/attachments")]
+    [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
+    [RequestSizeLimit(300L * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 300L * 1024 * 1024)]
+    public async Task<IActionResult> Attach(string id, [FromForm] List<IFormFile> files, CancellationToken ct)
+    {
+        try
+        {
+            var caller = HttpContext.Caller();
+            var saved = await tasks.AddAttachmentsAsync(access.TenantId, id,
+                files.Select(f => new AttachmentUpload(f.FileName, f.Length, f.OpenReadStream)).ToList(), caller.Email ?? caller.UserId, ct);
+            return Ok(saved.Select(FileView));
+        }
+        catch (TaskServiceException ex)
+        {
+            return StatusCode(ex.StatusCode, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>A task file shown in place (docs: kind picks the viewer): Markdown, code, tables
+    /// for CSV and Excel, slides for PowerPoint, Word as Markdown, PDF and images from the file.</summary>
+    [HttpGet("{id}/artifacts/{artifactId}/preview")]
+    public async Task<IActionResult> Preview(string id, string artifactId, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(id, ct)) return NotFound();
+        var artifact = await db.Artifacts.AsNoTracking().FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId, ct);
+        var opts = toolsOptions.Value;
+        if (artifact is null || !WorkspacePath.IsInsideTaskRoot(opts, id, artifact.Location) || !System.IO.File.Exists(artifact.Location))
+        {
+            return NotFound();
+        }
+
+        var relative = Path.GetRelativePath(WorkspacePath.TaskRoot(opts, id), artifact.Location).Replace(Path.DirectorySeparatorChar, '/');
+        return Ok(await FilePreviews.BuildAsync(artifact.Location, relative, artifact.CreatedByAgent, artifact.CreatedAt, ct));
+    }
+    /// <summary>The task's conversation, oldest first: the goal, follow-ups, and the root agent's report for each round.</summary>
+    [HttpGet("{id}/chat")]
+    public async Task<IActionResult> Chat(string id, CancellationToken ct)
+    {
+        var chat = await tasks.GetChatAsync(access.TenantId, id, ct);
+        return chat is null ? NotFound() : Ok(chat.Select(ChatView));
+    }
+
+    private static object ChatView(TaskChatEntry e) => new
+    {
+        id = e.Id,
+        author = e.Author,
+        text = e.Text,
+        at = e.At,
+        status = e.Status,
+        by = e.By,
+        files = (e.Files ?? []).Select(FileView),
+        remaining_work = e.RemainingWork ?? []
+    };
+
+    private static object FileView(TaskChatFile f) => new
+    {
+        artifact_id = f.ArtifactId,
+        path = f.Path,
+        file_name = f.FileName,
+        size_bytes = f.SizeBytes,
+        created_by = f.CreatedBy
+    };
+
     /// <summary>The model a task runs on now: its chosen profile, or the organization's default.</summary>
     private async Task<object> ModelViewAsync(string taskId, CancellationToken ct)
     {
@@ -288,7 +418,14 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
             fork_after_step = task.ForkAfterStep,
-            model = await ModelViewAsync(task.TaskId, ct)
+            model = await ModelViewAsync(task.TaskId, ct),
+            // What each round of work may spend (a continue can set another), and the server's cap.
+            budget = task.BudgetJson is null ? null : JsonSerializer.Deserialize<ResourceBudget>(task.BudgetJson),
+            budget_ceiling = ceilingOptions.Value.Clamp(new ResourceBudget
+            {
+                MaxTokens = int.MaxValue, MaxDurationSeconds = int.MaxValue, MaxChildren = int.MaxValue,
+                MaxToolCalls = int.MaxValue, MaxCostUsd = decimal.MaxValue
+            })
         });
     }
 
@@ -392,8 +529,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             return NotFound(new { error = "Artifact file no longer exists on disk." });
         }
 
-        var bytes = await System.IO.File.ReadAllBytesAsync(artifact.Location, ct);
-        return File(bytes, "application/octet-stream", Path.GetFileName(artifact.Location));
+        // Typed, so a preview can show PDFs and images from it; always sent as a download.
+        return PhysicalFile(Path.GetFullPath(artifact.Location),
+            AgentRuntime.Infrastructure.Documents.DocumentFormats.ContentTypeOf(artifact.Location), Path.GetFileName(artifact.Location));
     }
 
     /// <summary>

@@ -81,8 +81,10 @@ side effects are keyed by it:
 ### Durable mailbox
 
 Every input to an agent goes into its `AgentMailboxGrain`, which is persisted before the sender
-gets an acknowledgement: messages, environment events, and operator control (pause, resume,
-stop). The agent consumes items only at safe points, when every tool call of the last decision
+gets an acknowledgement: messages, environment events, operator control (pause, resume, stop),
+and follow-ups from a task's owner. A follow-up is the only input a finished root agent reads: it
+reopens the agent with its history intact and the round's budget saved in the same write
+([tasks.md](tasks.md#follow-ups)). The agent consumes items only at safe points, when every tool call of the last decision
 has its result, so an input can never land between a tool call and its result.
 
 An item is removed only after the agent has saved the highest sequence number it consumed, so it

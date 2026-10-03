@@ -1,8 +1,15 @@
 using System.Text.Json;
 using AgentRuntime.Contracts;
 using AgentRuntime.Memory;
+using AgentRuntime.Workspaces;
 
 namespace AgentRuntime.Tools;
+
+/// <summary>Workspace agents run with their workspace's id as their task id: that's the knowledge they may see.</summary>
+internal static class MemoryScopes
+{
+    public static string? WorkspaceOf(ToolExecutionRequest request) => WorkspaceIds.IsWorkspace(request.TaskId) ? request.TaskId : null;
+}
 
 public sealed class ReadMemoryTool(IMemoryStore memory) : ITool
 {
@@ -19,7 +26,8 @@ public sealed class ReadMemoryTool(IMemoryStore memory) : ITool
         var args = JsonSerializer.Deserialize<KeyArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid read_memory arguments.");
 
-        var record = await memory.ReadAsync(request.TenantId, request.AgentId, args.Key, request.CancellationToken);
+        var record = await memory.ReadAsync(request.TenantId, request.AgentId, args.Key,
+            MemoryScope.ForAgentIn(MemoryScopes.WorkspaceOf(request)), request.CancellationToken);
         return record is null
             ? ToolExecutionResult.Ok(JsonSerializer.Serialize(new { found = false }, ToolJson.Options))
             : ToolExecutionResult.Ok(JsonSerializer.Serialize(new { found = true, value = record.Value }, ToolJson.Options));
@@ -35,14 +43,16 @@ public sealed class WriteMemoryTool(IMemoryStore memory) : ITool
         Name = "write_memory",
         SideEffects = ToolSideEffects.Idempotent,
         Description = "Persist a working-memory or episodic-memory value. Set shared=true to make it " +
-                      "visible to other agents as shared knowledge.",
+                      "visible to other agents as shared knowledge. In a workspace, shared knowledge stays within the " +
+                      "workspace unless organization_wide=true.",
         JsonSchema = """
         {
           "type": "object",
           "properties": {
             "key": { "type": "string" },
             "value": { "type": "string" },
-            "shared": { "type": "boolean" }
+            "shared": { "type": "boolean" },
+            "organization_wide": { "type": "boolean", "description": "Workspace agents only: share with every agent of the organization, not just this workspace." }
           },
           "required": ["key", "value"]
         }
@@ -60,13 +70,15 @@ public sealed class WriteMemoryTool(IMemoryStore memory) : ITool
             TenantId = request.TenantId,
             Kind = args.Shared ? MemoryKind.Shared : MemoryKind.Working,
             Key = args.Key,
-            Value = args.Value
+            Value = args.Value,
+            // A workspace's findings stay in it unless the agent shares them with everyone.
+            WorkspaceId = args.OrganizationWide ? null : MemoryScopes.WorkspaceOf(request)
         }, request.CancellationToken);
 
         return ToolExecutionResult.Ok(JsonSerializer.Serialize(new { written = true }, ToolJson.Options));
     }
 
-    private sealed record WriteArgs(string Key, string Value, bool Shared = false);
+    private sealed record WriteArgs(string Key, string Value, bool Shared = false, bool OrganizationWide = false);
 }
 
 public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
@@ -75,8 +87,8 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
     {
         Name = "search_knowledge",
         SideEffects = ToolSideEffects.ReadOnly,
-        Description = "Search shared knowledge written by any agent of your organization for relevant prior findings. " +
-                      "Matches by meaning as well as by words, best and most recent first.",
+        Description = "Search shared knowledge for relevant prior findings: your organization's, and your workspace's own if " +
+                      "you're in one. Matches by meaning as well as by words, best and most recent first.",
         JsonSchema = """{ "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] }"""
     };
 
@@ -85,7 +97,8 @@ public sealed class SearchKnowledgeTool(IMemoryStore memory) : ITool
         var args = JsonSerializer.Deserialize<QueryArgs>(request.ArgumentsJson, ToolJson.Options)
                    ?? throw new ArgumentException("Invalid search_knowledge arguments.");
 
-        var results = await memory.SearchAsync(request.TenantId, args.Query, MemoryKind.Shared, cancellationToken: request.CancellationToken);
+        var results = await memory.SearchAsync(request.TenantId, args.Query, MemoryKind.Shared,
+            scope: MemoryScope.ForAgentIn(MemoryScopes.WorkspaceOf(request)), cancellationToken: request.CancellationToken);
         return ToolExecutionResult.Ok(JsonSerializer.Serialize(new
         {
             results = results.Take(MaxResults).Select(r => new { r.AgentId, r.Key, r.Value, r.Score })

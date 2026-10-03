@@ -274,7 +274,8 @@ curl -X POST http://localhost:5080/api/tasks \
   -d '{"goal": "Research the feasibility of an AI-powered property management SaaS."}'
 ```
 
-Watch the dashboard: the Root Agent appears, spawns a Research Agent and a Technical
+The task opens as a conversation: your request, a live "working" card while the team works, then
+its answer with the files it made. Switch to **Agents** to watch the graph: the Root Agent appears, spawns a Research Agent and a Technical
 Architecture Agent, at least one of which recursively spawns its own Detail Agent, all execute
 concurrently, and the tree converges back to the Root Agent reporting completion. Click any node
 for its goal, budget/usage, granted tools, and structured reasoning trace (tool calls with their
@@ -289,16 +290,22 @@ produces.
 
 - **Dashboard** (`src/web`): a sidebar app with dark, light and system themes (system, the default,
   follows the OS; the switch is at the bottom of the sidebar). Its pages:
-  - **Tasks**: a composer with a model picker, budget (cost, tokens, minutes, sub-agents), team
-    shape (max agents, fan-out, spawner roles, goal type), delivery (webhook, secret, correlation
-    id) and a cost estimate; then the run itself, with a switch to move the team to another model, with a live React Flow graph colour-coded by status, the run's
-    full activity (history plus live events via `/ws/events`), the result, and a details panel
-    per agent (goal, budget and usage, granted tools, structured reasoning trace).
+  - **Tasks**: a ChatGPT/Claude-style composer that takes a goal and files, with a model picker and
+    options for budget (cost, tokens, minutes, sub-agents), team shape (max agents, fan-out,
+    spawner roles, goal type), delivery (webhook, secret, correlation id) and a cost estimate. Each
+    task is then a **conversation** (follow-ups, attachments, file previews, continuing with more
+    budget; see [docs/tasks.md](docs/tasks.md)). Its **Agents** view shows the live React Flow
+    graph colour-coded by status, a switch to move the team to another model, the run's full
+    activity (history plus live events via `/ws/events`), the result, and a details panel per agent
+    (goal, budget and usage, granted tools, structured reasoning trace).
   - **Workspaces** and **Templates**: standing teams, their triggers, integrations, safety policy
     (including team shape) and approvals.
   - **Skills**: write a skill in the browser or upload a `SKILL.md` or `.zip`; enable, edit,
-    download or delete it.
-  - **Shared memory**: search what agents saved with `write_memory`, and add facts for them.
+    download or delete it. Skills belong to the whole organization or to one workspace, whose agents
+    alone use them ([docs/skills.md](docs/skills.md)).
+  - **Shared memory**: search what agents saved with `write_memory`, and add facts or whole files
+    (PDF, Word, Excel, PowerPoint, CSV, text) for them, for the whole organization or one workspace
+    ([docs/memory.md](docs/memory.md#organization-and-workspace-knowledge)).
   - **Analytics**, for tasks and for workspaces: spend, tokens, runs and durations over time; what
     consumes the most by agent role; spend and response time by model; spend by source or by
     workspace; tool timings and failures; triggers and approvals; the most expensive and slowest
@@ -316,8 +323,24 @@ produces.
   the root agent write a `final-report.md` consolidating its sub-agents' findings, so this is
   populated even with no LLM API key configured). Files appear as agents write them, without
   reloading the page.
+- **Conversations, files and documents** ([docs/tasks.md](docs/tasks.md)):
+  - **Follow-ups** reopen a finished task with its whole history and a new round of budget; a
+    running task folds them into its work.
+  - **Continue**: when an answer stops partway (out of budget or time), the chat shows what was
+    left and lets you set a bigger budget to finish it.
+  - **Attachments** of any type, on the first message or any follow-up. Agents read PDF, Word,
+    Excel and PowerPoint files as text.
+  - **Documents**: agents write Word, PDF, Excel, PowerPoint, CSV and Markdown files with
+    `create_document`.
+  - **Previews**: any file opens in place (documents rendered, sheets as grids, decks as slides,
+    PDFs and images as themselves) from the chat, the Result tab or a workspace's files.
+  - **MCP servers for a task**: connect them when you start it (Options) or from its **Tools**
+    button; its agents use their tools from their next step.
 - **REST API**:
   - `GET /api/tasks/{id}` — status + one-line summary
+  - `POST /api/tasks/{id}/messages` (a follow-up), `POST /api/tasks/{id}/continue` (carry on with a
+    new budget), `GET /api/tasks/{id}/chat` (the conversation), uploads and previews: see
+    [docs/tasks.md](docs/tasks.md#api).
   - `GET /api/tasks/{id}/result` — the aggregated `TaskResult` (CLAUDE.md §52): `{ready, result: {status, summary, findings, artifacts, participating_agents, unresolved_items, metrics}}`. `ready: false` until the root completes.
   - `GET /api/tasks/{id}/artifacts` — list artifacts produced during the task
   - `GET /api/tasks/{id}/artifacts/{artifactId}/content` — download an artifact's file content
@@ -552,7 +575,12 @@ State lives in Postgres through Orleans' ADO.NET storage (installed automaticall
   `MAX_ACTIVE_AGENTS=50` (`RuntimeLimits` in `appsettings.json`), enforced by
   `AgentRegistryGrain` — not the LLM.
 - **Budgets** (tokens, tool calls, children, cost, duration) propagate from parent to child and
-  can only ever be narrowed, never expanded (`ResourceBudget.DeriveChildBudget`).
+  can only ever be narrowed, never expanded (`ResourceBudget.DeriveChildBudget`). A task gets more
+  budget only when a person follows up or continues it: one round at a time, capped by
+  `TaskBudgetCeiling`, never by an agent ([docs/tasks.md](docs/tasks.md#continuing-with-more-budget)).
+- **Uploads** (attachments, knowledge files) are capped per file and per upload
+  (`ATTACHMENT_MAX_BYTES`, `ATTACHMENT_MAX_FILES`), stored in the task's sandboxed workspace, and
+  previewed without running anything: HTML shows in a sandbox with scripts off.
 - **Loop guards**: max reasoning iterations per turn, max identical-tool-call repeats, max
   messages per task.
 - **Permissions** (`ToolPermission` flags: filesystem, shell, network, git, database, spawn,
@@ -652,3 +680,6 @@ This is a prototype, and a few things are deliberately simplified rather than fu
   failover across machines, set `Silo:Clustering=AdoNet` to run several silos.
 - **`POST /api/admin/reset` has no auth** — anyone who can reach the API can wipe all data. Fine
   for a local prototype; a shared deployment should gate this behind an operator role.
+- **Agents read text, not pixels.** Attached images are stored and previewed but not passed to the
+  models; legacy `.doc`/`.xls`/`.ppt` files aren't read. Generated decks are titles and bullets
+  ([docs/tasks.md](docs/tasks.md#limits)).

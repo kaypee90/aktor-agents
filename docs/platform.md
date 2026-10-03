@@ -195,6 +195,14 @@ only ones who can use **Reset all**, which wipes every organization's work but k
 | `POST` / `PUT` / `DELETE` | `/api/llm/profiles[/{id}]`, `PUT /api/llm/default` | Admin | Add, edit or delete a model; choose the default. |
 | `POST` | `/api/llm/test` / `models` | Admin | Test settings, or list the provider's models. |
 | `POST` | `/api/tasks/{id}/model` | Member | Switch a running task to another model. |
+| `POST` / `GET` | `/api/tasks/{id}/messages`, `/api/tasks/{id}/chat` | Member / Viewer | Follow up on a task: a finished one is reopened with all its context and a new round of its budget. |
+| `POST` | `/api/tasks/{id}/continue` | Member | Continue a task that stopped partway, with a new budget. See [tasks.md](tasks.md). |
+| `POST` | `/api/tasks/{id}/attachments` | Member | Attach files (multipart `files`) for a follow-up's `attachments`. |
+| `POST` | `/api/uploads` | Member | Stage files for a new task's `attachments` (expire after a day if unused). |
+| `POST` | `/api/memory/files` | Member | Add files to shared memory as searchable passages. |
+| any | `/api/skills…`, `/api/memory…` with `?workspace={id}` | as without | One workspace's own skills or knowledge, which only its agents use. |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/api/tasks/{id}/connections[/{cid}]` | Viewer / Member | A task's own tool connections (MCP servers, APIs). See [tasks.md](tasks.md#connecting-mcp-servers). |
+| `GET` | `/api/tasks/{id}/artifacts/{artifactId}/preview`, `/api/workspaces/{id}/files/{artifactId}/preview` | Viewer | A file ready to show in place. |
 | `GET` | `/api/analytics` | Viewer | Spend, tokens and durations with filters. See [analytics.md](analytics.md). |
 | `GET` | `/api/billing` | Viewer | Plan, usage, quota, plans. |
 | `POST` | `/api/billing/checkout` / `portal` | Owner | Returns a Stripe URL. |

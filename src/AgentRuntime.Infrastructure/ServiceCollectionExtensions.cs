@@ -86,6 +86,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITool, WebSearchTool>();
         services.AddSingleton<ITool, FilesystemReadTool>();
         services.AddSingleton<ITool, FilesystemWriteTool>();
+        services.AddSingleton<ITool, CreateDocumentTool>();
         services.AddSingleton<ITool, FilesystemListTool>();
         services.AddSingleton<ITool, ShellExecTool>();
         services.AddSingleton<ITool, HttpRequestTool>();

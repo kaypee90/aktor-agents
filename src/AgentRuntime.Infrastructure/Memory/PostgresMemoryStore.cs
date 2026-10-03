@@ -44,7 +44,8 @@ public sealed class PostgresMemoryStore(
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var existing = await db.MemoryEntries
-            .FirstOrDefaultAsync(m => m.TenantId == record.TenantId && m.AgentId == record.AgentId && m.Key == record.Key, cancellationToken);
+            .FirstOrDefaultAsync(m => m.TenantId == record.TenantId && m.AgentId == record.AgentId && m.Key == record.Key &&
+                                      m.WorkspaceId == record.WorkspaceId, cancellationToken);
 
         string memoryId;
         if (existing is not null)
@@ -64,7 +65,8 @@ public sealed class PostgresMemoryStore(
                 Kind = record.Kind.ToString(),
                 Key = record.Key,
                 Value = record.Value,
-                CreatedAt = record.CreatedAt
+                CreatedAt = record.CreatedAt,
+                WorkspaceId = record.WorkspaceId
             });
             memoryId = record.MemoryId;
         }
@@ -83,20 +85,25 @@ public sealed class PostgresMemoryStore(
             [VectorLiteral(vector), embeddings.Model, memoryId], cancellationToken);
     }
 
-    public async Task<MemoryRecord?> ReadAsync(string tenantId, string agentId, string key, CancellationToken cancellationToken = default)
+    public async Task<MemoryRecord?> ReadAsync(string tenantId, string agentId, string key, MemoryScope? scope = null, CancellationToken cancellationToken = default)
     {
+        scope ??= MemoryScope.Organization;
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.MemoryEntries
+        var candidates = await db.MemoryEntries
             .Where(m => m.TenantId == tenantId && m.Key == key && (m.AgentId == agentId || m.Kind == nameof(MemoryKind.Shared)))
             .OrderByDescending(m => m.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
 
+        // Its own entries always; shared ones only where the reader can see them.
+        var entity = candidates.FirstOrDefault(m => m.AgentId == agentId || scope.Includes(m.WorkspaceId));
         return entity is null ? null : ToRecord(entity);
     }
 
     public async Task<IReadOnlyList<MemoryRecord>> SearchAsync(
-        string tenantId, string query, MemoryKind? kind = null, string? agentId = null, CancellationToken cancellationToken = default)
+        string tenantId, string query, MemoryKind? kind = null, string? agentId = null, MemoryScope? scope = null,
+        CancellationToken cancellationToken = default)
     {
+        scope ??= MemoryScope.Organization;
         query = (query ?? string.Empty).Trim();
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
@@ -113,6 +120,8 @@ public sealed class PostgresMemoryStore(
         command.Parameters.AddWithValue("tenant", tenantId);
         command.Parameters.Add(new NpgsqlParameter("kind", NpgsqlDbType.Text) { Value = (object?)kind?.ToString() ?? DBNull.Value });
         command.Parameters.Add(new NpgsqlParameter("agent", NpgsqlDbType.Text) { Value = (object?)agentId ?? DBNull.Value });
+        command.Parameters.Add(new NpgsqlParameter("ws", NpgsqlDbType.Text) { Value = (object?)scope.WorkspaceId ?? DBNull.Value });
+        command.Parameters.AddWithValue("wsonly", scope.WorkspaceOnly);
         command.Parameters.AddWithValue("q", query);
         command.Parameters.AddWithValue("like", "%" + EscapeLike(query) + "%");
         command.Parameters.AddWithValue("halflife", Math.Max(0.01, _search.RecencyHalfLifeDays));
@@ -140,7 +149,8 @@ public sealed class PostgresMemoryStore(
                 Key = reader.GetString(4),
                 Value = reader.GetString(5),
                 CreatedAt = reader.GetFieldValue<DateTimeOffset>(6),
-                Score = Math.Round(reader.GetDouble(7), 4)
+                Score = Math.Round(reader.GetDouble(7), 4),
+                WorkspaceId = reader.IsDBNull(8) ? null : reader.GetString(8)
             });
         }
 
@@ -160,9 +170,10 @@ public sealed class PostgresMemoryStore(
             : "0";
         return $"""
             SELECT "MemoryId", "TenantId", "AgentId", "Kind", "Key", "Value", "CreatedAt",
-                   (@wv * vec + @wk * LEAST(1.0, kw * 10 + CASE WHEN sub THEN 0.5 ELSE 0 END) + @wr * rec)::float8 AS score
+                   (@wv * vec + @wk * LEAST(1.0, kw * 10 + CASE WHEN sub THEN 0.5 ELSE 0 END) + @wr * rec)::float8 AS score,
+                   "WorkspaceId"
             FROM (
-                SELECT m."MemoryId", m."TenantId", m."AgentId", m."Kind", m."Key", m."Value", m."CreatedAt",
+                SELECT m."MemoryId", m."TenantId", m."AgentId", m."Kind", m."Key", m."Value", m."CreatedAt", m."WorkspaceId",
                        ({vec})::float8 AS vec,
                        CASE WHEN @q = '' THEN 0 ELSE ts_rank_cd(to_tsvector('english', m."Key" || ' ' || m."Value"), websearch_to_tsquery('english', @q)) END::float8 AS kw,
                        (@q <> '' AND (m."Key" ILIKE @like OR m."Value" ILIKE @like)) AS sub,
@@ -171,6 +182,11 @@ public sealed class PostgresMemoryStore(
                 WHERE m."TenantId" = @tenant
                   AND (@kind IS NULL OR m."Kind" = @kind)
                   AND (@agent IS NULL OR m."AgentId" = @agent)
+                  AND (CASE
+                         WHEN @ws IS NULL THEN m."WorkspaceId" IS NULL
+                         WHEN @wsonly THEN m."WorkspaceId" = @ws
+                         ELSE m."WorkspaceId" IS NULL OR m."WorkspaceId" = @ws
+                       END)
             ) s
             WHERE @q = '' OR vec >= @minsim OR kw > 0 OR sub
             ORDER BY score DESC, "CreatedAt" DESC
@@ -222,6 +238,7 @@ public sealed class PostgresMemoryStore(
         Kind = Enum.Parse<MemoryKind>(e.Kind),
         Key = e.Key,
         Value = e.Value,
-        CreatedAt = e.CreatedAt
+        CreatedAt = e.CreatedAt,
+        WorkspaceId = e.WorkspaceId
     };
 }

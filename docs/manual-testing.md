@@ -110,7 +110,7 @@ specialist who didn't write it, and include both opinions in comparison.md.
 ### T5. Running out of budget gives a partial result, not a failure
 
 **Tests:** the wrap-up warning, the final report-only step, and the partial result reaching the
-parent. Use the API, since the form doesn't set budgets. With accounts enabled, create an API key
+parent. Use the API (or set the same limits under **Options** in the home composer). With accounts enabled, create an API key
 under Settings first.
 
 ```bash
@@ -132,6 +132,8 @@ curl -X POST http://localhost:5080/api/tasks \
       `remaining_work` lists the missing sections.
 - [ ] Any child agents also end with results; none fail with "budget exhausted".
 - [ ] Tokens used stay within 40,000.
+- [ ] Open the task: the chat shows the answer marked **Partly done**, a **Not finished yet** list,
+      and a **Continue** card. Continue it in [T11](#t11-continue-a-partial-result-with-more-budget).
 
 ### T6. A missing tool is reported, not worked around
 
@@ -158,6 +160,82 @@ specialists are running:
 - [ ] **Cancel:** all agents become Terminated and no further LLM calls appear.
 - [ ] Clicking any agent shows its goal, parent, children, tools, messages and token use, and a
       trace of decisions (never hidden reasoning).
+
+### T8. A task is a conversation
+
+**Tests:** the chat view, follow-ups that reopen a finished task, and switching views
+([tasks.md](tasks.md)). Run T2 from the home page, wait for the answer, then send:
+
+```text
+Now add a section on pricing for small landlords.
+```
+
+**Check:**
+- [ ] The task opens in **Chat**: your message, a working card with the latest steps and **Stop**,
+      then the answer with a card for `final-report.md`.
+- [ ] **Show work** lists the round's steps by agent; **Agents** switches to the graph
+      (`?view=agents`), and **Chat** switches back.
+- [ ] After the follow-up, the Activity shows **Follow-up** and **Reopened**, and the status goes
+      back to running.
+- [ ] The second answer builds on the first (it doesn't start the research over). The root
+      agent's details list the follow-up under its goal.
+
+### T9. Files in, documents out
+
+**Tests:** attachments, reading Office files and PDFs, `create_document`, and previews. Needs a
+real model. On the home page, attach a spreadsheet (`.xlsx`) and a PDF, and send:
+
+```text
+Analyze the attached files. Give me a summary, then put the key numbers in an Excel workbook and
+write a two-page PDF brief.
+```
+
+**Check:**
+- [ ] Your message shows both files as cards; clicking them opens the sheet as a grid and the
+      PDF in the viewer, beside the chat.
+- [ ] The agents read the files (`filesystem_read` on `attachments/...` returns their text).
+- [ ] The answer has `.xlsx` and `.pdf` cards that open in the preview and download as files
+      Excel and a PDF reader open.
+- [ ] Follow up with "Build a slide deck from this" (the suggestion chip): a `.pptx` appears and
+      previews as slides.
+
+### T10. Shared memory from files
+
+**Tests:** knowledge uploads ([memory.md](memory.md#knowledge-from-files)). Shared memory → Add
+knowledge → **From files**: add a policy document (`.docx` or `.pdf`) and an image.
+
+**Check:**
+- [ ] The document is added as one or more passages marked **From a file**; the image is reported
+      as having no text.
+- [ ] Searching for a phrase from the document finds its passage.
+- [ ] A task asked about the policy finds it with `search_knowledge`.
+
+### T11. Continue a partial result with more budget
+
+**Tests:** the Continue card and `/continue`. Use the task from T5.
+
+**Check:**
+- [ ] The **Continue** card offers Same again, 2× and 5×, and shows the server's maximum for each
+      limit.
+- [ ] Choose **2×** and add a note. Your message lists what was left and your note.
+- [ ] The team finishes the missing sections using what it already wrote; the new answer is
+      **completed** and the card is gone.
+- [ ] The run's totals (tokens, cost) include both rounds.
+- [ ] `POST /api/tasks/{id}/continue` on a running task returns `409`.
+
+### T12. MCP servers for a task
+
+**Tests:** task connections ([tasks.md](tasks.md#connecting-mcp-servers)). Run the reference MCP
+server: `PORT=3005 npx -y @modelcontextprotocol/server-everything streamableHttp`.
+
+**Check:**
+- [ ] Home composer → **Options → MCP servers**: add `http://localhost:3005/mcp` named `everything`
+      and run "Use the everything server's echo tool to say hello". The root's tools include
+      `everything__echo` and the answer shows it was called.
+- [ ] A bad URL is refused before the task starts, naming the server.
+- [ ] On a running task, **Tools** → connect it again under another name; switch a tool off: it
+      disappears from the agents' next step.
+- [ ] Another task doesn't see the server's tools.
 
 ---
 
@@ -451,6 +529,18 @@ Write a detailed 2,000-word history of candle making, from ancient times to toda
 - [ ] **Pause** stops agents and triggers; **Resume** restarts them without a burst of LLM calls.
 - [ ] Any worker that ran out of its own budget reports a **partial** result with the remaining
       work, and the coordinator decides what to do with it.
+
+### W9b. A workspace's own skills and knowledge
+
+**Tests:** workspace scope ([skills.md](skills.md), [memory.md](memory.md#organization-and-workspace-knowledge)).
+In a workspace, open **Skills & knowledge → Knowledge**, add a fact ("Our board meets on 12 March"),
+and a skill under **Skills** with the scope set to the workspace.
+
+**Check:**
+- [ ] Asked "When does the board meet?", the workspace's coordinator finds the fact.
+- [ ] A task (or another workspace) asked the same doesn't find it.
+- [ ] The workspace's agents list the skill under SKILLS; a task's agents don't.
+- [ ] With the scope set to **Whole organization**, neither the fact nor the skill is listed.
 
 ### W10. The workspace screen
 

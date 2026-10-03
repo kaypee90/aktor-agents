@@ -161,6 +161,10 @@ public sealed class AgentState
     /// follows the task's model, including when the task is switched.</summary>
     [Id(56)] public string? ModelProfileId { get; set; }
 
+    /// <summary>Follow-up instructions from the task's owner, oldest first (root agents only). Kept
+    /// here as well as in the transcript so compaction can't summarize them away.</summary>
+    [Id(57)] public List<string> FollowUps { get; set; } = [];
+
     /// <summary>Replaying and still on the recording.</summary>
     public bool IsReplaying => Replay is not null && !ReplayDiverged;
 
@@ -209,4 +213,16 @@ public sealed class AgentState
     /// response to an LLM decision (CLAUDE.md section 50).
     /// </summary>
     public void ForceStatus(AgentStatus next) => Status = next;
+
+    /// <summary>
+    /// Takes a finished root agent back to Idle so it can work on a follow-up from the task's owner.
+    /// The only way out of a terminal status, and only the runtime calls it (on a follow-up the API
+    /// delivered), never in response to an LLM decision or another agent's message.
+    /// </summary>
+    public void Reopen()
+    {
+        if (!IsTerminal) throw new InvalidOperationException($"Agent '{AgentId}' is {Status}, not finished; nothing to reopen.");
+        if (ParentAgentId is not null) throw new InvalidOperationException($"Agent '{AgentId}' isn't a task's root agent and can't be reopened.");
+        Status = AgentStatus.Idle;
+    }
 }

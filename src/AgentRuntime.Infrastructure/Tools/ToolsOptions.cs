@@ -26,6 +26,12 @@ public sealed class ToolsOptions
 
     public int SearchMaxResults { get; set; } = 5;
 
+    /// <summary>Largest file a user may attach to a task chat (bytes).</summary>
+    public long AttachmentMaxBytes { get; set; } = 25 * 1024 * 1024;
+
+    /// <summary>Most files one upload may carry.</summary>
+    public int AttachmentMaxFiles { get; set; } = 10;
+
     public int HttpTimeoutSeconds { get; set; } = 15;
     public int HttpMaxResponseBytes { get; set; } = 200_000;
 

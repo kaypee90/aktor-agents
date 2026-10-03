@@ -61,6 +61,10 @@ export interface CreateTaskInput {
   team_policy?: TeamPolicyInput;
   /** A model profile id (or "server"); the organization's default when left out. */
   model?: string | null;
+  /** Upload ids from uploadFiles: the task starts with these files. */
+  attachments?: string[];
+  /** Tool connections (MCP servers, APIs) for the task's agents, connected before it starts. */
+  connections?: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string> }[];
 }
 
 export function createTask(input: CreateTaskInput) {
@@ -118,12 +122,16 @@ export function getMemoryStatus() {
   return apiFetch<{ semantic: boolean; embedding_model: string | null; mode: string }>("/api/memory/status");
 }
 
-export function searchKnowledge(q: string, limit = 50) {
-  return apiFetch<KnowledgeEntry[]>(`/api/memory?q=${encodeURIComponent(q)}&limit=${limit}`);
+/** `?workspace=` for one workspace's own skills or knowledge; nothing for the organization's. */
+const scopeQuery = (workspace?: string | null, first = true) =>
+  workspace ? `${first ? "?" : "&"}workspace=${encodeURIComponent(workspace)}` : "";
+
+export function searchKnowledge(q: string, limit = 50, workspace?: string | null) {
+  return apiFetch<KnowledgeEntry[]>(`/api/memory?q=${encodeURIComponent(q)}&limit=${limit}${scopeQuery(workspace, false)}`);
 }
 
-export function addKnowledge(key: string, value: string) {
-  return apiFetch<void>("/api/memory", { method: "POST", body: JSON.stringify({ key, value }) });
+export function addKnowledge(key: string, value: string, workspace?: string | null) {
+  return apiFetch<void>(`/api/memory${scopeQuery(workspace)}`, { method: "POST", body: JSON.stringify({ key, value }) });
 }
 
 export function getTask(taskId: string) {
@@ -140,6 +148,79 @@ export function resumeTask(taskId: string) {
 
 export function cancelTask(taskId: string) {
   return apiFetch<void>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+}
+
+/** The task's conversation: goal, follow-ups and the root agent's report for each round. */
+export function getTaskChat(taskId: string) {
+  return apiFetch<import("./types").TaskChatEntry[]>(`/api/tasks/${taskId}/chat`);
+}
+
+/** A follow-up instruction: a finished task picks up again with all its context. `attachments`
+ * are ids returned by uploadTaskAttachments. */
+export function followUpTask(taskId: string, text: string, attachments: string[] = []) {
+  return apiFetch<import("./types").TaskChatEntry>(`/api/tasks/${taskId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ text, attachments }),
+  });
+}
+
+/** Picks a task that stopped partway back up, with a budget for the rest (on top of what it spent). */
+export function continueTask(taskId: string, budget: Partial<ResourceBudget>, note?: string) {
+  return apiFetch<import("./types").TaskChatEntry>(`/api/tasks/${taskId}/continue`, {
+    method: "POST",
+    body: JSON.stringify({ budget, note: note || undefined }),
+  });
+}
+
+/** Uploads files to a task (any type) for a follow-up to reference. */
+export function uploadTaskAttachments(taskId: string, files: File[]) {
+  return postFiles<import("./types").TaskChatFile[]>(`/api/tasks/${taskId}/attachments`, files);
+}
+
+/** Posts files as multipart "files" (not apiFetch: the browser sets the multipart boundary itself). */
+async function postFiles<T>(path: string, files: File[]): Promise<T> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form, credentials: "include" });
+  if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  if (!res.ok) throw new Error(`POST ${path} failed: ${res.status} ${await res.text().catch(() => "")}`);
+  return (await res.json()) as T;
+}
+
+/** Files attached to a task that doesn't exist yet; pass the ids as the new task's attachments. */
+export function uploadFiles(files: File[]) {
+  return postFiles<{ upload_id: string; file_name: string; size_bytes: number }[]>("/api/uploads", files);
+}
+
+/** Adds files to shared memory as knowledge (their text, in searchable passages). */
+export function addKnowledgeFiles(files: File[], workspace?: string | null) {
+  return postFiles<{ file_name: string; entries: number; characters: number; truncated: boolean; error: string | null }[]>(
+    `/api/memory/files${scopeQuery(workspace)}`, files);
+}
+
+/** Where a file's preview and contents come from: a task's or a workspace's. */
+export interface FileSource {
+  previewUrl: string;
+  contentUrl: string;
+}
+
+export function taskFileSource(taskId: string, artifactId: string): FileSource {
+  return { previewUrl: `/api/tasks/${taskId}/artifacts/${artifactId}/preview`, contentUrl: artifactDownloadUrl(taskId, artifactId) };
+}
+
+export function workspaceFileSource(workspaceId: string, artifactId: string): FileSource {
+  return { previewUrl: `/api/workspaces/${workspaceId}/files/${artifactId}/preview`, contentUrl: workspaceFileUrl(workspaceId, artifactId) };
+}
+
+export function getFilePreview(source: FileSource) {
+  return apiFetch<import("./types").FilePreview>(source.previewUrl);
+}
+
+/** A file's bytes as a typed blob, for showing PDFs and images (the session cookie goes along). */
+export async function fetchFileBlob(source: FileSource, contentType: string) {
+  const res = await fetch(source.contentUrl, { credentials: "include" });
+  if (!res.ok) throw new Error(`The file couldn't be loaded (${res.status}).`);
+  return new Blob([await res.arrayBuffer()], { type: contentType });
 }
 
 export function getTaskEvents(taskId: string, limit = 200) {
@@ -379,6 +460,30 @@ export function verifyAudit(workspaceId: string) {
 
 // ---- Integrations ----
 
+/** A task's own tool connections (MCP servers, APIs) for its agents. */
+export function listTaskConnections(taskId: string) {
+  return apiFetch<import("./workspaceTypes").ConnectionView[]>(`/api/tasks/${taskId}/connections`);
+}
+
+export function addTaskConnection(taskId: string, body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string> }) {
+  return apiFetch<{ message: string; connection: import("./workspaceTypes").ConnectionView }>(`/api/tasks/${taskId}/connections`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateTaskConnection(taskId: string, connectionId: string, body: { enabled_tools?: string[] }) {
+  return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/tasks/${taskId}/connections/${connectionId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function refreshTaskConnection(taskId: string, connectionId: string) {
+  return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/tasks/${taskId}/connections/${connectionId}/refresh`, { method: "POST" });
+}
+
+export function removeTaskConnection(taskId: string, connectionId: string) {
+  return apiFetch<void>(`/api/tasks/${taskId}/connections/${connectionId}`, { method: "DELETE" });
+}
+
 export function listPlugins() {
   return apiFetch<import("./workspaceTypes").PluginInfo[]>("/api/plugins");
 }
@@ -567,44 +672,46 @@ export interface Skill {
   updated_by: string | null;
 }
 
-export function listSkills() {
-  return apiFetch<SkillSummary[]>("/api/skills");
+// Every skill call takes an optional workspace: that workspace's own skills, which only its agents use.
+
+export function listSkills(workspace?: string | null) {
+  return apiFetch<SkillSummary[]>(`/api/skills${scopeQuery(workspace)}`);
 }
 
-export function getSkill(name: string) {
-  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}`);
+export function getSkill(name: string, workspace?: string | null) {
+  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}${scopeQuery(workspace)}`);
 }
 
 /** Writes a new skill in the editor. */
-export function createSkill(skill: { name: string; description: string; instructions: string; files?: SkillFile[] }) {
-  return apiFetch<Skill>("/api/skills", { method: "POST", body: JSON.stringify(skill) });
+export function createSkill(skill: { name: string; description: string; instructions: string; files?: SkillFile[] }, workspace?: string | null) {
+  return apiFetch<Skill>(`/api/skills${scopeQuery(workspace)}`, { method: "POST", body: JSON.stringify(skill) });
 }
 
 /** Edits a skill (saved as a new version; the name stays). */
-export function updateSkill(name: string, skill: { description: string; instructions: string; files?: SkillFile[] }) {
-  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(skill) });
+export function updateSkill(name: string, skill: { description: string; instructions: string; files?: SkillFile[] }, workspace?: string | null) {
+  return apiFetch<Skill>(`/api/skills/${encodeURIComponent(name)}${scopeQuery(workspace)}`, { method: "PUT", body: JSON.stringify(skill) });
 }
 
 /** Uploads a SKILL.md or a .zip (SKILL.md plus resource files). */
-export async function uploadSkill(file: File) {
+export async function uploadSkill(file: File, workspace?: string | null) {
   const form = new FormData();
   form.append("file", file);
   // Not apiFetch: the browser must set the multipart Content-Type (with its boundary) itself.
-  const res = await fetch(`${API_BASE}/api/skills/upload`, { method: "POST", body: form, credentials: "include" });
+  const res = await fetch(`${API_BASE}/api/skills/upload${scopeQuery(workspace)}`, { method: "POST", body: form, credentials: "include" });
   if (!res.ok) throw new Error(`POST /api/skills/upload failed: ${res.status} ${await res.text().catch(() => "")}`);
   return (await res.json()) as Skill;
 }
 
-export function setSkillEnabled(name: string, enabled: boolean) {
-  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
+export function setSkillEnabled(name: string, enabled: boolean, workspace?: string | null) {
+  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}${scopeQuery(workspace)}`, { method: "PATCH", body: JSON.stringify({ enabled }) });
 }
 
-export function deleteSkill(name: string) {
-  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+export function deleteSkill(name: string, workspace?: string | null) {
+  return apiFetch<void>(`/api/skills/${encodeURIComponent(name)}${scopeQuery(workspace)}`, { method: "DELETE" });
 }
 
-export function skillDownloadUrl(name: string) {
-  return `${API_BASE}/api/skills/${encodeURIComponent(name)}/download`;
+export function skillDownloadUrl(name: string, workspace?: string | null) {
+  return `${API_BASE}/api/skills/${encodeURIComponent(name)}/download${scopeQuery(workspace)}`;
 }
 
 // --- Models (docs/llm-settings.md) ---

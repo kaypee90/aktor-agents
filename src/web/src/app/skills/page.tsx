@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
+import { ScopePicker, useScope } from "@/components/platform/ScopePicker";
 import {
   apiErrorMessage,
   createSkill,
@@ -37,7 +38,13 @@ type Draft = { original: string | null; name: string; description: string; instr
  * sees the enabled skills' names and descriptions and loads one when its work matches.
  */
 export default function SkillsPage() {
+  return <Suspense><Skills /></Suspense>;
+}
+
+function Skills() {
   const { me } = useAuth();
+  // The organization's skills, or one workspace's own (?workspace=).
+  const [scope, setScope] = useScope();
   const canEdit = atLeast((me?.role ?? "Viewer") as Role, "Admin");
   const [skills, setSkills] = useState<SkillSummary[] | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -46,10 +53,10 @@ export default function SkillsPage() {
   const [query, setQuery] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const load = () => listSkills().then(setSkills).catch((e) => setError(apiErrorMessage(e)));
+  const load = () => listSkills(scope).then(setSkills).catch((e) => setError(apiErrorMessage(e)));
   useEffect(() => {
-    listSkills().then(setSkills).catch((e) => setError(apiErrorMessage(e)));
-  }, []);
+    listSkills(scope).then(setSkills).catch((e) => setError(apiErrorMessage(e)));
+  }, [scope]);
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -67,7 +74,7 @@ export default function SkillsPage() {
   }
 
   async function edit(name: string) {
-    const s = await getSkill(name);
+    const s = await getSkill(name, scope);
     setDraft({ original: s.name, name: s.name, description: s.description, instructions: s.instructions, files: s.files });
   }
 
@@ -75,8 +82,8 @@ export default function SkillsPage() {
     if (!draft) return;
     const ok = await act(() =>
       draft.original
-        ? updateSkill(draft.original, { description: draft.description, instructions: draft.instructions, files: draft.files })
-        : createSkill({ name: draft.name, description: draft.description, instructions: draft.instructions, files: draft.files }),
+        ? updateSkill(draft.original, { description: draft.description, instructions: draft.instructions, files: draft.files }, scope)
+        : createSkill({ name: draft.name, description: draft.description, instructions: draft.instructions, files: draft.files }, scope),
     );
     if (ok) setDraft(null);
   }
@@ -84,7 +91,7 @@ export default function SkillsPage() {
   async function upload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (file) await act(() => uploadSkill(file));
+    if (file) await act(() => uploadSkill(file, scope));
   }
 
   const setFile = (i: number, patch: Partial<SkillFile>) =>
@@ -111,6 +118,7 @@ export default function SkillsPage() {
 
       <div className="mx-auto max-w-5xl space-y-4 px-6 py-6">
         <ErrorBanner error={error} onClose={() => setError(null)} />
+        <ScopePicker value={scope} onChange={(ws) => { setSkills(null); setScope(ws); }} what="skills" />
         {!canEdit && <div className="text-xs text-zinc-500">You can read skills; Admins can add and change them.</div>}
 
         {skills && skills.length > 0 && (
@@ -125,7 +133,7 @@ export default function SkillsPage() {
         ) : skills.length === 0 ? (
           <EmptyState
             icon={<Icons.Skills className="h-5 w-5" />}
-            title="No skills yet"
+            title={scope ? "No skills for this workspace yet" : "No skills yet"}
             description="A skill is a SKILL.md: a name, a description of when to use it, and instructions. Write one here or upload one you already have."
             action={canEdit && <Button variant="primary" onClick={() => setDraft({ original: null, name: "", description: "", instructions: TEMPLATE, files: [] })}>Write your first skill</Button>}
           />
@@ -146,18 +154,18 @@ export default function SkillsPage() {
                     </div>
                   </div>
                   {canEdit && (
-                    <Toggle checked={s.enabled} label="" onChange={(v) => act(() => setSkillEnabled(s.name, v))} disabled={busy} />
+                    <Toggle checked={s.enabled} label="" onChange={(v) => act(() => setSkillEnabled(s.name, v, scope))} disabled={busy} />
                   )}
                 </div>
                 <p className="mt-3 line-clamp-3 flex-1 text-sm text-zinc-600 dark:text-zinc-400">{s.description}</p>
                 <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
                   <span className="text-[11px] text-zinc-400">Updated {ago(s.updated_at)}</span>
                   <div className="flex gap-1">
-                    <a href={skillDownloadUrl(s.name)}><Button size="sm" variant="ghost" icon={<Icons.Download className="h-3.5 w-3.5" />}>Download</Button></a>
+                    <a href={skillDownloadUrl(s.name, scope)}><Button size="sm" variant="ghost" icon={<Icons.Download className="h-3.5 w-3.5" />}>Download</Button></a>
                     {canEdit && <Button size="sm" variant="ghost" onClick={() => edit(s.name)}>Edit</Button>}
                     {canEdit && (
                       <Button size="sm" variant="ghost" className="text-rose-600 dark:text-rose-400" disabled={busy}
-                        onClick={() => confirm(`Delete the skill '${s.name}'?`) && act(() => deleteSkill(s.name))}>
+                        onClick={() => confirm(`Delete the skill '${s.name}'?`) && act(() => deleteSkill(s.name, scope))}>
                         Delete
                       </Button>
                     )}

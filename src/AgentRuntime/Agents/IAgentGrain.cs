@@ -31,6 +31,14 @@ public interface IAgentGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task<AgentMessageAck> SendMessage(AgentMessage message);
 
+    /// <summary>
+    /// A follow-up instruction from the task's owner (task chat), for a task's root agent only. A
+    /// running root reads it at its next safe point; a finished one is reopened with its whole
+    /// history. Always interleaves: it only stores the follow-up in the durable mailbox.
+    /// </summary>
+    [AlwaysInterleave]
+    Task FollowUp(TaskFollowUp followUp);
+
     /// <summary>Always interleaves for the same reason as <see cref="SendMessage"/>.</summary>
     [AlwaysInterleave]
     Task HandleEvent(EnvironmentEvent environmentEvent);

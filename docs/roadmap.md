@@ -33,6 +33,12 @@ product? If it's the latter, move P9 (flagship use case) ahead of P2.
 
 Change log:
 
+- 2026-10-03: direction set: a finished **productivity product** where people do their work through
+  agent teams, used like ChatGPT, Claude or Gemini (this answers the open question above). Built:
+  tasks as conversations with follow-ups that reopen a finished task, continuing a partial result
+  with more budget, attachments of any type, `create_document` (Word, PDF, Excel, PowerPoint, CSV,
+  Markdown), in-place previews, and shared memory from files. See [tasks.md](tasks.md).
+
 - 2026-10-01: P1–P10 implemented (see each item's doc: integrations.md, preview.md, safety.md#team-shape,
   memory.md, replay.md, evals.md, guarantees.md, incident-response.md; Gemini in ProviderContractTests).
   Verified in-repo against protocol-level clients: the MCP C# SDK client, the official A2A Python SDK (1.2.1),

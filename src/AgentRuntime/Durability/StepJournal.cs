@@ -99,7 +99,7 @@ public static class ReplayPolicy
     {
         "spawn_agent", "send_message", "find_agents", "get_agent_status", "list_children", "complete_task",
         "read_memory", "plan_request", "wait_for_events", "end_turn",
-        "filesystem_read", "filesystem_write", "filesystem_list"
+        "filesystem_read", "filesystem_write", "filesystem_list", "create_document"
     };
 
     public static bool ReRuns(string toolName) => Rerun.Contains(toolName);

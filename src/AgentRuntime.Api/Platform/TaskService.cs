@@ -34,6 +34,13 @@ public sealed record StartTaskRequest
     public Durability.ReplaySpec? Replay { get; init; }
     /// <summary>The organization model profile to run on (docs/llm-settings.md); null for its default.</summary>
     public string? ModelProfileId { get; init; }
+    /// <summary>Files staged with POST /api/uploads to start the task with: they move into its
+    /// workspace and the root agent gets them as initial context.</summary>
+    public IReadOnlyList<string>? UploadIds { get; init; }
+    /// <summary>Who started it (email or user id), recorded on its attachments.</summary>
+    public string? By { get; init; }
+    /// <summary>Tool connections (MCP servers, APIs) the task's agents can use from their first step.</summary>
+    public IReadOnlyList<Integrations.ConnectionRequest>? Connections { get; init; }
 }
 
 /// <summary>A task (or a request to a workspace) as every protocol reports it.</summary>
@@ -74,6 +81,18 @@ public sealed record TaskResultView
 
 public sealed record TaskAgentView(string AgentId, string Role, string Status, string? ParentAgentId, int Depth, string Goal);
 
+/// <summary>A file in a task's chat: one the user attached, or one the agents produced in a round.</summary>
+public sealed record TaskChatFile(string ArtifactId, string Path, string FileName, long SizeBytes, string CreatedBy);
+
+/// <summary>One turn of a task's chat: the goal or a follow-up from the user (with any files they
+/// attached), or the root agent's report (<c>status</c> completed, partial, failed or terminated)
+/// with the files the agents produced for it.</summary>
+public sealed record TaskChatEntry(string Id, string Author, string Text, DateTimeOffset At, string? Status = null, string? By = null,
+    IReadOnlyList<TaskChatFile>? Files = null, IReadOnlyList<string>? RemainingWork = null);
+
+/// <summary>A file a user uploads to attach to a follow-up.</summary>
+public sealed record AttachmentUpload(string FileName, long Length, Func<Stream> Open);
+
 public sealed record TaskProgress(int Progress, int Total, string Message);
 
 public sealed class TaskServiceException(string message, int statusCode = StatusCodes.Status400BadRequest) : Exception(message)
@@ -100,8 +119,13 @@ public sealed class TaskService(
     LLM.LlmSettingsService models,
     LLM.ITaskModelSelection taskModels,
     IEventPublisher publisher,
+    IOptions<Infrastructure.Tools.ToolsOptions> toolsOptions,
+    UploadStore uploads,
     ILogger<TaskService> logger)
 {
+    /// <summary>Who an attachment is recorded as created by.</summary>
+    public const string UserAuthor = "user";
+
     /// <summary>Separates a workspace id from the chat sequence number in a workspace request's id.</summary>
     private const char RequestSeparator = ':';
 
@@ -124,7 +148,23 @@ public sealed class TaskService(
         }
 
         var modelProfileId = await CheckModelAsync(tenantId, request.ModelProfileId, ct);
+        // Checked before the task exists, so an expired upload doesn't leave a task behind.
+        var staged = request.UploadIds is { Count: > 0 } uploadIds ? uploads.Find(tenantId, uploadIds) : [];
         var taskId = Guid.NewGuid().ToString("n");
+
+        // Connected (and their tools discovered) before the task exists, so a server that can't be
+        // reached is reported at once and leaves no task behind.
+        if (request.Connections is { Count: > 0 } connections)
+        {
+            var taskConnections = grains.GetGrain<Integrations.ITaskConnectionsGrain>(taskId);
+            foreach (var connection in connections)
+            {
+                var added = await taskConnections.AddConnection(tenantId, connection);
+                if (added.Success) continue;
+                foreach (var c in await taskConnections.ListConnections()) await taskConnections.RemoveConnection(c.ConnectionId);
+                throw new TaskServiceException($"Couldn't connect '{connection.Name}': {added.Message}");
+            }
+        }
         var budget = ceiling.Value.Clamp(request.Budget ?? defaultBudget.Value.ToBudget());
 
         // The row exists before the root agent does, so a caller can poll the id it gets back at once.
@@ -166,16 +206,29 @@ public sealed class TaskService(
             await secrets.PutAsync(TaskCallbackDispatcher.SecretScope(taskId), TaskCallbackDispatcher.SecretKey, request.CallbackSecret, ct);
         }
 
+        // Files the task starts with: in its workspace before the root agent's first step.
+        var agentGoal = request.Goal;
+        string? initialContext = null;
+        if (staged.Count > 0)
+        {
+            var files = await StoreAttachmentsAsync(tenantId, taskId,
+                staged.Select(s => new AttachmentUpload(s.FileName, s.SizeBytes, () => File.OpenRead(s.FullPath))).ToList(), request.By, "goal", ct);
+            foreach (var s in staged) uploads.Release(s);
+            agentGoal = $"{request.Goal}\n\nAttached files: {string.Join(", ", files.Select(f => f.Path))}";
+            initialContext = await AttachmentContextAsync(taskId, files.ToList(), ct);
+        }
+
         string rootAgentId;
         try
         {
-            rootAgentId = await orchestrator.CreateRootAgentAsync(taskId, request.Goal, new TaskLaunchOptions
+            rootAgentId = await orchestrator.CreateRootAgentAsync(taskId, agentGoal, new TaskLaunchOptions
             {
                 Budget = budget,
                 TenantId = tenantId,
                 CorrelationId = correlationId,
                 TeamPolicy = request.TeamPolicy,
-                Replay = request.Replay
+                Replay = request.Replay,
+                InitialContext = initialContext
             }, ct);
         }
         catch (InvalidOperationException ex)
@@ -284,6 +337,374 @@ public sealed class TaskService(
         var org = await models.GetAsync(tenantId, ct);
         return org.Profiles.Any(p => p.Id == id) ? id
             : throw new TaskServiceException($"No model '{id}'. Use one set up under Settings → AI model, or \"{LLM.ModelProfiles.ServerId}\".");
+    }
+
+    /// <summary>
+    /// A follow-up instruction on a task (task chat). A running task's root agent folds it into its
+    /// work; a finished one is reopened with its whole history (transcript, earlier results and the
+    /// task's files) and a new round of the task's budget, so nothing it learned is lost.
+    /// </summary>
+    public async Task<TaskChatEntry> FollowUpAsync(string tenantId, string taskId, string text, string? by,
+        ResourceBudget? roundBudget = null, CancellationToken ct = default, IReadOnlyList<string>? attachmentIds = null)
+    {
+        attachmentIds = attachmentIds?.Where(a => !string.IsNullOrWhiteSpace(a)).Distinct().ToList() ?? [];
+        if (string.IsNullOrWhiteSpace(text) && attachmentIds.Count > 0) text = "Take the attached files into account.";
+        if (string.IsNullOrWhiteSpace(text)) throw new TaskServiceException("text is required");
+        if (text.Length > 20_000) throw new TaskServiceException("text is too long (20,000 characters at most)");
+        if (TryParseWorkspaceRequest(taskId, out _, out _))
+        {
+            throw new TaskServiceException("This is a request to a workspace; follow up in the workspace's chat.", StatusCodes.Status409Conflict);
+        }
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct)
+                   ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
+        if (task.RootAgentId is null || task.Status == "Rejected")
+        {
+            throw new TaskServiceException("This task never started, so there is nothing to follow up on. Start a new task.", StatusCodes.Status409Conflict);
+        }
+
+        // Each round gets the task's own budget again (or what the caller asks for), within the ceiling.
+        var round = ceiling.Value.Clamp(roundBudget
+                                        ?? (task.BudgetJson is null ? null : JsonSerializer.Deserialize<ResourceBudget>(task.BudgetJson))
+                                        ?? defaultBudget.Value.ToBudget());
+        var trimmed = text.Trim();
+        var files = await AttachedFilesAsync(db, tenantId, taskId, attachmentIds, ct);
+        var followUp = new TaskFollowUp
+        {
+            Id = $"followup-{Guid.NewGuid():n}",
+            // The file list stays in the agent's standing instructions; the excerpts only in its history.
+            Text = files.Count == 0 ? trimmed : $"{trimmed}\n\nAttached files: {string.Join(", ", files.Select(f => f.Path))}",
+            AttachmentContext = files.Count == 0 ? null : await AttachmentContextAsync(taskId, files, ct),
+            RoundBudget = round,
+            By = by
+        };
+
+        try
+        {
+            await orchestrator.FollowUpAsync(task.RootAgentId, followUp, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new TaskServiceException(ex.Message, StatusCodes.Status409Conflict);
+        }
+
+        var at = DateTimeOffset.UtcNow;
+        await publisher.PublishAsync(new RuntimeEvent
+        {
+            Type = RuntimeEventType.TaskFollowUp,
+            TaskId = taskId,
+            TenantId = tenantId,
+            AgentId = task.RootAgentId,
+            CorrelationId = task.CorrelationId,
+            Timestamp = at,
+            Summary = $"Follow-up from {by ?? "the user"}: {Clip(trimmed, 200)}",
+            Data = new Dictionary<string, string>
+            {
+                ["follow_up_id"] = followUp.Id,
+                ["text"] = trimmed,
+                ["by"] = by ?? string.Empty,
+                ["attachments"] = JsonSerializer.Serialize(files.Select(f => f.ArtifactId))
+            }
+        }, ct);
+        logger.LogInformation("Follow-up {FollowUpId} on task {TaskId} (root {RootAgentId}, {Files} attachment(s))", followUp.Id, taskId, task.RootAgentId, files.Count);
+        return new TaskChatEntry(followUp.Id, "user", trimmed, at, By: by, Files: files);
+    }
+
+    /// <summary>
+    /// Picks a finished task up where it stopped (a partial result, or one cut short by its budget
+    /// or time): a follow-up telling the root agent what was left, with <paramref name="roundBudget"/>
+    /// for the work, on top of what was already spent. The budget is capped by the server's ceiling
+    /// like any other; the agent never sets it.
+    /// </summary>
+    public async Task<TaskChatEntry> ContinueAsync(string tenantId, string taskId, ResourceBudget? roundBudget, string? note, string? by,
+        CancellationToken ct = default)
+    {
+        TaskRecord? task;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
+        }
+
+        if (task is null) throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
+        // The root agent is the truth: the task row lags a moment behind a reopen.
+        var root = task.RootAgentId is null ? null : await orchestrator.GetSnapshotAsync(task.RootAgentId, ct);
+        if (task.CompletedAt is null || root is { Status: not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut) })
+        {
+            throw new TaskServiceException("The task is still running. Send it a message instead, or wait for it to stop.", StatusCodes.Status409Conflict);
+        }
+
+        var remaining = new List<string>();
+        if (task.ResultJson is { } json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("unresolved_items", out var items) && items.ValueKind == JsonValueKind.Array)
+            {
+                remaining.AddRange(items.EnumerateArray().Select(i => i.GetString()).OfType<string>().Where(i => i.Length > 0));
+            }
+        }
+
+        var text = new System.Text.StringBuilder("Continue where you stopped and finish the task.");
+        if (remaining.Count > 0) text.Append("\n\nWhat was left:\n").AppendJoin("\n", remaining.Select(r => $"- {r}"));
+        if (!string.IsNullOrWhiteSpace(note)) text.Append("\n\n").Append(note.Trim());
+        text.Append("\n\nYou have a new budget for this. Build on the work and files you already have; don't redo them.");
+        return await FollowUpAsync(tenantId, taskId, text.ToString(), by, roundBudget, ct);
+    }
+
+    /// <summary>
+    /// Saves files the user attaches to a task (task chat) under attachments/ in the task's sandboxed
+    /// workspace, where its agents can read them, and records each as an artifact so it can be
+    /// previewed and referenced by a follow-up. Any file type is accepted; size and count are capped.
+    /// </summary>
+    public async Task<IReadOnlyList<TaskChatFile>> AddAttachmentsAsync(string tenantId, string taskId, IReadOnlyList<AttachmentUpload> uploads,
+        string? by, CancellationToken ct = default)
+    {
+        var opts = toolsOptions.Value;
+        if (uploads.Count == 0) throw new TaskServiceException("Attach at least one file.");
+        if (uploads.Count > opts.AttachmentMaxFiles) throw new TaskServiceException($"Attach at most {opts.AttachmentMaxFiles} files at a time.");
+        if (uploads.FirstOrDefault(u => u.Length > opts.AttachmentMaxBytes) is { } big)
+        {
+            throw new TaskServiceException($"'{big.FileName}' is too large ({Infrastructure.Documents.DocumentFormats.HumanSize(big.Length)}); " +
+                                           $"files can be at most {Infrastructure.Documents.DocumentFormats.HumanSize(opts.AttachmentMaxBytes)}.",
+                StatusCodes.Status413PayloadTooLarge);
+        }
+
+        if (TryParseWorkspaceRequest(taskId, out _, out _))
+        {
+            throw new TaskServiceException("This is a request to a workspace; attach files in the workspace instead.", StatusCodes.Status409Conflict);
+        }
+
+        await using (var check = await dbFactory.CreateDbContextAsync(ct))
+        {
+            if (!await check.Tasks.AnyAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct))
+            {
+                throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
+            }
+        }
+
+        return await StoreAttachmentsAsync(tenantId, taskId, uploads, by, "follow-up", ct);
+    }
+
+    /// <summary>Copies files into the task's attachments/ folder and records them as artifacts
+    /// (<paramref name="attachedTo"/>: "goal" or "follow-up").</summary>
+    private async Task<IReadOnlyList<TaskChatFile>> StoreAttachmentsAsync(string tenantId, string taskId, IReadOnlyList<AttachmentUpload> uploads,
+        string? by, string attachedTo, CancellationToken ct)
+    {
+        var opts = toolsOptions.Value;
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var root = Infrastructure.Tools.WorkspacePath.TaskRoot(opts, taskId);
+        var saved = new List<(Infrastructure.Persistence.ArtifactRecord Record, TaskChatFile File)>();
+        foreach (var upload in uploads)
+        {
+            var fullPath = UniquePath(Infrastructure.Tools.WorkspacePath.Resolve(opts, taskId, $"attachments/{SafeFileName(upload.FileName)}"));
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            await using (var target = File.Create(fullPath))
+            await using (var source = upload.Open())
+            {
+                await source.CopyToAsync(target, ct);
+            }
+
+            var kind = Infrastructure.Documents.DocumentFormats.KindOf(fullPath);
+            var record = new Infrastructure.Persistence.ArtifactRecord
+            {
+                TenantId = tenantId,
+                ArtifactId = Guid.NewGuid().ToString("n"),
+                Type = (kind switch
+                {
+                    Infrastructure.Documents.DocumentKind.Image => ArtifactType.Image,
+                    Infrastructure.Documents.DocumentKind.Excel or Infrastructure.Documents.DocumentKind.Csv => ArtifactType.Data,
+                    _ => ArtifactType.Document
+                }).ToString(),
+                Location = fullPath,
+                CreatedByAgent = UserAuthor,
+                TaskId = taskId,
+                CreatedAt = DateTimeOffset.UtcNow,
+                MetadataJson = JsonSerializer.Serialize(new Dictionary<string, string>
+                {
+                    ["source"] = "attachment",
+                    ["attached_to"] = attachedTo,
+                    ["original_name"] = upload.FileName,
+                    ["uploaded_by"] = by ?? string.Empty
+                })
+            };
+            db.Artifacts.Add(record);
+            var relative = Path.GetRelativePath(root, fullPath).Replace(Path.DirectorySeparatorChar, '/');
+            saved.Add((record, new TaskChatFile(record.ArtifactId, relative, Path.GetFileName(fullPath), upload.Length, UserAuthor)));
+        }
+
+        // Saved before answering, so a follow-up can reference them straight away.
+        await db.SaveChangesAsync(ct);
+        foreach (var (record, file) in saved)
+        {
+            await publisher.PublishAsync(new RuntimeEvent
+            {
+                Type = RuntimeEventType.ArtifactCreated,
+                TaskId = taskId,
+                TenantId = tenantId,
+                AgentId = UserAuthor,
+                Summary = $"{by ?? "The user"} attached '{file.Path}' ({Infrastructure.Documents.DocumentFormats.HumanSize(file.SizeBytes)}).",
+                Data = new Dictionary<string, string>
+                {
+                    ["artifactId"] = record.ArtifactId,
+                    ["type"] = record.Type,
+                    ["location"] = record.Location,
+                    ["source"] = "attachment"
+                }
+            }, ct);
+        }
+
+        logger.LogInformation("{Count} attachment(s) added to task {TaskId}", saved.Count, taskId);
+        return saved.Select(s => s.File).ToList();
+    }
+
+    private async Task<List<TaskChatFile>> AttachedFilesAsync(AgentDbContext db, string tenantId, string taskId, IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0) return [];
+        var opts = toolsOptions.Value;
+        var root = Infrastructure.Tools.WorkspacePath.TaskRoot(opts, taskId);
+        var records = await db.Artifacts.AsNoTracking()
+            .Where(a => a.TaskId == taskId && a.TenantId == tenantId && ids.Contains(a.ArtifactId))
+            .ToListAsync(ct);
+        var files = records
+            .Where(r => Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(opts, taskId, r.Location) && File.Exists(r.Location))
+            .OrderBy(r => ids.ToList().IndexOf(r.ArtifactId))
+            .Select(r => new TaskChatFile(r.ArtifactId, Path.GetRelativePath(root, r.Location).Replace(Path.DirectorySeparatorChar, '/'),
+                Path.GetFileName(r.Location), new FileInfo(r.Location).Length, r.CreatedByAgent))
+            .ToList();
+        if (files.Count != ids.Count) throw new TaskServiceException("One or more attached files don't exist on this task. Upload them again.");
+        return files;
+    }
+
+    /// <summary>What the agent sees of the attached files: each one's path, type and size, and the
+    /// start of its text, within an overall budget. The full text is a filesystem_read away.</summary>
+    private async Task<string> AttachmentContextAsync(string taskId, List<TaskChatFile> files, CancellationToken ct)
+    {
+        const int total = 16_000, perFile = 6_000;
+        var opts = toolsOptions.Value;
+        var left = total;
+        var sb = new System.Text.StringBuilder("[Attached files] (in your task workspace; read the full text with filesystem_read)\n");
+        foreach (var file in files)
+        {
+            var fullPath = Infrastructure.Tools.WorkspacePath.Resolve(opts, taskId, file.Path);
+            var kind = Infrastructure.Documents.DocumentFormats.KindOf(fullPath);
+            sb.Append($"\n--- {file.Path} ({kind}, {Infrastructure.Documents.DocumentFormats.HumanSize(file.SizeBytes)}) ---\n");
+            var content = await Infrastructure.Documents.DocumentReader.ReadAsync(fullPath, new Infrastructure.Documents.ReadLimits(MaxChars: Math.Max(0, Math.Min(perFile, left))), ct);
+            if (content.Note is not null) sb.Append($"({content.Note})\n");
+            if (content.Text.Length > 0)
+            {
+                sb.Append(content.Text);
+                if (content.Truncated) sb.Append("\n… (excerpt; read the file for the rest)");
+                sb.Append('\n');
+                left -= content.Text.Length;
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    public static string SafeFileName(string name)
+    {
+        var file = Path.GetFileName(name.Replace('\\', '/'));
+        var invalid = Path.GetInvalidFileNameChars();
+        file = new string(file.Where(c => !invalid.Contains(c) && !char.IsControl(c)).ToArray()).Trim().TrimStart('.');
+        if (file.Length == 0) file = "file";
+        if (file.Length > 120)
+        {
+            var ext = Path.GetExtension(file);
+            file = file[..(120 - Math.Min(ext.Length, 20))] + (ext.Length <= 20 ? ext : string.Empty);
+        }
+
+        return file;
+    }
+
+    /// <summary>report.pdf, then report (2).pdf, ... so an upload never replaces an earlier file.</summary>
+    private static string UniquePath(string path)
+    {
+        if (!File.Exists(path)) return path;
+        var dir = Path.GetDirectoryName(path)!;
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (var n = 2; ; n++)
+        {
+            var candidate = Path.Combine(dir, $"{stem} ({n}){ext}");
+            if (!File.Exists(candidate)) return candidate;
+        }
+    }
+
+    /// <summary>The task's conversation: its goal, every follow-up, and each report the root agent
+    /// gave (one per round), oldest first. Rebuilt from the persisted event history.</summary>
+    public async Task<IReadOnlyList<TaskChatEntry>?> GetChatAsync(string tenantId, string taskId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
+        if (task is null) return null;
+
+        var root = task.RootAgentId;
+        string[] reports = [nameof(RuntimeEventType.AgentCompleted), nameof(RuntimeEventType.AgentFailed), nameof(RuntimeEventType.AgentTerminated)];
+        var rows = await db.Events.AsNoTracking()
+            .Where(e => e.TaskId == taskId && e.TenantId == tenantId &&
+                        (e.Type == nameof(RuntimeEventType.TaskFollowUp) || (e.AgentId == root && reports.Contains(e.Type))))
+            .OrderBy(e => e.Timestamp)
+            .ToListAsync(ct);
+
+        // Files: what the user attached to each follow-up, and what the agents wrote in each round
+        // (between the previous message from the user and the root's report).
+        var opts = toolsOptions.Value;
+        var workspaceRoot = Infrastructure.Tools.WorkspacePath.TaskRoot(opts, taskId);
+        var artifacts = (await db.Artifacts.AsNoTracking().Where(a => a.TaskId == taskId && a.TenantId == tenantId).ToListAsync(ct))
+            .Where(a => Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(opts, taskId, a.Location) && File.Exists(a.Location))
+            .ToList();
+        TaskChatFile FileOf(Infrastructure.Persistence.ArtifactRecord a) => new(a.ArtifactId,
+            Path.GetRelativePath(workspaceRoot, a.Location).Replace(Path.DirectorySeparatorChar, '/'),
+            Path.GetFileName(a.Location), new FileInfo(a.Location).Length, a.CreatedByAgent);
+
+        var goalFiles = artifacts.Where(a => a.CreatedByAgent == UserAuthor && a.MetadataJson.Contains("\"attached_to\":\"goal\""))
+            .OrderBy(a => a.CreatedAt).Select(FileOf).ToList();
+        var chat = new List<TaskChatEntry> { new("goal", "user", task.Goal, task.CreatedAt, Files: goalFiles.Count == 0 ? null : goalFiles) };
+        var roundStart = task.CreatedAt;
+        foreach (var e in rows)
+        {
+            Dictionary<string, string> data;
+            try { data = JsonSerializer.Deserialize<Dictionary<string, string>>(e.DataJson) ?? []; }
+            catch (JsonException) { data = []; }
+
+            if (e.Type == nameof(RuntimeEventType.TaskFollowUp))
+            {
+                List<string> ids;
+                try { ids = JsonSerializer.Deserialize<List<string>>(data.GetValueOrDefault("attachments", "[]")) ?? []; }
+                catch (JsonException) { ids = []; }
+                var attached = ids.Select(id => artifacts.FirstOrDefault(a => a.ArtifactId == id)).OfType<Infrastructure.Persistence.ArtifactRecord>()
+                    .Select(FileOf).ToList();
+                chat.Add(new TaskChatEntry(data.GetValueOrDefault("follow_up_id", e.EventId), "user",
+                    data.GetValueOrDefault("text", e.Summary), e.Timestamp, By: data.GetValueOrDefault("by") is { Length: > 0 } by ? by : null,
+                    Files: attached.Count == 0 ? null : attached));
+                roundStart = e.Timestamp;
+                continue;
+            }
+
+            // One entry per file (its latest write), in the order the agents first wrote them.
+            var produced = artifacts
+                .Where(a => a.CreatedByAgent != UserAuthor && a.CreatedAt >= roundStart && a.CreatedAt <= e.Timestamp)
+                .GroupBy(a => a.Location)
+                .Select(g => (First: g.Min(a => a.CreatedAt), Latest: g.MaxBy(a => a.CreatedAt)!))
+                .OrderBy(x => x.First)
+                .Select(x => FileOf(x.Latest))
+                .ToList();
+            var (text, status) = e.Type switch
+            {
+                nameof(RuntimeEventType.AgentCompleted) => (data.GetValueOrDefault("summary", e.Summary), data.GetValueOrDefault("status", "completed")),
+                nameof(RuntimeEventType.AgentFailed) => (e.Summary, "failed"),
+                _ => (e.Summary, "terminated")
+            };
+            List<string> remaining;
+            try { remaining = JsonSerializer.Deserialize<List<string>>(data.GetValueOrDefault("remaining_work", "[]")) ?? []; }
+            catch (JsonException) { remaining = []; }
+            chat.Add(new TaskChatEntry(e.EventId, "agent", text, e.Timestamp, status, Files: produced.Count == 0 ? null : produced,
+                RemainingWork: remaining.Count == 0 ? null : remaining));
+            roundStart = e.Timestamp;
+        }
+
+        return chat;
     }
 
     /// <summary>Hands the goal to a workspace's coordinator. The handle is "workspace:chat-seq":

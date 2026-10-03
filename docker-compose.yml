@@ -53,6 +53,8 @@ services:
       Tasks__Callbacks__AllowPrivateNetworks: ${CALLBACKS_ALLOW_PRIVATE_NETWORKS:-false}
       Tools__SearchProvider: ${SEARCH_PROVIDER:-Tavily}
       Tools__SearchApiKey: ${SEARCH_API_KEY:-}
+      Tools__AttachmentMaxBytes: ${ATTACHMENT_MAX_BYTES:-26214400}
+      Tools__AttachmentMaxFiles: ${ATTACHMENT_MAX_FILES:-10}
       # Integrations (docs/plugins.md). The vault key encrypts connection secrets: set
       # SECRETS_MASTER_KEY (openssl rand -base64 32) in production; otherwise one is generated
       # into the api-keys volume on first start — back that volume up.

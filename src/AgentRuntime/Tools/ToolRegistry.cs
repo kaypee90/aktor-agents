@@ -78,7 +78,7 @@ public static class AgentToolCatalog
     /// <summary>Tools confined to the task's own sandboxed workspace. Children inherit these from
     /// their parent regardless of capability keywords: a model naming a child "Python Developer"
     /// rather than "filesystem" shouldn't leave it unable to write the code it was asked for.</summary>
-    public static readonly string[] WorkspaceTools = ["filesystem_read", "filesystem_write", "filesystem_list"];
+    public static readonly string[] WorkspaceTools = ["filesystem_read", "filesystem_write", "filesystem_list", "create_document"];
 
     private static readonly Dictionary<string, string[]> CapabilityToolMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -86,7 +86,7 @@ public static class AgentToolCatalog
         ["research"] = ["web_search", "search_knowledge"],
         ["postgresql"] = ["database_query"],
         ["database-design"] = ["database_query"],
-        ["filesystem"] = ["filesystem_read", "filesystem_write", "filesystem_list"],
+        ["filesystem"] = ["filesystem_read", "filesystem_write", "filesystem_list", "create_document"],
         ["shell"] = ["shell_exec"],
         ["docker"] = ["shell_exec"],
         ["http"] = ["http_request"],

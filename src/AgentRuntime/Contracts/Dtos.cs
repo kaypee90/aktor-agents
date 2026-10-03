@@ -50,6 +50,8 @@ public sealed record TaskLaunchOptions
     [Id(3)] public Safety.TeamPolicy? TeamPolicy { get; init; }
     /// <summary>Replay a past run from its step journal (roadmap P6).</summary>
     [Id(4)] public Durability.ReplaySpec? Replay { get; init; }
+    /// <summary>Context the root agent starts with besides its goal (e.g. excerpts of attached files).</summary>
+    [Id(5)] public string? InitialContext { get; init; }
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -185,6 +187,29 @@ public sealed record AgentSnapshot
     [Id(31)] public Durability.ReplaySpec? Replay { get; init; }
     /// <summary>The model chosen for this agent at spawn; null when it follows the task's model.</summary>
     [Id(32)] public string? ModelProfileId { get; init; }
+    /// <summary>When the current stretch of work started: the first start, or the latest follow-up.</summary>
+    [Id(33)] public DateTimeOffset? StartedExecutionAt { get; init; }
+    /// <summary>Follow-up instructions the task's owner has given this (root) agent, oldest first.</summary>
+    [Id(34)] public List<string> FollowUps { get; init; } = [];
+}
+
+/// <summary>
+/// A follow-up instruction from a task's owner to the task's root agent (task chat). If the root
+/// has finished, it is reopened with its whole history and <see cref="RoundBudget"/> on top of
+/// what it has spent. The budget is set by the runtime from the task's budget, never by an agent.
+/// </summary>
+[GenerateSerializer]
+public sealed record TaskFollowUp
+{
+    /// <summary>Deduplication key in the agent's mailbox.</summary>
+    [Id(0)] public required string Id { get; init; }
+    [Id(1)] public required string Text { get; init; }
+    [Id(2)] public required ResourceBudget RoundBudget { get; init; }
+    /// <summary>Who sent it (email or user id), for the record.</summary>
+    [Id(3)] public string? By { get; init; }
+    /// <summary>Excerpts of the files attached to it, shown to the agent with the follow-up but kept
+    /// out of its standing instructions (the file list in <see cref="Text"/> stays there).</summary>
+    [Id(4)] public string? AttachmentContext { get; init; }
 }
 
 [GenerateSerializer]

@@ -54,6 +54,7 @@ builder.Services.AddAgentRuntimeCore(builder.Configuration);
 builder.Services.AddAgentRuntimeInfrastructure(builder.Configuration);
 
 // One task service behind every way in: REST, MCP, A2A and ACP (docs/integrations.md).
+builder.Services.AddSingleton<UploadStore>();
 builder.Services.AddSingleton<TaskService>();
 builder.Services.AddSingleton<TaskPreviewService>();
 builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));

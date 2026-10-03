@@ -6,6 +6,8 @@ import type { RuntimeEvent } from "@/lib/types";
 const TYPE_COLORS: Record<string, string> = {
   LlmCallCompleted: "text-zinc-500 dark:text-zinc-400",
   TaskModelChanged: "text-brand-600 dark:text-brand-400",
+  TaskFollowUp: "text-brand-600 dark:text-brand-400 font-semibold",
+  TaskReopened: "text-sky-700 dark:text-sky-300 font-semibold",
   AgentCreated: "text-sky-600 dark:text-sky-400",
   AgentStarted: "text-sky-600 dark:text-sky-400",
   AgentThinking: "text-indigo-600 dark:text-indigo-400",
@@ -30,6 +32,8 @@ const TYPE_COLORS: Record<string, string> = {
 const LABELS: Record<string, string> = {
   LlmCallCompleted: "Model",
   TaskModelChanged: "Model switch",
+  TaskFollowUp: "Follow-up",
+  TaskReopened: "Reopened",
   AgentCreated: "Created",
   AgentStarted: "Started",
   AgentThinking: "Thinking",

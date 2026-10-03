@@ -12,20 +12,23 @@ public sealed class InMemoryMemoryStore : IMemoryStore
 
     public Task WriteAsync(MemoryRecord record, CancellationToken cancellationToken = default)
     {
-        _records[record.TenantId + "|" + record.AgentId + "|" + record.Key] = record;
+        _records[record.TenantId + "|" + record.AgentId + "|" + record.Key + "|" + record.WorkspaceId] = record;
         return Task.CompletedTask;
     }
 
-    public Task<MemoryRecord?> ReadAsync(string tenantId, string agentId, string key, CancellationToken cancellationToken = default) =>
+    public Task<MemoryRecord?> ReadAsync(string tenantId, string agentId, string key, MemoryScope? scope = null, CancellationToken cancellationToken = default) =>
         Task.FromResult(_records.Values
-            .Where(r => r.TenantId == tenantId && r.Key == key && (r.AgentId == agentId || r.IsShared))
+            .Where(r => r.TenantId == tenantId && r.Key == key &&
+                        (r.AgentId == agentId || (r.IsShared && (scope ?? MemoryScope.Organization).Includes(r.WorkspaceId))))
             .OrderByDescending(r => r.CreatedAt)
             .FirstOrDefault());
 
     public Task<IReadOnlyList<MemoryRecord>> SearchAsync(
-        string tenantId, string query, MemoryKind? kind = null, string? agentId = null, CancellationToken cancellationToken = default)
+        string tenantId, string query, MemoryKind? kind = null, string? agentId = null, MemoryScope? scope = null,
+        CancellationToken cancellationToken = default)
     {
-        IEnumerable<MemoryRecord> results = _records.Values.Where(r => r.TenantId == tenantId);
+        var visible = scope ?? MemoryScope.Organization;
+        IEnumerable<MemoryRecord> results = _records.Values.Where(r => r.TenantId == tenantId && visible.Includes(r.WorkspaceId));
         if (kind is { } k) results = results.Where(r => r.Kind == k);
         if (agentId is not null) results = results.Where(r => r.AgentId == agentId);
         if (!string.IsNullOrWhiteSpace(query))

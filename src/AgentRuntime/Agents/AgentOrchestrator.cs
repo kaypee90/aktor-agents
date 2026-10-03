@@ -50,8 +50,10 @@ public sealed class AgentOrchestrator(
         // "filesystem" so the root can write a final consolidated report before completing
         // (CLAUDE.md section 26/52 — the task should produce an inspectable final artifact).
         var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"]);
+        // Integrations: the tools of connections the task's owner adds (MCP servers, APIs). None
+        // exist until the owner adds one, and the agent can't add any itself.
         var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
-                           | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem;
+                           | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.Integrations;
         allowedTools = FilterToolsByPermission(allowedTools, permissions);
 
         var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
@@ -93,6 +95,7 @@ public sealed class AgentOrchestrator(
             TeamPolicy = options.TeamPolicy,
             JournalPath = "r",
             Replay = options.Replay,
+            InitialContext = options.InitialContext,
             AutoStart = true
         });
 
@@ -199,7 +202,8 @@ public sealed class AgentOrchestrator(
         {
             // Elapsed time isn't tracked incrementally in ResourceUsage, so derive it here; otherwise a
             // child spawned late in the parent's life would get the parent's full original duration.
-            var elapsedSeconds = parentSnapshot.StartedAt is { } startedAt
+            // From the current stretch of work: a root reopened for a follow-up started a new one.
+            var elapsedSeconds = (parentSnapshot.StartedExecutionAt ?? parentSnapshot.StartedAt) is { } startedAt
                 ? (int)Math.Max(0, (DateTimeOffset.UtcNow - startedAt).TotalSeconds)
                 : 0;
             childBudget = parentSnapshot.Budget.DeriveChildBudget(
@@ -245,6 +249,11 @@ public sealed class AgentOrchestrator(
             // Workspace agents may use the workspace's connections if their parent could: the
             // user connected those services for this workspace's agents.
             childPermissions |= parentSnapshot.GrantedPermissions & (ToolPermission.WorkspaceActions | ToolPermission.Integrations);
+        }
+        else
+        {
+            // Likewise a task's own connections, for every agent its root starts.
+            childPermissions |= parentSnapshot.GrantedPermissions & ToolPermission.Integrations;
         }
 
         // The model the child runs on (docs/llm-settings.md): one the organization set up, when it
@@ -460,6 +469,14 @@ public sealed class AgentOrchestrator(
         }, cancellationToken);
 
         return await target.SendMessage(message);
+    }
+
+    public async Task FollowUpAsync(string rootAgentId, TaskFollowUp followUp, CancellationToken cancellationToken = default)
+    {
+        var root = grainFactory.GetGrain<IAgentGrain>(rootAgentId);
+        var snapshot = await root.GetSnapshot();
+        await root.FollowUp(followUp);
+        _messageCountsByTask.TryRemove(snapshot.TaskId, out _);
     }
 
     public Task<IReadOnlyList<AgentDirectoryEntry>> FindAgentsAsync(FindAgentsQuery query, CancellationToken cancellationToken = default) =>

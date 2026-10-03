@@ -18,9 +18,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # shell_exec sandboxes commands in Docker containers (CLAUDE.md section 19); the API container
-# needs the Docker CLI and access to the host daemon socket to launch them.
+# needs the Docker CLI and access to the host daemon socket to launch them. fonts-dejavu-core
+# lets create_document write PDFs with accents and non-Latin text.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg fonts-dejavu-core \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \

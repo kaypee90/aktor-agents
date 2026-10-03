@@ -154,3 +154,63 @@ public sealed class ChannelsController(IGrainFactory grains) : ControllerBase
             : StatusCode(response.StatusCode);
     }
 }
+
+/// <summary>
+/// A task's own tool connections (docs/tasks.md#connecting-mcp-servers): MCP servers and HTTP APIs
+/// its agents can use from their next step. Secrets go straight to the encrypted vault; no endpoint
+/// returns them.
+/// </summary>
+[ApiController]
+[Route("api/tasks/{taskId}/connections")]
+public sealed class TaskConnectionsController(IGrainFactory grains, AgentRuntime.Api.Platform.TenantAccess access) : ControllerBase
+{
+    public sealed record UpdateBody(List<string>? EnabledTools);
+
+    private ITaskConnectionsGrain Connections(string taskId) => grains.GetGrain<ITaskConnectionsGrain>(taskId);
+
+    [HttpGet]
+    public async Task<IActionResult> List(string taskId, CancellationToken ct) =>
+        await access.TaskAsync(taskId, ct) ? Ok(await Connections(taskId).ListConnections()) : NotFound();
+
+    [HttpPost]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Add(string taskId, [FromBody] ConnectionsController.AddBody body, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(taskId, ct)) return NotFound();
+        var result = await Connections(taskId).AddConnection(access.TenantId, new ConnectionRequest
+        {
+            PluginId = body.PluginId ?? string.Empty,
+            Name = body.Name ?? string.Empty,
+            Settings = body.Settings ?? [],
+            Secrets = body.Secrets ?? []
+        });
+        return result.Success ? Ok(new { message = result.Message, connection = result.Connection }) : BadRequest(new { error = result.Message });
+    }
+
+    [HttpPatch("{connectionId}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Update(string taskId, string connectionId, [FromBody] UpdateBody body, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(taskId, ct)) return NotFound();
+        var result = await Connections(taskId).UpdateConnection(connectionId, new ConnectionUpdate { EnabledTools = body.EnabledTools });
+        return result.Success ? Ok(result.Connection) : NotFound(new { error = result.Message });
+    }
+
+    [HttpPost("{connectionId}/refresh")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Refresh(string taskId, string connectionId, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(taskId, ct)) return NotFound();
+        var result = await Connections(taskId).RefreshConnectionTools(connectionId);
+        return result.Success ? Ok(result.Connection) : BadRequest(new { error = result.Message });
+    }
+
+    [HttpDelete("{connectionId}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Remove(string taskId, string connectionId, CancellationToken ct)
+    {
+        if (!await access.TaskAsync(taskId, ct)) return NotFound();
+        await Connections(taskId).RemoveConnection(connectionId);
+        return NoContent();
+    }
+}

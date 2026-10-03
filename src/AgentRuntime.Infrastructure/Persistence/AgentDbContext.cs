@@ -74,7 +74,11 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasIndex(e => new { e.TenantId, e.Timestamp });
         });
 
-        modelBuilder.Entity<SkillRecord>(b => b.HasKey(k => new { k.TenantId, k.Name }));
+        modelBuilder.Entity<SkillRecord>(b =>
+        {
+            b.HasKey(k => new { k.TenantId, k.WorkspaceId, k.Name });
+            b.Property(k => k.WorkspaceId).HasDefaultValue(string.Empty);
+        });
 
         modelBuilder.Entity<LlmCallRecord>(b =>
         {
@@ -110,6 +114,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(m => m.MemoryId);
             b.HasIndex(m => new { m.TenantId, m.AgentId, m.Key });
             b.HasIndex(m => m.Kind);
+            b.HasIndex(m => new { m.TenantId, m.WorkspaceId });
         });
 
         modelBuilder.Entity<ToolCallRecord>(b =>

@@ -102,6 +102,22 @@ public sealed class PersistenceEventSubscriber(
                 }
                 break;
 
+            case RuntimeEventType.TaskReopened when evt.TaskId is not null:
+                // The root took up a follow-up: the task runs again until the root reports. The
+                // earlier answer stays in the task's chat (its completion event); the result is
+                // rebuilt when the root next finishes.
+                if (await db.Tasks.FindAsync([evt.TaskId], ct) is { } reopenedTask)
+                {
+                    reopenedTask.Status = "Running";
+                    reopenedTask.CompletedAt = null;
+                    reopenedTask.ResultJson = null;
+                    // A completion webhook goes out again for this round's result.
+                    reopenedTask.CallbackDeliveredAt = null;
+                    reopenedTask.CallbackAttempts = 0;
+                }
+                await UpsertAgentAsync(scope, db, evt.AgentId, ct);
+                break;
+
             case RuntimeEventType.AgentMessageSent:
                 // Message ids are deterministic for replayed sends (docs/durability.md), so the
                 // same message can be reported twice after a crash; record it once.
@@ -161,6 +177,8 @@ public sealed class PersistenceEventSubscriber(
                 break;
 
             case RuntimeEventType.ArtifactCreated:
+                // Attachments are recorded by the API before their event, so a follow-up can use them at once.
+                if (await db.Artifacts.AnyAsync(a => a.ArtifactId == evt.Data.GetValueOrDefault("artifactId", string.Empty), ct)) break;
                 db.Artifacts.Add(new ArtifactRecord
                 {
                     TenantId = tenant,

@@ -609,9 +609,14 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("text");
+
                     b.HasKey("MemoryId");
 
                     b.HasIndex("Kind");
+
+                    b.HasIndex("TenantId", "WorkspaceId");
 
                     b.HasIndex("TenantId", "AgentId", "Key");
 
@@ -728,6 +733,11 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<string>("TenantId")
                         .HasColumnType("text");
 
+                    b.Property<string>("WorkspaceId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
                     b.Property<string>("Name")
                         .HasColumnType("text");
 
@@ -758,7 +768,7 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<int>("Version")
                         .HasColumnType("integer");
 
-                    b.HasKey("TenantId", "Name");
+                    b.HasKey("TenantId", "WorkspaceId", "Name");
 
                     b.ToTable("Skills");
                 });

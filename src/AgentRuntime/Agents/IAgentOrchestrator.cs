@@ -29,6 +29,11 @@ public interface IAgentOrchestrator
 
     Task<AgentMessageAck> SendMessageAsync(AgentMessage message, CancellationToken cancellationToken = default);
 
+    /// <summary>Delivers a follow-up from the task's owner to the task's root agent (task chat),
+    /// reopening it if it has finished. A follow-up is a new stretch of work, so the task's message
+    /// cap counts from zero again.</summary>
+    Task FollowUpAsync(string rootAgentId, TaskFollowUp followUp, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<AgentDirectoryEntry>> FindAgentsAsync(FindAgentsQuery query,
         CancellationToken cancellationToken = default);
 

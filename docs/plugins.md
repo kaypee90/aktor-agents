@@ -152,6 +152,13 @@ host doesn't already have); the SDK and `Microsoft.Extensions.*` come from the h
 | `POST` | `/api/workspaces/{id}/connections/{cid}/refresh` | Re-list tools, keeping on/off choices |
 | `DELETE` | `/api/workspaces/{id}/connections/{cid}` | Removes it and deletes its secrets |
 | `POST` | `/api/channels/{workspaceId}/{connectionId}/{secret}` | Public inbound endpoint (set it as the provider's webhook) |
+| `GET` / `POST` | `/api/tasks/{id}/connections` | A task's own tool connections (MCP, HTTP API): `{plugin_id, name, settings, secrets}`; Member |
+| `PATCH` / `DELETE` | `/api/tasks/{id}/connections/{cid}` | `{enabled_tools}`, or remove it and its secrets |
+| `POST` | `/api/tasks/{id}/connections/{cid}/refresh` | Re-list its tools |
+
+**Tasks** can have connections too, for tools only (MCP servers, HTTP APIs; no inbound channels or
+notifications). The root agent and every agent it starts see the enabled tools from their next step.
+Secrets are stored in the vault under the task. See [tasks.md](tasks.md#connecting-mcp-servers).
 
 ## Tests
 

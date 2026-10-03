@@ -4,9 +4,25 @@ Agents remember through three tools, backed by `IMemoryStore`:
 
 | Tool | What it does |
 |---|---|
-| `write_memory` | Saves a key and value. `shared: true` makes it **shared knowledge** for every agent of the organization; otherwise it's the agent's own working memory. |
-| `read_memory` | Reads a key: the agent's own entry, or a shared one. |
-| `search_knowledge` | Searches shared knowledge, best matches first. |
+| `write_memory` | Saves a key and value. `shared: true` makes it **shared knowledge**; otherwise it's the agent's own working memory. In a workspace, shared knowledge stays in the workspace unless `organization_wide: true`. |
+| `read_memory` | Reads a key: the agent's own entry, or a shared one it can see. |
+| `search_knowledge` | Searches the shared knowledge it can see, best matches first. |
+
+## Organization and workspace knowledge
+
+Shared knowledge belongs either to the whole organization or to one workspace:
+
+| Who | Finds |
+|---|---|
+| A task's agents | The organization's knowledge |
+| A workspace's agents | The organization's knowledge, plus their workspace's own |
+| Another workspace's agents | Never this workspace's knowledge |
+
+People add workspace knowledge from **Shared memory** with the **Scope** picker set to the
+workspace (or the workspace's **Skills & knowledge** tab), as text or files. Over the API, add
+`?workspace={id}` to `GET /api/memory`, `POST /api/memory` and `POST /api/memory/files`. A workspace
+of another organization answers `404`. Search filters by workspace in the same query as the tenant,
+so another workspace's entries are never candidates.
 
 ## Hybrid search
 
@@ -64,3 +80,17 @@ model:
 - another organization's entries are never returned;
 - equally relevant entries rank newest first;
 - rewriting an entry re-embeds it.
+
+`WorkspaceScopeTests` (unit, through the agents' tools) and `WorkspaceScopeApiTests` (API and
+Postgres) check that a workspace's knowledge is found by its agents and by no task or other
+workspace, that `organization_wide` shares it with everyone, and that `?workspace=` keeps the
+organization's and the workspace's apart.
+
+## Knowledge from files
+
+Shared memory → **Add knowledge → From files** (or `POST /api/memory/files`, multipart `files`)
+turns documents into knowledge. Supported types are PDF, Word, Excel, PowerPoint, CSV, Markdown,
+text and code. Each file's text is split at paragraph breaks into passages of up to about 4,000
+characters. Each passage becomes a shared entry, keyed by the file name (`report.pdf (part 2 of 5)`),
+so a search finds the passage that matters. Adding a file with the same name again replaces its
+passages. Files with no readable text (images, scanned PDFs) are reported back and not added.

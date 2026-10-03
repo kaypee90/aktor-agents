@@ -20,6 +20,10 @@ agent of the organization, in tasks and workspaces alike.
   (and run through `shell_exec`, in its sandbox, if it has that tool).
 - Skills belong to one organization: other organizations' agents and users can't list, load or
   read them, even by name.
+- **Workspace skills.** A skill can belong to one workspace instead of the whole organization. Only
+  that workspace's agents list and load it, on top of the organization's skills. Where both have a
+  skill with the same name, the workspace's version wins for its agents (turn it off and they fall
+  back to the organization's). Tasks and other workspaces never see it.
 - A replay serves `load_skill` results from the recorded run, so it sees the skill as it was then.
 
 ## The format
@@ -49,7 +53,9 @@ See reference/template.md for the layout.
 
 ## Adding skills
 
-**Skills** in the dashboard sidebar (Admins; everyone else can read them):
+**Skills** in the dashboard sidebar (Admins; everyone else can read them). The **Scope** picker at the
+top chooses whose skills you're looking at: the whole organization's, or one workspace's own. A
+workspace's **Skills & knowledge** tab links straight to its scope.
 - **Write a skill:** name, description, instructions, and optional resource files, in the editor.
 - **Upload .md / .zip:** a `SKILL.md`, or a zip with `SKILL.md` at its root or in one top-level folder
   plus its files. Uploading a skill whose name exists saves it as a new version.
@@ -69,6 +75,9 @@ See reference/template.md for the layout.
 | `PATCH` | `/api/skills/{name}` | Admin. `{enabled}` |
 | `DELETE` | `/api/skills/{name}` | Admin |
 
+Add `?workspace={id}` to any of them to work on that workspace's own skills (`404` for a workspace of
+another organization). Without it, they work on the organization's.
+
 ## Tests
 
 - `SkillPackageTests` (unit): frontmatter, invalid skills, zips (folder layout, binaries and
@@ -78,3 +87,7 @@ See reference/template.md for the layout.
   reads a file; another organization's skill can't be loaded by name; with no skills nothing is added.
 - `SkillsApiTests` (real API and Postgres): write, edit, upload `.md` and `.zip`, download, turn
   off and delete; only Admins change skills; other organizations see nothing.
+- `WorkspaceScopeTests` (unit): workspace agents see their workspace's skills on top of the
+  organization's, a workspace skill overrides the organization's, others can't load it.
+- `WorkspaceScopeApiTests`: `?workspace=` keeps the two apart, deleting the workspace's version
+  leaves the organization's, and another organization gets `404`.

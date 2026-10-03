@@ -29,7 +29,41 @@ const EFFECT_LABEL: Record<SideEffects, string> = { ReadOnly: "read", Idempotent
 
 const field = "w-full rounded border border-zinc-300 bg-white px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900";
 
+/** Where a set of connections lives: a workspace's, or one task's (tool connections only). */
+export interface ConnectionsApi {
+  key: string;
+  list: () => Promise<ConnectionView[]>;
+  add: (body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>; notify_level?: string; allowed_senders?: string[] }) => Promise<unknown>;
+  update: (connectionId: string, body: { notify_level?: string; enabled_tools?: string[]; allowed_senders?: string[] }) => Promise<unknown>;
+  refresh: (connectionId: string) => Promise<unknown>;
+  remove: (connectionId: string) => Promise<unknown>;
+}
+
+function workspaceConnections(workspaceId: string): ConnectionsApi {
+  return {
+    key: workspaceId,
+    list: () => listConnections(workspaceId),
+    add: (body) => addConnection(workspaceId, body),
+    update: (id, body) => updateConnection(workspaceId, id, body),
+    refresh: (id) => refreshConnection(workspaceId, id),
+    remove: (id) => removeConnection(workspaceId, id),
+  };
+}
+
 export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: string; onChanged: () => void }) {
+  return <ConnectionsPanel api={workspaceConnections(workspaceId)} onChanged={onChanged} />;
+}
+
+/**
+ * Connections and their tools: add (from the installed plugins' settings), switch tools on and off,
+ * refresh, remove. `toolsOnly` (a task's connections) offers only plugins that provide tools, MCP first.
+ */
+export function ConnectionsPanel({ api, onChanged, toolsOnly = false, emptyText }: {
+  api: ConnectionsApi;
+  onChanged: () => void;
+  toolsOnly?: boolean;
+  emptyText?: string;
+}) {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [adding, setAdding] = useState(false);
@@ -37,7 +71,7 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
 
   async function reload() {
     try {
-      setConnections(await listConnections(workspaceId));
+      setConnections(await api.list());
     } catch (err) {
       setError(apiErrorMessage(err));
     }
@@ -45,15 +79,19 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listPlugins(), listConnections(workspaceId)])
+    Promise.all([listPlugins(), api.list()])
       .then(([p, c]) => {
         if (cancelled) return;
-        setPlugins(p);
+        setPlugins(toolsOnly
+          ? p.filter((x) => x.provides_tools).sort((a, b) => (a.id === "mcp" ? -1 : b.id === "mcp" ? 1 : a.name.localeCompare(b.name)))
+          : p);
         setConnections(c);
       })
       .catch((err) => !cancelled && setError(apiErrorMessage(err)));
     return () => { cancelled = true; };
-  }, [workspaceId]);
+    // The api object is rebuilt each render; its key names what it points at.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api.key, toolsOnly]);
 
   const changed = async () => {
     await reload();
@@ -65,30 +103,29 @@ export function IntegrationsPanel({ workspaceId, onChanged }: { workspaceId: str
       {error && <div className="rounded bg-rose-50 p-2 text-rose-700 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
       {connections.length === 0 && !adding && (
         <div className="text-zinc-500">
-          No connections yet. Connect an MCP server, any REST API (CRM, store, payments, ticketing…), or a messaging channel so agents
-          can reach you by SMS, Slack, email or Telegram.
+          {emptyText ?? "No connections yet. Connect an MCP server, any REST API (CRM, store, payments, ticketing…), or a messaging channel so agents can reach you by SMS, Slack, email or Telegram."}
         </div>
       )}
 
       {connections.map((c) => (
-        <ConnectionCard key={c.connection_id} workspaceId={workspaceId} connection={c}
+        <ConnectionCard key={c.connection_id} api={api} connection={c}
           plugin={plugins.find((p) => p.id === c.plugin_id)} onChanged={changed} onError={setError} />
       ))}
 
       {adding ? (
-        <AddConnectionForm workspaceId={workspaceId} plugins={plugins}
+        <AddConnectionForm api={api} plugins={plugins}
           onDone={async () => { setAdding(false); await changed(); }} onCancel={() => setAdding(false)} />
       ) : (
         <button onClick={() => { setAdding(true); setError(null); }} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600">
-          + Add connection
+          {toolsOnly ? "+ Connect an MCP server or API" : "+ Add connection"}
         </button>
       )}
     </div>
   );
 }
 
-function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError }: {
-  workspaceId: string;
+function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
+  api: ConnectionsApi;
   connection: ConnectionView;
   plugin?: PluginInfo;
   onChanged: () => void;
@@ -111,7 +148,7 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
 
   const toggleTool = (name: string, on: boolean) => {
     const enabled = c.tools.filter((t) => (t.name === name ? on : t.enabled)).map((t) => t.name);
-    run(() => updateConnection(workspaceId, c.connection_id, { enabled_tools: enabled }));
+    run(() => api.update(c.connection_id, { enabled_tools: enabled }));
   };
 
   return (
@@ -123,10 +160,10 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
         </div>
         <div className="flex gap-2">
           {c.supports_tools && (
-            <button disabled={busy} onClick={() => run(() => refreshConnection(workspaceId, c.connection_id))} className="text-[10px] text-blue-600 hover:underline">refresh</button>
+            <button disabled={busy} onClick={() => run(() => api.refresh(c.connection_id))} className="text-[10px] text-blue-600 hover:underline">refresh</button>
           )}
           <button disabled={busy}
-            onClick={() => confirm(`Remove '${c.name}'? Its stored secrets are deleted.`) && run(() => removeConnection(workspaceId, c.connection_id))}
+            onClick={() => confirm(`Remove '${c.name}'? Its stored secrets are deleted.`) && run(() => api.remove(c.connection_id))}
             className="text-[10px] text-rose-600 hover:underline">remove</button>
         </div>
       </div>
@@ -140,7 +177,7 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
         <label className="flex items-center gap-2">
           <span className="text-zinc-500">Forward notifications:</span>
           <select value={c.notify_level} disabled={busy}
-            onChange={(e) => run(() => updateConnection(workspaceId, c.connection_id, { notify_level: e.target.value }))}
+            onChange={(e) => run(() => api.update(c.connection_id, { notify_level: e.target.value }))}
             className="rounded border border-zinc-300 bg-white px-1 py-0.5 dark:border-zinc-700 dark:bg-zinc-900">
             {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_HELP[l]}</option>)}
           </select>
@@ -168,7 +205,7 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
           <div className="flex gap-1">
             <input value={senders} onChange={(e) => setSenders(e.target.value)} placeholder="+15557654321" className={field} />
             <button disabled={busy}
-              onClick={() => run(() => updateConnection(workspaceId, c.connection_id, { allowed_senders: senders.split(",").map((s) => s.trim()).filter(Boolean) }))}
+              onClick={() => run(() => api.update(c.connection_id, { allowed_senders: senders.split(",").map((s) => s.trim()).filter(Boolean) }))}
               className="shrink-0 rounded border border-zinc-300 px-2 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800">save</button>
           </div>
           {c.inbound_path && (
@@ -183,8 +220,8 @@ function ConnectionCard({ workspaceId, connection: c, plugin, onChanged, onError
   );
 }
 
-function AddConnectionForm({ workspaceId, plugins, onDone, onCancel }: {
-  workspaceId: string;
+function AddConnectionForm({ api, plugins, onDone, onCancel }: {
+  api: ConnectionsApi;
   plugins: PluginInfo[];
   onDone: () => void;
   onCancel: () => void;
@@ -217,7 +254,7 @@ function AddConnectionForm({ workspaceId, plugins, onDone, onCancel }: {
       if (v) (s.secret ? secrets : settings)[s.key] = v;
     }
     try {
-      await addConnection(workspaceId, {
+      await api.add({
         plugin_id: plugin.id,
         name,
         settings,

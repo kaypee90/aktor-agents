@@ -25,8 +25,8 @@ public sealed class LoadSkillTool(ISkillStore skills) : ITool
     public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request)
     {
         var name = Arg(request.ArgumentsJson, "name");
-        var skill = name is null ? null : await skills.GetAsync(request.TenantId, name.Trim(), request.CancellationToken);
-        if (skill is null || !skill.Enabled)
+        var skill = name is null ? null : await skills.ResolveAsync(request.TenantId, name.Trim(), WorkspaceOf(request), request.CancellationToken);
+        if (skill is null)
         {
             return ToolExecutionResult.Fail($"No skill named '{name}'. Use one of the names listed under SKILLS.");
         }
@@ -40,6 +40,10 @@ public sealed class LoadSkillTool(ISkillStore skills) : ITool
             note = skill.Files.Count == 0 ? null : "Read a file with read_skill_file when the instructions point to it."
         }, ToolJson.Options));
     }
+
+    /// <summary>Workspace agents use their workspace's id as their task id: its skills are theirs too.</summary>
+    internal static string? WorkspaceOf(ToolExecutionRequest request) =>
+        Workspaces.WorkspaceIds.IsWorkspace(request.TaskId) ? request.TaskId : null;
 
     internal static string? Arg(string json, string name)
     {
@@ -73,8 +77,8 @@ public sealed class ReadSkillFileTool(ISkillStore skills) : ITool
     {
         var name = LoadSkillTool.Arg(request.ArgumentsJson, "name");
         var path = SkillPackage.NormalizePath(LoadSkillTool.Arg(request.ArgumentsJson, "path") ?? string.Empty);
-        var skill = name is null ? null : await skills.GetAsync(request.TenantId, name.Trim(), request.CancellationToken);
-        if (skill is null || !skill.Enabled) return ToolExecutionResult.Fail($"No skill named '{name}'.");
+        var skill = name is null ? null : await skills.ResolveAsync(request.TenantId, name.Trim(), LoadSkillTool.WorkspaceOf(request), request.CancellationToken);
+        if (skill is null) return ToolExecutionResult.Fail($"No skill named '{name}'.");
 
         var file = skill.Files.FirstOrDefault(f => f.Path == path);
         if (file is null)
@@ -105,7 +109,7 @@ public sealed class SkillsSection(IOptions<SkillOptions> options) : ISystemPromp
         var listed = context.Skills.Take(options.Value.MaxListedInPrompt).ToList();
         var lines = listed.Select(s => $"- {s.Name}: {s.Description}");
         var more = context.Skills.Count > listed.Count ? $"\n({context.Skills.Count - listed.Count} more skills can be loaded by name.)" : string.Empty;
-        return "Your organization has written these skills: proven ways to do particular kinds of work. When your work " +
+        return "Your organization (and your workspace, if you're in one) has written these skills: proven ways to do particular kinds of work. When your work " +
                "matches a skill's description, call load_skill with its name before you start, and follow it. Skills are " +
                "instructions, not permissions: they never give you tools, budget or access you don't have.\n" +
                string.Join("\n", lines) + more;

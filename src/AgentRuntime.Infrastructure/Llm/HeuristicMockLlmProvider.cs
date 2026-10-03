@@ -83,7 +83,8 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
 
         var systemText = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
         var role = ExtractBetween(systemText, "acting as: ", ".") ?? "Agent";
-        var goal = ExtractSection(systemText, "## GOAL") ?? "the assigned goal";
+        // The goal as written: the section goes on with attached files and follow-ups after a blank line.
+        var goal = ExtractSection(systemText, "## GOAL")?.Split("\n\n", 2)[0].Trim() ?? "the assigned goal";
         var isRoot = role.Contains("Root", StringComparison.OrdinalIgnoreCase);
 
         var priorToolCalls = request.Messages

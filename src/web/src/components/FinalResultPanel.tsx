@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
-import { artifactDownloadUrl, artifactsZipUrl, getTaskArtifacts, getTaskResult } from "@/lib/api";
+import { artifactDownloadUrl, artifactsZipUrl, getTaskArtifacts, getTaskResult, taskFileSource, type FileSource } from "@/lib/api";
+import { FilePreviewDialog, fileTypeLabel } from "./files/FilePreview";
+import { Markdown } from "./files/Markdown";
 import type { ArtifactListItem, TaskResult } from "@/lib/types";
 import { useLiveList } from "@/lib/useLiveList";
 
@@ -15,6 +18,7 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
 }) {
   const [result, setResult] = useState<TaskResult | null>(null);
   const [open, setOpen] = useState(true);
+  const [preview, setPreview] = useState<FileSource | null>(null);
   const terminal = TERMINAL_STATUSES.has(taskStatus);
 
   useEffect(() => {
@@ -55,6 +59,8 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
 
   // An agent rewriting a file produces one artifact record per write; count files, not writes.
   const uniqueFileCount = new Set(artifacts.map((a) => a.file_name)).size;
+  // One row per file name: its latest write.
+  const latest = [...new Map(artifacts.map((a) => [a.file_name, a])).values()];
 
   return (
     <div className="border-b border-zinc-200 dark:border-zinc-800">
@@ -72,7 +78,7 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
             <div className="text-zinc-500">Aggregating final result…</div>
           ) : (
             <>
-              <p className="text-zinc-700 dark:text-zinc-300">{result.summary}</p>
+              <Markdown text={result.summary} compact />
 
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-zinc-500">
                 <span>Participating agents: {result.participating_agents}</span>
@@ -111,6 +117,9 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
                       <li key={i}>{item}</li>
                     ))}
                   </ul>
+                  <Link href={`/?task=${encodeURIComponent(taskId)}`} className="mt-1 inline-block text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+                    Continue with more budget in the chat →
+                  </Link>
                 </div>
               )}
             </>
@@ -139,16 +148,18 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
               </div>
             ) : (
               <ul className="space-y-1">
-                {artifacts.map((a) => (
-                  <li key={a.artifact_id}>
-                    <a
-                      href={artifactDownloadUrl(taskId, a.artifact_id)}
-                      download={a.file_name}
-                      className="text-blue-600 hover:underline dark:text-blue-400"
-                    >
+                {latest.map((a) => (
+                  <li key={a.artifact_id} className="flex items-center gap-2">
+                    <span className="w-10 shrink-0 text-[10px] font-bold text-zinc-400">{fileTypeLabel(a.file_name)}</span>
+                    <button onClick={() => setPreview(taskFileSource(taskId, a.artifact_id))}
+                      className="min-w-0 truncate text-left text-blue-600 hover:underline dark:text-blue-400" title="Preview">
                       {a.file_name}
+                    </button>
+                    <span className="shrink-0 text-xs text-zinc-400">{a.created_by_agent === "user" ? "attached by you" : `by ${a.created_by_agent}`}</span>
+                    <a href={artifactDownloadUrl(taskId, a.artifact_id)} download={a.file_name}
+                      className="ml-auto shrink-0 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
+                      Download
                     </a>
-                    <span className="ml-2 text-xs text-zinc-400">by {a.created_by_agent}</span>
                   </li>
                 ))}
               </ul>
@@ -156,6 +167,7 @@ export function FinalResultPanel({ taskId, taskStatus, artifactWrites = 0 }: {
           </div>
         </div>
       )}
+      <FilePreviewDialog source={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }

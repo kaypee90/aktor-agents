@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { API_BASE, addWorkspaceTrigger, deleteWorkspaceTrigger, getWorkspaceFiles } from "@/lib/api";
 import type { AgentStatus, RuntimeEvent } from "@/lib/types";
@@ -13,7 +14,7 @@ import { pauseInfo } from "./pauseInfo";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
 
-type Tab = "agents" | "files" | "triggers" | "integrations" | "safety" | "events";
+type Tab = "agents" | "files" | "knowhow" | "triggers" | "integrations" | "safety" | "events";
 
 function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
@@ -44,6 +45,7 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
   const tabs: [Tab, string, number | null][] = [
     ["agents", "Agents", workspace.agents.length],
     ["files", "Files", files.length || null],
+    ["knowhow", "Skills & knowledge", null],
     ["triggers", "Triggers", workspace.triggers.length || null],
     ["integrations", "Integrations", workspace.connections?.length || null],
     ["safety", "Safety", pendingApprovals || null],
@@ -98,6 +100,25 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
         )}
 
         {tab === "files" && <FilesPanel workspace={workspace} files={files} />}
+
+        {tab === "knowhow" && (
+          <div className="space-y-3 p-3 text-xs">
+            <p className="text-zinc-500">
+              Give this workspace its own skills and knowledge. Only its agents use them, on top of what your whole organization
+              shares; no other workspace or task sees them.
+            </p>
+            {[
+              ["/skills", "Skills", "How this workspace's agents should do particular work (a SKILL.md each)."],
+              ["/knowledge", "Knowledge", "Facts and documents (PDF, Word, Excel, slides…) its agents search."],
+            ].map(([href, label, text]) => (
+              <Link key={href} href={`${href}?workspace=${encodeURIComponent(workspace.workspace_id)}`}
+                className="block rounded-lg border border-zinc-200 p-3 hover:border-brand-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-brand-800 dark:hover:bg-zinc-900">
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">{label} for this workspace →</span>
+                <span className="mt-0.5 block text-zinc-500">{text}</span>
+              </Link>
+            ))}
+          </div>
+        )}
 
         {tab === "triggers" && <Triggers workspace={workspace} onChanged={onChanged} />}
 

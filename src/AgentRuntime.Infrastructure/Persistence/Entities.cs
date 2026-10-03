@@ -173,6 +173,9 @@ public sealed class MemoryEntity
     public required string Value { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
+    /// <summary>The workspace whose agents alone can find this entry; null for the whole organization.</summary>
+    public string? WorkspaceId { get; set; }
+
     /// <summary>The model whose vector is in the (pgvector, unmapped) "Embedding" column, or null
     /// when the entry has none. Only vectors from the same model are compared.</summary>
     public string? EmbeddingModel { get; set; }
@@ -363,6 +366,8 @@ public sealed class BillingEventRecord
 public sealed class SkillRecord
 {
     public required string TenantId { get; set; }
+    /// <summary>The workspace whose agents alone use this skill; "" for the whole organization.</summary>
+    public string WorkspaceId { get; set; } = string.Empty;
     public required string Name { get; set; }
     public required string Description { get; set; }
     public required string Instructions { get; set; }
