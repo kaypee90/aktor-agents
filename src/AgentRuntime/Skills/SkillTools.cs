@@ -41,9 +41,9 @@ public sealed class LoadSkillTool(ISkillStore skills) : ITool
         }, ToolJson.Options));
     }
 
-    /// <summary>Workspace agents use their workspace's id as their task id: its skills are theirs too.</summary>
+    /// <summary>The calling agent's workspace, as the runtime stamped it: its skills are theirs too.</summary>
     internal static string? WorkspaceOf(ToolExecutionRequest request) =>
-        Workspaces.WorkspaceIds.IsWorkspace(request.TaskId) ? request.TaskId : null;
+        Workspaces.WorkspaceIds.IsWorkspace(request.WorkspaceId) ? request.WorkspaceId : null;
 
     internal static string? Arg(string json, string name)
     {

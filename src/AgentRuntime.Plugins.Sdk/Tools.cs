@@ -48,6 +48,10 @@ public sealed record ToolExecutionRequest
     /// (memory, scratch databases) must scope it by this.</summary>
     public string TenantId { get; init; } = "default";
 
+    /// <summary>The workspace the calling agent belongs to, stamped by the runtime; null for task
+    /// agents. Tools that keep data per workspace (memory, skills) scope it by this.</summary>
+    public string? WorkspaceId { get; init; }
+
     /// <summary>Stable across retries and crash recovery of the same tool call
     /// (<c>{agentId}:{toolCallId}</c>). Tools with side effects pass it on (as a message id, a
     /// spawned agent id, an API idempotency header) so a replayed call can't take effect twice.</summary>

@@ -369,4 +369,43 @@ public sealed class PipelineTests : IAsyncLifetime
         Assert.Equal(3, run.PipelineVersion);
         Assert.Equal(["research", "write"], run.Stages.Select(s => s.StageId));
     }
+
+    [Fact]
+    public async Task Knowledge_a_stage_shares_stays_in_its_workspace_and_its_runs_find_it()
+    {
+        // input "remember": the stage shares a fact; "recall": it searches. Its summary is the tool's result.
+        ScriptedLlmProviderRegistry.Current = Script(behave: (_, r) =>
+        {
+            var tool = r.Messages.LastOrDefault(m => m.Role == ChatRole.Tool);
+            if (tool is not null)
+            {
+                return new LlmCompletionResponse
+                {
+                    ToolCalls = [Call("complete_task", new { status = "completed", summary = tool.Content })],
+                    FinishReason = LlmFinishReason.ToolCalls
+                };
+            }
+
+            var call = Kickoff(r).Contains("remember")
+                ? Call("write_memory", new { key = "escalation-contact", value = "Page Ama for checkout incidents.", shared = true })
+                : Call("search_knowledge", new { query = "escalation" });
+            return new LlmCompletionResponse { ToolCalls = [call], FinishReason = LlmFinishReason.ToolCalls };
+        });
+        var pipeline = new PipelineDefinition { Stages = [Stage("research")] };
+        var ours = await CreateAsync(pipeline);
+        var theirs = await CreateAsync(pipeline);
+
+        async Task<string> RunAsync(string workspaceId, string input)
+        {
+            var run = await WaitForRunAsync((await Workspace(workspaceId).StartRun(input, "user-1")).RunId!, Done);
+            Assert.Equal(PipelineRunStatus.Completed, run.Status);
+            return run.Stages.Single().Summary!;
+        }
+
+        Assert.Contains("written", await RunAsync(ours, "remember the escalation contact"));
+        // A later run of the same workspace finds it (stage agents run under the run's id, not the workspace's).
+        Assert.Contains("Page Ama", await RunAsync(ours, "recall the escalation contact"));
+        // Another workspace of the organization doesn't: it wasn't shared organization-wide.
+        Assert.DoesNotContain("Page Ama", await RunAsync(theirs, "recall the escalation contact"));
+    }
 }

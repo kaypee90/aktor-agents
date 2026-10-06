@@ -914,6 +914,7 @@ public sealed class AgentGrain(
                 AgentId = AgentId,
                 TaskId = s.TaskId,
                 TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
+                WorkspaceId = s.WorkspaceId,
                 ArgumentsJson = call.ArgumentsJson,
                 IdempotencyKey = $"{AgentId}:{call.Id}",
                 GrantedPermissions = s.GrantedPermissions
