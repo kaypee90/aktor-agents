@@ -975,11 +975,23 @@ export type WorkspaceAnalytics = {
     approvals_expired: number;
     tool_calls: number;
     tool_failures: number;
+    /** The pipelines' runs that started in the range. */
+    runs: number;
+    runs_completed: number;
+    runs_failed: number;
+    runs_running: number;
+    avg_run_cost_usd: number;
+    p50_run_duration_s: number | null;
+    p95_run_duration_s: number | null;
   };
-  previous: { calls: number; tokens: number; cost_usd: number };
-  series: { t: string; calls: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
-  by_workspace: { workspace_id: string; name: string; status: string; calls: number; tokens: number; cost_usd: number; triggers_fired: number; approvals_requested: number }[];
+  previous: { calls: number; tokens: number; cost_usd: number; runs: number };
+  series: { t: string; calls: number; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
+  by_workspace: { workspace_id: string; name: string; status: string; calls: number; tokens: number; cost_usd: number; triggers_fired: number; approvals_requested: number; runs: number; runs_failed: number }[];
   by_role: { role: string; calls: number; tokens: number; cost_usd: number; avg_tokens: number }[];
+  /** Who started the pipelines' runs (a member, an API key, or triggers). */
+  by_user: AnalyticsUserRow[];
+  top_runs_by_cost: AnalyticsTaskRow[];
+  slowest_runs: AnalyticsTaskRow[];
   by_model: AnalyticsModelRow[];
   by_tool: AnalyticsToolRow[];
 };
@@ -996,6 +1008,9 @@ export type AnalyticsTaskRow = {
   agents: number;
   started_by: string;
   started_by_name: string;
+  /** For a pipeline's run: its workspace. */
+  workspace_id?: string;
+  workspace_name?: string;
 };
 
 /** Usage by whoever started the runs: a member, an API key, or "unknown" for older runs. */

@@ -263,11 +263,62 @@ function ToolsCard({ rows }: { rows: AnalyticsToolRow[] }) {
   );
 }
 
-/** Usage by whoever started the runs: members and API keys, with their share of spend. Click one to filter by them. */
-function UsersCard({ rows, total, onPick }: { rows: AnalyticsUserRow[]; total: number; onPick: (user: string) => void }) {
+/** The most expensive and the slowest runs, each linking to its agent graph; a pipeline's runs show their workspace. */
+function RunsCard({ mostExpensive, slowest }: { mostExpensive: AnalyticsTaskRow[]; slowest: AnalyticsTaskRow[] }) {
+  const [tab, setTab] = useState<"cost" | "slow">("cost");
+  const runs = tab === "cost" ? mostExpensive : slowest;
+  const pipelines = runs.some((r) => r.workspace_name);
   return (
     <Card>
-      <CardHeader title="By user" description="Who started the runs (a member or an API key), what they spent and how often runs failed. Click one to filter by them." />
+      <CardHeader title="Runs to look at" description="The most expensive and the slowest runs in range."
+        actions={<Tabs value={tab} onChange={setTab} className="border-0" tabs={[{ id: "cost", label: "Most expensive" }, { id: "slow", label: "Slowest" }]} />} />
+      <table className="w-full text-sm">
+        <thead className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+          <tr>
+            <th className="px-5 py-2.5 font-medium">{pipelines ? "Input" : "Goal"}</th>
+            {pipelines && <th className="hidden px-3 py-2.5 font-medium md:table-cell">Workspace</th>}
+            <th className="px-3 py-2.5 font-medium">Status</th>
+            <th className="hidden px-3 py-2.5 font-medium xl:table-cell">Started by</th>
+            <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Agents</th>
+            <th className="px-3 py-2.5 text-right font-medium">Tokens</th>
+            <th className="px-3 py-2.5 text-right font-medium">Spend</th>
+            <th className="px-3 py-2.5 text-right font-medium">Duration</th>
+            <th className="hidden px-5 py-2.5 font-medium lg:table-cell">Started</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+          {runs.map((t) => (
+            <tr key={t.task_id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+              <td className="max-w-md px-5 py-2.5">
+                <Link href={`/?task=${t.task_id}`} className="line-clamp-1 font-medium text-zinc-900 hover:text-brand-600 dark:text-zinc-100 dark:hover:text-brand-400">{t.goal}</Link>
+              </td>
+              {pipelines && (
+                <td className="hidden max-w-40 truncate px-3 py-2.5 text-xs md:table-cell">
+                  {t.workspace_id && <Link href={`/workspaces?id=${t.workspace_id}`} className="text-zinc-600 hover:text-brand-600 dark:text-zinc-400">{t.workspace_name}</Link>}
+                </td>
+              )}
+              <td className="px-3 py-2.5"><StatusBadge status={t.status} /></td>
+              <td className="hidden max-w-48 truncate px-3 py-2.5 text-xs text-zinc-600 xl:table-cell dark:text-zinc-400" title={t.started_by_name}>{t.started_by_name}</td>
+              <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{t.agents}</td>
+              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{compact(t.tokens)}</td>
+              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{money(t.cost_usd)}</td>
+              <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{duration(t.duration_s)}</td>
+              <td className="hidden px-5 py-2.5 text-xs text-zinc-500 lg:table-cell">{ago(t.created_at)}</td>
+            </tr>
+          ))}
+          {runs.length === 0 && <tr><td colSpan={9} className="px-5 py-4 text-xs text-zinc-500">No runs in range.</td></tr>}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+/** Usage by whoever started the runs: members, API keys and triggers, with their share of spend.
+ * With `onPick`, clicking one filters by them. */
+function UsersCard({ rows, total, onPick, description }: { rows: AnalyticsUserRow[]; total: number; onPick?: (user: string) => void; description?: string }) {
+  return (
+    <Card>
+      <CardHeader title="By user" description={description ?? "Who started the runs (a member or an API key), what they spent and how often runs failed. Click one to filter by them."} />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
@@ -286,7 +337,7 @@ function UsersCard({ rows, total, onPick }: { rows: AnalyticsUserRow[]; total: n
             {rows.map((u) => {
               const share = total > 0 ? u.cost_usd / total : 0;
               return (
-                <tr key={u.user} onClick={() => onPick(u.user)} className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                <tr key={u.user} onClick={onPick ? () => onPick(u.user) : undefined} className={cx(onPick && "cursor-pointer", "hover:bg-zinc-50 dark:hover:bg-zinc-900/50")}>
                   <td className="max-w-xs px-5 py-2.5">
                     <div className="flex items-center gap-2">
                       {u.kind === "api_key" ? <Icons.Key className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
@@ -419,7 +470,7 @@ function AnalyticsView() {
     <div>
       <PageHeader
         title="Analytics"
-        description="Where your tokens and money go, which models and tools are worth it, and what takes long. Click a bar, a slice or a model to drill in."
+        description="Where your tokens and money go, which models and tools are worth it, and what takes long. Tasks are one-off goals; workspace pipelines and their runs are under Workspaces. Click a bar, a slice or a model to drill in."
         actions={<Link href="/runs"><Button icon={<Icons.Runs className="h-3.5 w-3.5" />}>Run history</Button></Link>}
       />
 
@@ -504,7 +555,6 @@ function AnalyticsView() {
 function TasksAnalytics({ a, loading, onDrill, update }: {
   a: Analytics; loading: boolean; onDrill: (t: string) => void; update: (patch: Record<string, string | null>) => void;
 }) {
-  const [runsTab, setRunsTab] = useState<"cost" | "slow">("cost");
   const theme = useChartTheme();
   if (a.totals.runs === 0) {
     return <EmptyState icon={<Icons.Analytics className="h-5 w-5" />} title="No runs in this range" description="Widen the date range or clear the filters." />;
@@ -512,7 +562,6 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
 
   const bucketLabel = (t: string) => label(t, a.range.bucket);
   const series = a.series.map((p) => ({ ...p, label: bucketLabel(p.t) }));
-  const runs: AnalyticsTaskRow[] = runsTab === "cost" ? a.top_by_cost : a.slowest;
 
   return (
     <div className={cx("space-y-5 transition-opacity", loading && "opacity-60")}>
@@ -584,40 +633,7 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader title="Runs to look at" description="The most expensive and the slowest runs in range."
-          actions={<Tabs value={runsTab} onChange={setRunsTab} className="border-0" tabs={[{ id: "cost", label: "Most expensive" }, { id: "slow", label: "Slowest" }]} />} />
-        <table className="w-full text-sm">
-          <thead className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
-            <tr>
-              <th className="px-5 py-2.5 font-medium">Goal</th>
-              <th className="px-3 py-2.5 font-medium">Status</th>
-              <th className="hidden px-3 py-2.5 font-medium xl:table-cell">Started by</th>
-              <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Agents</th>
-              <th className="px-3 py-2.5 text-right font-medium">Tokens</th>
-              <th className="px-3 py-2.5 text-right font-medium">Spend</th>
-              <th className="px-3 py-2.5 text-right font-medium">Duration</th>
-              <th className="hidden px-5 py-2.5 font-medium lg:table-cell">Started</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
-            {runs.map((t) => (
-              <tr key={t.task_id} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                <td className="max-w-md px-5 py-2.5">
-                  <Link href={`/?task=${t.task_id}`} className="line-clamp-1 font-medium text-zinc-900 hover:text-brand-600 dark:text-zinc-100 dark:hover:text-brand-400">{t.goal}</Link>
-                </td>
-                <td className="px-3 py-2.5"><StatusBadge status={t.status} /></td>
-                <td className="hidden max-w-48 truncate px-3 py-2.5 text-xs text-zinc-600 xl:table-cell dark:text-zinc-400" title={t.started_by_name}>{t.started_by_name}</td>
-                <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{t.agents}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{compact(t.tokens)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{money(t.cost_usd)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{duration(t.duration_s)}</td>
-                <td className="hidden px-5 py-2.5 text-xs text-zinc-500 lg:table-cell">{ago(t.created_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
+      <RunsCard mostExpensive={a.top_by_cost} slowest={a.slowest} />
     </div>
   );
 }
@@ -634,9 +650,12 @@ function WorkspacesAnalytics({ w, loading, onDrill, update }: {
   const t = w.totals;
   return (
     <div className={cx("space-y-5 transition-opacity", loading && "opacity-60")}>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Kpi label="Spend" value={usd(t.cost_usd)} hint={<Delta now={t.cost_usd} before={w.previous.cost_usd} inverse />} />
         <Kpi label="Tokens" value={compact(t.tokens)} hint={<Delta now={t.tokens} before={w.previous.tokens} inverse />} />
+        <Kpi label="Pipeline runs" value={t.runs}
+          hint={<>{t.runs_completed} done · {t.runs_failed} failed{t.runs_running ? ` · ${t.runs_running} running` : ""} · <Delta now={t.runs} before={w.previous.runs} /></>} />
+        <Kpi label="Median run time" value={duration(t.p50_run_duration_s)} hint={`p95 ${duration(t.p95_run_duration_s)} · ${usd(t.avg_run_cost_usd)} a run`} />
         <Kpi label="Avg spend / day" value={usd(t.avg_cost_per_day_usd)} hint={`${t.active_workspaces} of ${t.workspaces} workspaces active`} />
         <Kpi label="Model calls" value={compact(t.calls)} hint={`avg ${ms(t.avg_call_ms)} · p95 ${ms(t.p95_call_ms)}`} />
         <Kpi label="Triggers fired" value={t.triggers_fired} hint={`${t.tool_calls} tool calls · ${t.tool_failures} failed`} />
@@ -644,22 +663,24 @@ function WorkspacesAnalytics({ w, loading, onDrill, update }: {
           hint={`${t.approvals_approved} approved · ${t.approvals_rejected} rejected${t.approvals_expired ? ` · ${t.approvals_expired} expired` : ""}`} />
       </div>
 
-      <TrendCard series={series as unknown as SeriesPoint[]} bucket={w.range.bucket} onDrill={onDrill} countKey="calls" countLabel="Model calls"
+      <TrendCard series={series as unknown as SeriesPoint[]} bucket={w.range.bucket} onDrill={onDrill} countKey="runs" countLabel="Runs"
         metrics={[
           { id: "cost_usd", label: "Spend", format: (v) => usd(v ?? 0) },
           { id: "tokens", label: "Tokens", format: (v) => compact(v ?? 0) },
+          { id: "runs", label: "Runs", format: (v) => String(v ?? 0) },
           { id: "calls", label: "Model calls", format: (v) => String(v ?? 0) },
           { id: "avg_duration_s", label: "Response time", format: (v) => duration(v) },
         ]} />
 
       <Card>
-        <CardHeader title="By workspace" description="Spend, model calls, triggers and approvals for each workspace. Click one to focus on it." />
+        <CardHeader title="By workspace" description="Spend, runs, model calls, triggers and approvals for each workspace. Click one to focus on it." />
         <table className="w-full text-sm">
           <thead className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
             <tr>
               <th className="px-5 py-2.5 font-medium">Workspace</th>
               <th className="px-3 py-2.5 text-right font-medium">Spend</th>
               <th className="px-3 py-2.5 text-right font-medium">Tokens</th>
+              <th className="px-3 py-2.5 text-right font-medium">Runs</th>
               <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Model calls</th>
               <th className="px-3 py-2.5 text-right font-medium">Triggers</th>
               <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Approvals</th>
@@ -674,6 +695,9 @@ function WorkspacesAnalytics({ w, loading, onDrill, update }: {
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{usd(ws.cost_usd)}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{compact(ws.tokens)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
+                  {ws.runs}{ws.runs_failed > 0 && <span className="ml-1 text-rose-600 dark:text-rose-400">({ws.runs_failed} failed)</span>}
+                </td>
                 <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{ws.calls}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{ws.triggers_fired}</td>
                 <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{ws.approvals_requested}</td>
@@ -685,6 +709,13 @@ function WorkspacesAnalytics({ w, loading, onDrill, update }: {
           </tbody>
         </table>
       </Card>
+
+      {w.by_user.length > 0 && (
+        <UsersCard rows={w.by_user} total={w.by_user.reduce((n, u) => n + u.cost_usd, 0)}
+          description="Who started the pipelines' runs (a member, an API key, or triggers), what they spent and how often runs failed." />
+      )}
+
+      <RunsCard mostExpensive={w.top_runs_by_cost} slowest={w.slowest_runs} />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <RolesCard rows={w.by_role} />

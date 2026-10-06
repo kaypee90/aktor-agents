@@ -23,8 +23,11 @@ money go, which models and tools are worth it, and what takes long. It has two v
 | Panel | Answers |
 |---|---|
 | **Spend, tokens, average spend per day, model calls, triggers fired, approvals** | The headline figures, with the change against the previous period. Model calls show average and p95 response time; approvals how many were approved, rejected or expired. |
-| **Over time** | Spend, tokens, model calls or response time per hour or day. |
-| **By workspace** | Spend, tokens, model calls, triggers and approvals for each workspace. Click one to focus on it. |
+| **Over time** | Spend, tokens, runs, model calls or response time per hour or day. |
+| **Pipeline runs, median run time** | How many runs started (done, failed, running) against the previous period, how long they took (median and p95) and what a run costs on average. |
+| **By workspace** | Spend, tokens, runs (and failures), model calls, triggers and approvals for each workspace. Click one to focus on it. |
+| **By user** | Who started the runs: members, API keys, or triggers, with runs, spend and its share, failures and their last run. |
+| **Runs to look at** | The most expensive and the slowest runs, with their workspace and who started them, linking to each run's agent graph. |
 | **What consumes the most** | Tokens or spend by agent role: pipeline stages and their helpers. |
 | **Tools** and **By model** | As for tasks. |
 
@@ -47,9 +50,9 @@ workspace. Filters live in the page's URL, so a filtered view can be bookmarked 
   dashboard, or the API key for the API, MCP, A2A and ACP. A replay belongs to whoever replayed
   it. Runs from before this was recorded show as **Not recorded**; with sign-in off, everything is
   **Local**. A member or key deleted since keeps its runs, under a short id.
-- A workspace pipeline's runs are tasks too (source `pipeline`), so they appear in the Tasks view
-  and by user: whoever started the run, or **Triggers (automatic runs)** for runs a schedule,
-  webhook or watch started.
+- A workspace pipeline's runs are reported in the **Workspaces** view, not under Tasks (though
+  each run opens as a task). There, runs are attributed to whoever started them, or **Triggers
+  (automatic runs)** for runs a schedule, webhook or watch started.
 - Up to 20,000 runs and 100,000 model calls per query are included (the response says
   `truncated: true` beyond that).
 

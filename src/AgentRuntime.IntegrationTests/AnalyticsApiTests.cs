@@ -90,4 +90,40 @@ public sealed class AnalyticsApiTests(ApiTestHostFixture fixture, ITestOutputHel
         // Another organization sees none of it.
         Assert.Equal(0, (await Json(await other.GetAsync("/api/analytics?range=24h"))).GetProperty("totals").GetProperty("runs").GetInt32());
     }
+
+    [Fact]
+    public async Task Pipeline_runs_are_reported_with_their_workspace_not_with_tasks()
+    {
+        if (Skip()) return;
+        using var api = Host.ClientFor(await Host.CreateOrganizationAsync("AnalyticsPipelines"));
+
+        var created = await Json(await api.PostAsJsonAsync("/api/workspaces", new
+        {
+            name = "Desk",
+            goal = "Answer questions.",
+            pipeline = new { stages = new[] { new { stage_id = "answer", name = "Answer", instructions = "Answer the question.", inputs = Array.Empty<string>() } } }
+        }));
+        var ws = created.GetProperty("workspace_id").GetString()!;
+        var run = await Json(await api.PostAsJsonAsync($"/api/workspaces/{ws}/runs", new { input = "What is a webhook?" }));
+        var runId = run.GetProperty("run_id").GetString()!;
+        await Json(await api.GetAsync($"/api/tasks/{runId}/wait?timeout_seconds=90"));
+
+        JsonElement workspaces = default;
+        for (var i = 0; i < 40; i++)
+        {
+            workspaces = await Json(await api.GetAsync("/api/analytics?range=24h&scope=workspaces"));
+            if (workspaces.GetProperty("totals").GetProperty("runs_completed").GetInt32() == 1) break;
+            await Task.Delay(250);
+        }
+
+        Assert.Equal(1, workspaces.GetProperty("totals").GetProperty("runs").GetInt32());
+        Assert.Equal(1, workspaces.GetProperty("by_workspace")[0].GetProperty("runs").GetInt32());
+        Assert.Equal(runId, workspaces.GetProperty("top_runs_by_cost")[0].GetProperty("task_id").GetString());
+        Assert.Equal("Desk", workspaces.GetProperty("top_runs_by_cost")[0].GetProperty("workspace_name").GetString());
+        Assert.Equal("api_key", Assert.Single(workspaces.GetProperty("by_user").EnumerateArray()).GetProperty("kind").GetString());
+
+        // The Tasks view counts only one-off tasks.
+        var tasks = await Json(await api.GetAsync("/api/analytics?range=24h"));
+        Assert.Equal(0, tasks.GetProperty("totals").GetProperty("runs").GetInt32());
+    }
 }
