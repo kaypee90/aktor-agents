@@ -1013,7 +1013,9 @@ public sealed partial class WorkspaceGrain(
             return Permission(existing);
         }
 
-        var verdict = PolicyEngine.Evaluate(S.SafetyPolicy, request.ToolName, request.SideEffects);
+        // The organization's policy applies on top of the workspace's: the stricter answer wins.
+        var orgPolicy = await GrainFactory.GetGrain<Tenancy.ITenantGrain>(Tenancy.TenantIds.Normalize(S.TenantId)).GetSafetyPolicy();
+        var verdict = PolicyEngine.Evaluate(orgPolicy, S.SafetyPolicy, request.ToolName, request.SideEffects);
         if (verdict.Decision == PolicyDecisionKind.Allow) return new ToolCallPermission { Decision = PolicyDecisionKind.Allow };
 
         var agent = await Registry.GetAsync(request.AgentId);
@@ -1025,7 +1027,13 @@ public sealed partial class WorkspaceGrain(
                 $"{agentName} was blocked from {request.ToolName} by {verdict.Reason}",
                 System.Text.Json.JsonSerializer.Serialize(new { arguments = Truncate(request.ArgumentsJson, 2000), reason = verdict.Reason }),
                 key: $"denied:{request.CallKey}");
-            return new ToolCallPermission { Decision = PolicyDecisionKind.Deny, Message = $"Blocked by the workspace's safety policy ({verdict.Reason}). Don't retry; tell the user if it matters." };
+            return new ToolCallPermission
+            {
+                Decision = PolicyDecisionKind.Deny,
+                Message = verdict.ByOrganization
+                    ? $"Blocked by {verdict.Reason}. Don't retry; tell the user if it matters."
+                    : $"Blocked by the workspace's safety policy ({verdict.Reason}). Don't retry; tell the user if it matters."
+            };
         }
 
         var approval = new ApprovalRecord

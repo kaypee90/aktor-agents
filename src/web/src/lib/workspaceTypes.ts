@@ -187,6 +187,16 @@ export interface SafetyPolicy {
   team?: TeamPolicy | null;
 }
 
+/** The organization's safety policy: applies to every workspace and task, on top of their own. */
+export interface OrganizationSafetyPolicy {
+  /** The least oversight anywhere in the organization. */
+  minimum_autonomy: AutonomyLevel;
+  rules: ApprovalRule[];
+  team?: TeamPolicy | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
 export interface ApprovalRecord {
   approval_id: string;
   code: string;

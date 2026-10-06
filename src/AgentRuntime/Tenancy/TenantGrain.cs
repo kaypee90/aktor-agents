@@ -12,6 +12,7 @@ public sealed class TenantGrainState
     [Id(1)] public TenantUsagePeriod Current { get; set; } = new();
     [Id(2)] public List<TenantUsagePeriod> History { get; set; } = [];
     [Id(3)] public HashSet<string> ParkedAgents { get; set; } = [];
+    [Id(4)] public Safety.OrganizationSafetyPolicy SafetyPolicy { get; set; } = new();
 }
 
 public sealed class TenantGrain(
@@ -28,6 +29,23 @@ public sealed class TenantGrain(
     private PlanDefinition Plan => billingOptions.Value.Plan(string.IsNullOrEmpty(S.Billing.PlanId) ? null : S.Billing.PlanId);
 
     public Task<PlanDefinition> GetPlan() => Task.FromResult(Plan);
+
+    public Task<Safety.OrganizationSafetyPolicy> GetSafetyPolicy() => Task.FromResult(S.SafetyPolicy);
+
+    public async Task<Safety.OrganizationSafetyPolicy> SetSafetyPolicy(Safety.OrganizationSafetyPolicy policy, string changedBy)
+    {
+        S.SafetyPolicy = policy with
+        {
+            Rules = policy.Rules.Where(r => !string.IsNullOrWhiteSpace(r.ToolPattern)).Take(MaxPolicyRules).ToList(),
+            Team = policy.Team is { IsEmpty: false } team ? team : null,
+            UpdatedAt = DateTimeOffset.UtcNow,
+            UpdatedBy = changedBy
+        };
+        await state.WriteStateAsync();
+        return S.SafetyPolicy;
+    }
+
+    private const int MaxPolicyRules = 50;
 
     public Task<QuotaDecision> CheckQuota()
     {

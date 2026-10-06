@@ -60,6 +60,58 @@ public sealed class PolicyEngineTests
     [InlineData("a.b", "axb", false)] // no regex injection
     public void Glob_MatchesWholeNames_CaseInsensitively(string pattern, string name, bool expected) =>
         Assert.Equal(expected, PolicyEngine.Glob(pattern, name));
+
+    // ---- The organization's policy, on top of a workspace's ----
+
+    private static PolicyVerdict Both(OrganizationSafetyPolicy org, WorkspaceSafetyPolicy? ws, string tool, ToolSideEffects fx) =>
+        PolicyEngine.Evaluate(org, ws, tool, fx);
+
+    [Fact]
+    public void An_organization_rule_wins_over_a_looser_workspace()
+    {
+        var org = new OrganizationSafetyPolicy { Rules = [new ApprovalRule { Name = "no deletes", ToolPattern = "*__delete_*", Applies = SideEffectScope.Any, Decision = PolicyDecisionKind.Deny }] };
+        var allowAll = new WorkspaceSafetyPolicy { Rules = [new ApprovalRule { ToolPattern = "*", Applies = SideEffectScope.Any, Decision = PolicyDecisionKind.Allow }] };
+        var verdict = Both(org, allowAll, "crm__delete_customer", ToolSideEffects.NonIdempotent);
+        Assert.Equal(PolicyDecisionKind.Deny, verdict.Decision);
+        Assert.True(verdict.ByOrganization);
+        Assert.Contains("organization", verdict.Reason);
+        Assert.Equal(PolicyDecisionKind.Allow, Both(org, allowAll, "crm__update_customer", ToolSideEffects.Idempotent).Decision);
+    }
+
+    [Fact]
+    public void The_organizations_minimum_autonomy_applies_to_an_autonomous_workspace_and_to_tasks_but_reads_stay_free()
+    {
+        var org = new OrganizationSafetyPolicy { MinimumAutonomy = AutonomyLevel.Supervised };
+        Assert.Equal(PolicyDecisionKind.RequireApproval, Both(org, new WorkspaceSafetyPolicy(), "crm__update_customer", ToolSideEffects.Idempotent).Decision);
+        Assert.Equal(PolicyDecisionKind.RequireApproval, Both(org, null, "crm__update_customer", ToolSideEffects.Idempotent).Decision);
+        Assert.Equal(PolicyDecisionKind.Allow, Both(org, new WorkspaceSafetyPolicy(), "crm__lookup_customer", ToolSideEffects.ReadOnly).Decision);
+        Assert.Equal(PolicyDecisionKind.Allow, Both(org, null, "write_memory", ToolSideEffects.Idempotent).Decision); // internal
+    }
+
+    [Fact]
+    public void An_organization_allow_only_exempts_from_its_own_minimum_and_a_stricter_workspace_still_wins()
+    {
+        var org = new OrganizationSafetyPolicy
+        {
+            MinimumAutonomy = AutonomyLevel.Supervised,
+            Rules = [new ApprovalRule { ToolPattern = "notes__*", Applies = SideEffectScope.Any, Decision = PolicyDecisionKind.Allow }]
+        };
+        Assert.Equal(PolicyDecisionKind.Allow, Both(org, new WorkspaceSafetyPolicy(), "notes__save", ToolSideEffects.Idempotent).Decision);
+
+        var strict = new WorkspaceSafetyPolicy { Rules = [new ApprovalRule { ToolPattern = "notes__*", Applies = SideEffectScope.Any, Decision = PolicyDecisionKind.Deny }] };
+        var verdict = Both(org, strict, "notes__save", ToolSideEffects.Idempotent);
+        Assert.Equal(PolicyDecisionKind.Deny, verdict.Decision);
+        Assert.False(verdict.ByOrganization);
+    }
+
+    [Fact]
+    public void An_empty_organization_policy_changes_nothing()
+    {
+        var ws = new WorkspaceSafetyPolicy { Autonomy = AutonomyLevel.SemiAutonomous };
+        Assert.Equal(PolicyEngine.Evaluate(ws, "crm__delete_customer", ToolSideEffects.NonIdempotent),
+            Both(new OrganizationSafetyPolicy(), ws, "crm__delete_customer", ToolSideEffects.NonIdempotent));
+        Assert.Equal(PolicyDecisionKind.Allow, Both(new OrganizationSafetyPolicy(), null, "shell_exec", ToolSideEffects.NonIdempotent).Decision);
+    }
 }
 
 public sealed class AuditLogTests

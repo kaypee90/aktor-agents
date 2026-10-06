@@ -874,6 +874,24 @@ public sealed class AgentGrain(
                     continue;
                 }
             }
+            else if (!s.IsResident)
+            {
+                // A task has no workspace policy, but its organization's applies. Nobody is there to
+                // approve a call in a task, so one the organization says needs approval doesn't run.
+                var orgPolicy = await Tenant.GetSafetyPolicy();
+                var verdict = PolicyEngine.Evaluate(orgPolicy, null, call.Name, sideEffects);
+                if (verdict.Decision != PolicyDecisionKind.Allow)
+                {
+                    await PublishAsync(RuntimeEventType.AgentToolCompleted, $"Agent '{s.Name}' was blocked from '{call.Name}' by {verdict.Reason}.",
+                        new Dictionary<string, string> { ["tool"] = call.Name, ["success"] = "false", ["blocked_by"] = "organization_policy" });
+                    AppendToolResult(call, ToolExecutionResult.Fail(verdict.Decision == PolicyDecisionKind.Deny
+                        ? $"Blocked by {verdict.Reason}. Don't retry; tell the user if it matters."
+                        : $"Not run: {verdict.Reason} requires a person's approval, and tasks can't wait for one. Don't retry; tell the user it needs approval (a workspace can ask for it).",
+                        "organization_policy"));
+                    await state.WriteStateAsync();
+                    continue;
+                }
+            }
 
             var fingerprint = call.Name + "|" + call.ArgumentsJson;
             s.TurnFingerprints.Add(fingerprint);

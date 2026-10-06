@@ -291,9 +291,9 @@ public sealed class AgentOrchestrator(
             RootAgentId = parentSnapshot.RootAgentId,
             TenantId = tenant
         }, request.Role, (await Tenant(tenant).GetPlan()).MaxActiveAgents,
-            // The task's rules travel with its agents; a workspace's are read live, so a change
-            // the user makes applies to the very next spawn.
-            new[] { parentSnapshot.TeamPolicy, policy?.Team }.OfType<Safety.TeamPolicy>().ToList());
+            // The task's rules travel with its agents; a workspace's and the organization's are read
+            // live, so a change applies to the very next spawn.
+            new[] { parentSnapshot.TeamPolicy, policy?.Team, (await Tenant(tenant).GetSafetyPolicy()).Team }.OfType<Safety.TeamPolicy>().ToList());
         if (!validation.Allowed)
         {
             return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId, validation.RejectionReason ?? "Spawn rejected.", cancellationToken,

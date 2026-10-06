@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { ModelSettings } from "@/components/settings/ModelSettings";
+import { OrganizationPolicy } from "@/components/settings/OrganizationPolicy";
 import { Suspense, useEffect, useState } from "react";
 import {
   API_BASE,
@@ -27,7 +28,7 @@ import type { ApiKey, BillingView, Invitation, Member, Organization, Plan, Role 
 import { PageHeader } from "@/components/ui";
 import { useAuth } from "@/components/platform/AuthProvider";
 
-type Tab = "organization" | "model" | "api-keys" | "billing" | "account";
+type Tab = "organization" | "safety" | "model" | "api-keys" | "billing" | "account";
 
 const field = "rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm shadow-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950";
 const button = "rounded-lg bg-brand-500 px-3.5 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-brand-600 disabled:opacity-50";
@@ -421,6 +422,7 @@ function Settings() {
 
   const tabs: [Tab, string, boolean][] = [
     ["organization", "Organization", true],
+    ["safety", "Safety policy", true],
     ["model", "AI model", true],
     ["api-keys", "API keys", atLeast(role, "Admin")],
     ["billing", "Usage & billing", true],
@@ -429,7 +431,7 @@ function Settings() {
 
   return (
     <div className="flex flex-col">
-      <PageHeader title="Settings" description="Your organization and its members, the AI model your agents use, API keys, usage and billing, and your account." />
+      <PageHeader title="Settings" description="Your organization and its members, the safety rules every workspace and task follows, the AI model your agents use, API keys, usage and billing, and your account." />
       <div className="mx-auto flex w-full max-w-5xl flex-1 gap-8 px-6 py-6">
         <aside className="w-40 shrink-0 space-y-1 text-sm">
           {tabs.filter(([, , visible]) => visible).map(([t, label]) => (
@@ -441,6 +443,7 @@ function Settings() {
         </aside>
         <main className="min-w-0 flex-1">
           {tab === "organization" && <OrganizationTab role={role} />}
+          {tab === "safety" && <OrganizationPolicy canEdit={atLeast(role, "Admin")} />}
           {tab === "model" && <ModelSettings canEdit={atLeast(role, "Admin")} />}
           {tab === "api-keys" && <ApiKeysTab role={role} />}
           {tab === "billing" && <BillingTab role={role} />}

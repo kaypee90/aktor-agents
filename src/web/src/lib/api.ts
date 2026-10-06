@@ -513,6 +513,19 @@ export function updateSafetyPolicy(workspaceId: string, policy: import("./worksp
   return apiFetch<import("./workspaceTypes").SafetyPolicy>(`/api/workspaces/${workspaceId}/policy`, { method: "PUT", body: JSON.stringify(policy) });
 }
 
+export function getOrganizationPolicy() {
+  return apiFetch<import("./workspaceTypes").OrganizationSafetyPolicy>("/api/organization/policy");
+}
+
+export function updateOrganizationPolicy(policy: import("./workspaceTypes").OrganizationSafetyPolicy) {
+  return apiFetch<import("./workspaceTypes").OrganizationSafetyPolicy>("/api/organization/policy", { method: "PUT", body: JSON.stringify(policy) });
+}
+
+/** Changes to the organization's policy, newest first. */
+export function getOrganizationPolicyAudit() {
+  return apiFetch<import("./workspaceTypes").AuditEntry[]>("/api/organization/policy/audit");
+}
+
 /** An approval request waiting for a person, with its workspace. */
 export type PendingApproval = {
   workspace_id: string;

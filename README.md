@@ -476,6 +476,9 @@ See [docs/efficiency.md](docs/efficiency.md).
 
 Each workspace has a safety policy that the runtime enforces before any tool runs. The LLM can't
 see around it or change it.
+- **Organization-wide rules.** Admins set rules, a minimum autonomy level and team limits once
+  (Settings → Safety policy); they apply to every workspace and task. A workspace can add to them
+  but never loosen them: the stricter answer wins.
 - **Autonomy levels.**
   - `Autonomous` is the default.
   - `SemiAutonomous` asks you before actions that can't be undone or safely repeated, such as

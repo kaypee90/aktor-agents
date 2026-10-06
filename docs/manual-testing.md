@@ -506,6 +506,19 @@ one-sentence body about the lavender-and-cedar candle.
       **Verify integrity** reports the chain intact.
 - [ ] Reads (`demo__get`) never ask for approval, even under Supervised.
 
+### W7b. Organization safety policy
+
+**Check:**
+- [ ] **Settings → Safety policy** (as an Admin): choose **At least semi-autonomous**, add **No shell
+      commands** and a rule `demo__*` writes → block, and save. **Changes** lists the save.
+- [ ] Every workspace's **Safety** tab shows the organization's rules in a purple box, and
+      **Autonomous** is marked as overridden by the organization's minimum.
+- [ ] In a workspace whose own policy is Autonomous with no rules, ask a stage to create a post with
+      the demo connection: the call is blocked, and the reason names your organization's policy.
+- [ ] Change the organization rule to **ask me**: the same request now parks for approval (bell,
+      toast, banner), and approving it runs the call once.
+- [ ] As a Member, the Settings page shows the policy read-only.
+
 ### W8. Failures, retries and budgets
 
 **Check:**
