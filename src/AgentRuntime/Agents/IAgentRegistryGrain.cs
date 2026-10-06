@@ -1,4 +1,5 @@
 using AgentRuntime.Contracts;
+using Orleans.Concurrency;
 
 namespace AgentRuntime.Agents;
 
@@ -32,6 +33,13 @@ public interface IAgentRegistryGrain : IGrainWithIntegerKey
         List<Safety.TeamPolicy>? teamPolicies = null);
 
     Task UpdateStatusAsync(string agentId, AgentStatus status);
+
+    /// <summary>Records a moment-to-moment status (Thinking, Executing) for discovery and the
+    /// dashboard without saving the registry: it changes every step, and the next saved update
+    /// (or the agent itself, after a restart) has the lasting one. Fire-and-forget, so an agent's
+    /// step never waits on the registry.</summary>
+    [OneWay]
+    Task ReportActivityAsync(string agentId, AgentStatus status);
 
     Task UnregisterAsync(string agentId);
 

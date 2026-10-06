@@ -7,8 +7,8 @@ using Xunit.Abstractions;
 namespace AgentRuntime.IntegrationTests;
 
 /// <summary>Analytics through the real API and Postgres (docs/analytics.md): a finished run shows up
-/// in the totals, roles, tools (with timings) and run lists; filters narrow it; other organizations
-/// see nothing of it.</summary>
+/// in the totals, roles, tools (with timings), usage by user and run lists; filters narrow it; other
+/// organizations see nothing of it.</summary>
 public sealed class AnalyticsApiTests(ApiTestHostFixture fixture, ITestOutputHelper output) : IClassFixture<ApiTestHostFixture>
 {
     private const string Goal = "Research whether we should build an AI-powered property management SaaS. Produce a market, technical and business analysis.";
@@ -62,7 +62,20 @@ public sealed class AnalyticsApiTests(ApiTestHostFixture fixture, ITestOutputHel
         Assert.True(write.GetProperty("calls").GetInt32() >= 1);
         Assert.Equal(JsonValueKind.Number, write.GetProperty("avg_duration_ms").ValueKind);
 
+        // Usage by user: the test client signs in with an API key, so the run is that key's, by its name.
+        var byUser = Assert.Single(a.GetProperty("by_user").EnumerateArray());
+        var starter = byUser.GetProperty("user").GetString()!;
+        Assert.Equal("api_key", byUser.GetProperty("kind").GetString());
+        Assert.StartsWith("key:", starter);
+        Assert.Equal("API key · Analytics test key", byUser.GetProperty("name").GetString());
+        Assert.Equal(1, byUser.GetProperty("runs").GetInt32());
+        Assert.Equal(totals.GetProperty("cost_usd").GetDecimal(), byUser.GetProperty("cost_usd").GetDecimal());
+        Assert.Equal(starter, a.GetProperty("top_by_cost")[0].GetProperty("started_by").GetString());
+
         // Filters.
+        Assert.Equal(1, (await Json(await api.GetAsync($"/api/analytics?range=24h&user={Uri.EscapeDataString(starter)}"))).GetProperty("totals").GetProperty("runs").GetInt32());
+        Assert.Equal(0, (await Json(await api.GetAsync("/api/analytics?range=24h&user=unknown"))).GetProperty("totals").GetProperty("runs").GetInt32());
+        Assert.Equal(0, (await Json(await api.GetAsync("/api/analytics?range=24h&user=key%3Anone"))).GetProperty("totals").GetProperty("runs").GetInt32());
         Assert.Equal(0, (await Json(await api.GetAsync("/api/analytics?range=24h&status=failed"))).GetProperty("totals").GetProperty("runs").GetInt32());
         Assert.Equal(0, (await Json(await api.GetAsync("/api/analytics?range=24h&source=mcp"))).GetProperty("totals").GetProperty("runs").GetInt32());
         Assert.Equal(1, (await Json(await api.GetAsync("/api/analytics?range=24h&q=property%20management"))).GetProperty("totals").GetProperty("runs").GetInt32());

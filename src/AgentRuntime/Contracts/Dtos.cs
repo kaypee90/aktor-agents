@@ -191,6 +191,8 @@ public sealed record AgentSnapshot
     [Id(33)] public DateTimeOffset? StartedExecutionAt { get; init; }
     /// <summary>Follow-up instructions the task's owner has given this (root) agent, oldest first.</summary>
     [Id(34)] public List<string> FollowUps { get; init; } = [];
+    /// <summary>Paused by a person (Pause, until Resume); a budget pause shows in <see cref="PauseReason"/>.</summary>
+    [Id(35)] public bool Paused { get; init; }
 }
 
 /// <summary>

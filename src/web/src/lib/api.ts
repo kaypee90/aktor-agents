@@ -868,6 +868,8 @@ export type AnalyticsFilter = {
   workspace?: string | null;
   /** A model profile id: only what ran on it. */
   model?: string | null;
+  /** Who started the runs: a user id, "key:<id>" for an API key, or "unknown" (tasks only). */
+  user?: string | null;
 };
 
 /** Spend and response time per model: which one is cheaper or faster for the same work. */
@@ -925,6 +927,21 @@ export type AnalyticsTaskRow = {
   tokens: number;
   cost_usd: number;
   agents: number;
+  started_by: string;
+  started_by_name: string;
+};
+
+/** Usage by whoever started the runs: a member, an API key, or "unknown" for older runs. */
+export type AnalyticsUserRow = {
+  user: string;
+  name: string;
+  kind: "user" | "api_key" | "unknown";
+  runs: number;
+  tokens: number;
+  cost_usd: number;
+  avg_cost_usd: number;
+  failed: number;
+  last_run_at: string;
 };
 
 export type Analytics = {
@@ -951,6 +968,7 @@ export type Analytics = {
   series: { t: string; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
   by_role: { role: string; agents: number; tokens: number; cost_usd: number; avg_tokens: number }[];
   by_source: { source: string; runs: number; tokens: number; cost_usd: number }[];
+  by_user: AnalyticsUserRow[];
   by_status: { status: string; runs: number }[];
   by_tool: { tool: string; calls: number; failures: number; avg_duration_ms: number | null; p95_duration_ms: number | null; total_duration_ms: number }[];
   duration_histogram: { label: string; runs: number }[];

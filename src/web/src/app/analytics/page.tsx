@@ -29,6 +29,7 @@ import {
   type AnalyticsModelRow,
   type AnalyticsTaskRow,
   type AnalyticsToolRow,
+  type AnalyticsUserRow,
   type ModelChoice,
   type WorkspaceAnalytics,
 } from "@/lib/api";
@@ -262,6 +263,60 @@ function ToolsCard({ rows }: { rows: AnalyticsToolRow[] }) {
   );
 }
 
+/** Usage by whoever started the runs: members and API keys, with their share of spend. Click one to filter by them. */
+function UsersCard({ rows, total, onPick }: { rows: AnalyticsUserRow[]; total: number; onPick: (user: string) => void }) {
+  return (
+    <Card>
+      <CardHeader title="By user" description="Who started the runs (a member or an API key), what they spent and how often runs failed. Click one to filter by them." />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+            <tr>
+              <th className="px-5 py-2.5 font-medium">User</th>
+              <th className="px-3 py-2.5 text-right font-medium">Runs</th>
+              <th className="px-3 py-2.5 text-right font-medium">Spend</th>
+              <th className="hidden px-3 py-2.5 font-medium sm:table-cell">Share</th>
+              <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Tokens</th>
+              <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Avg / run</th>
+              <th className="hidden px-3 py-2.5 text-right font-medium lg:table-cell">Failed</th>
+              <th className="hidden px-5 py-2.5 font-medium lg:table-cell">Last run</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+            {rows.map((u) => {
+              const share = total > 0 ? u.cost_usd / total : 0;
+              return (
+                <tr key={u.user} onClick={() => onPick(u.user)} className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                  <td className="max-w-xs px-5 py-2.5">
+                    <div className="flex items-center gap-2">
+                      {u.kind === "api_key" ? <Icons.Key className="h-3.5 w-3.5 shrink-0 text-zinc-400" /> : <Icons.User className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
+                      <span className={cx("truncate font-medium", u.kind === "unknown" ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100")} title={u.name}>{u.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{u.runs}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{money(u.cost_usd)}</td>
+                  <td className="hidden px-3 py-2.5 sm:table-cell">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.round(share * 100)}%` }} />
+                      </div>
+                      <span className="text-xs tabular-nums text-zinc-500">{Math.round(share * 100)}%</span>
+                    </div>
+                  </td>
+                  <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{compact(u.tokens)}</td>
+                  <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{money(u.avg_cost_usd)}</td>
+                  <td className={cx("hidden px-3 py-2.5 text-right tabular-nums lg:table-cell", u.failed ? "text-rose-600 dark:text-rose-400" : "text-zinc-400")}>{u.failed}</td>
+                  <td className="hidden px-5 py-2.5 text-xs text-zinc-500 lg:table-cell">{ago(u.last_run_at)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 function RolesCard({ rows }: { rows: { role: string; tokens: number; cost_usd: number }[] }) {
   const [metric, setMetric] = useState<"tokens" | "cost_usd">("tokens");
   const sorted = [...rows].sort((a, b) => b[metric] - a[metric]).slice(0, 10);
@@ -301,6 +356,7 @@ function AnalyticsView() {
       source: scope === "tasks" ? params.get("source") : null,
       status: scope === "tasks" ? (params.get("status") as AnalyticsFilter["status"]) : null,
       q: scope === "tasks" ? params.get("q") : null,
+      user: scope === "tasks" ? params.get("user") : null,
       workspace: scope === "workspaces" ? params.get("workspace") : null,
       model: params.get("model"),
     };
@@ -355,7 +411,7 @@ function AnalyticsView() {
     update({ range: null, from: start.toISOString(), to: end.toISOString() });
   }
 
-  const filtered = ["source", "status", "q", "model", "workspace"].some((k) => params.get(k)) || range === "custom";
+  const filtered = ["source", "status", "q", "model", "workspace", "user"].some((k) => params.get(k)) || range === "custom";
 
   return (
     <div>
@@ -366,7 +422,7 @@ function AnalyticsView() {
       />
 
       <div className="mx-auto max-w-7xl space-y-5 px-6 py-6">
-        <Tabs value={scope} onChange={(s) => update({ scope: s === "tasks" ? null : s, source: null, status: null, q: null, workspace: null })}
+        <Tabs value={scope} onChange={(s) => update({ scope: s === "tasks" ? null : s, source: null, status: null, q: null, user: null, workspace: null })}
           tabs={[{ id: "tasks", label: "Tasks" }, { id: "workspaces", label: "Workspaces" }]} />
 
         {/* Filters */}
@@ -409,6 +465,14 @@ function AnalyticsView() {
                 <Icons.Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-zinc-400" />
                 <input className={cx(inputClass, "py-1.5 pl-8 text-xs")} placeholder="Filter by goal" value={query} onChange={(e) => setQuery(e.target.value)} />
               </div>
+              {params.get("user") && (
+                <button onClick={() => update({ user: null })} title="Show everyone's runs"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs text-zinc-700 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+                  <Icons.User className="h-3 w-3" />
+                  {current?.scope === "tasks" ? current.by_user.find((u) => u.user === params.get("user"))?.name ?? params.get("user") : params.get("user")}
+                  <Icons.X className="h-3 w-3 text-zinc-400" />
+                </button>
+              )}
             </>
           ) : (
             <select className={cx(inlineInputClass, "py-1.5 text-xs")} value={params.get("workspace") ?? ""} onChange={(e) => update({ workspace: e.target.value || null })}>
@@ -496,6 +560,8 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
         </Card>
       </div>
 
+      <UsersCard rows={a.by_user} total={a.totals.cost_usd} onPick={(user) => update({ user })} />
+
       <ModelsCard rows={a.by_model} onPick={(id) => update({ model: id })} />
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -524,6 +590,7 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
             <tr>
               <th className="px-5 py-2.5 font-medium">Goal</th>
               <th className="px-3 py-2.5 font-medium">Status</th>
+              <th className="hidden px-3 py-2.5 font-medium xl:table-cell">Started by</th>
               <th className="hidden px-3 py-2.5 text-right font-medium md:table-cell">Agents</th>
               <th className="px-3 py-2.5 text-right font-medium">Tokens</th>
               <th className="px-3 py-2.5 text-right font-medium">Spend</th>
@@ -538,6 +605,7 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
                   <Link href={`/?task=${t.task_id}`} className="line-clamp-1 font-medium text-zinc-900 hover:text-brand-600 dark:text-zinc-100 dark:hover:text-brand-400">{t.goal}</Link>
                 </td>
                 <td className="px-3 py-2.5"><StatusBadge status={t.status} /></td>
+                <td className="hidden max-w-48 truncate px-3 py-2.5 text-xs text-zinc-600 xl:table-cell dark:text-zinc-400" title={t.started_by_name}>{t.started_by_name}</td>
                 <td className="hidden px-3 py-2.5 text-right tabular-nums text-zinc-600 md:table-cell dark:text-zinc-400">{t.agents}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{compact(t.tokens)}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{money(t.cost_usd)}</td>

@@ -61,6 +61,8 @@ export interface AgentSnapshot {
   depth: number;
   failure_reason: string | null;
   task_id: string;
+  /** Paused by a person: it does nothing until resumed. */
+  paused?: boolean;
 }
 
 export type RuntimeEventType =
@@ -152,6 +154,8 @@ export interface TaskSummary {
   task_id: string;
   goal: string;
   status: string;
+  /** Paused with Pause (every agent of it), until Resume. */
+  paused?: boolean;
   root_agent_id: string | null;
   created_at: string;
   completed_at: string | null;

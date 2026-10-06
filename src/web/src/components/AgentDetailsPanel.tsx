@@ -9,15 +9,18 @@ import {
   resumeAgent,
   terminateAgent,
 } from "@/lib/api";
-import { STATUS_STYLES, isTerminal } from "@/lib/status";
+import { STATUS_STYLES, isTerminal, isWorking } from "@/lib/status";
 import type { AgentSnapshot, MessageRecord, ToolCallRecord } from "@/lib/types";
 import { BotIcon } from "./BotIcon";
+import { ActivityIndicator } from "./tasks/ActivityIndicator";
 
 export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClose: () => void }) {
   const [snapshot, setSnapshot] = useState<AgentSnapshot | null>(null);
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCallRecord[]>([]);
   const [tab, setTab] = useState<"trace" | "messages">("trace");
+  // Set on Pause/Resume so the buttons switch at once, until the next load confirms it.
+  const [pausedNow, setPausedNow] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +34,7 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
         ]);
         if (cancelled) return;
         setSnapshot(snap);
+        setPausedNow(null);
         setMessages(msgs);
         setToolCalls(calls);
       } catch {
@@ -59,6 +63,16 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
 
   const style = STATUS_STYLES[snapshot.status];
   const terminal = isTerminal(snapshot.status);
+  const paused = !terminal && (pausedNow ?? snapshot.paused ?? false);
+
+  async function setPaused(pause: boolean) {
+    setPausedNow(pause);
+    try {
+      await (pause ? pauseAgent(agentId) : resumeAgent(agentId));
+    } catch {
+      setPausedNow(null);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -78,9 +92,12 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
       </div>
 
       <div className="space-y-2 border-b border-zinc-200 p-3 text-xs dark:border-zinc-800">
-        <span className={`inline-block rounded px-2 py-0.5 font-medium ${style.text} ${style.bg} border ${style.border}`}>
-          {snapshot.status}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`inline-block rounded px-2 py-0.5 font-medium ${style.text} ${style.bg} border ${style.border}`}>
+            {snapshot.status}
+          </span>
+          {!terminal && <ActivityIndicator paused={paused} busy={isWorking(snapshot.status) ? 1 : 0} />}
+        </div>
         <div><span className="text-zinc-500">Goal: </span>{snapshot.goal}</div>
         <div><span className="text-zinc-500">Parent: </span>{snapshot.parent_agent_id ?? "(root)"}</div>
         <div><span className="text-zinc-500">Depth: </span>{snapshot.depth}</div>
@@ -103,16 +120,10 @@ export function AgentDetailsPanel({ agentId, onClose }: { agentId: string; onClo
         {!terminal && (
           <div className="flex gap-2 pt-2">
             <button
-              onClick={() => pauseAgent(snapshot.agent_id)}
+              onClick={() => setPaused(!paused)}
               className="rounded border border-zinc-300 px-2 py-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
             >
-              Pause
-            </button>
-            <button
-              onClick={() => resumeAgent(snapshot.agent_id)}
-              className="rounded border border-zinc-300 px-2 py-1 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              Resume
+              {paused ? "Resume" : "Pause"}
             </button>
             <button
               onClick={() => terminateAgent(snapshot.agent_id)}

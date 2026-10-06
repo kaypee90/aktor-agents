@@ -39,14 +39,14 @@ const EXAMPLES: { title: string; prompt: string; icon: keyof typeof Icons }[] = 
 type McpServer = { name: string; url: string; token: string };
 
 type Options = {
-  maxCost: string; maxTokens: string; minutes: string; maxChildren: string;
+  maxCost: string; maxTokens: string; minutes: string;
   maxAgents: string; fanOut: string; spawners: string; noDuplicates: boolean; goalType: string;
   callbackUrl: string; callbackSecret: string; correlationId: string;
   mcp: McpServer[];
 };
 
 const EMPTY: Options = {
-  maxCost: "", maxTokens: "", minutes: "", maxChildren: "",
+  maxCost: "", maxTokens: "", minutes: "",
   maxAgents: "", fanOut: "", spawners: "", noDuplicates: true, goalType: "",
   callbackUrl: "", callbackSecret: "", correlationId: "",
   mcp: [],
@@ -60,7 +60,6 @@ function toInput(goal: string, o: Options, previewId?: string): CreateTaskInput 
     max_cost_usd: num(o.maxCost),
     max_tokens: num(o.maxTokens),
     max_duration_seconds: num(o.minutes) !== undefined ? num(o.minutes)! * 60 : undefined,
-    max_children: num(o.maxChildren),
   };
   const fanOut = o.fanOut.split(/[,\s]+/).map(Number).filter((n) => !Number.isNaN(n) && n >= 0 && o.fanOut.trim() !== "");
   const spawners = o.spawners.split(",").map((s) => s.trim()).filter(Boolean);
@@ -271,14 +270,9 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
               <Field label="Max tokens">
                 <input className={inputClass} inputMode="numeric" value={options.maxTokens} onChange={(e) => set("maxTokens", e.target.value)} placeholder="Server default" />
               </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Time limit (min)">
-                  <input className={inputClass} inputMode="numeric" value={options.minutes} onChange={(e) => set("minutes", e.target.value)} placeholder="15" />
-                </Field>
-                <Field label="Direct sub-agents">
-                  <input className={inputClass} inputMode="numeric" value={options.maxChildren} onChange={(e) => set("maxChildren", e.target.value)} placeholder="5" />
-                </Field>
-              </div>
+              <Field label="Max time (minutes)" hint="Wall-clock limit for the whole team.">
+                <input className={inputClass} inputMode="numeric" value={options.minutes} onChange={(e) => set("minutes", e.target.value)} placeholder="15" />
+              </Field>
             </fieldset>
 
             <fieldset className="space-y-3">
@@ -287,7 +281,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
                 <Field label="Max agents">
                   <input className={inputClass} inputMode="numeric" value={options.maxAgents} onChange={(e) => set("maxAgents", e.target.value)} placeholder="No limit" />
                 </Field>
-                <Field label="Fan-out per level" hint="e.g. 3, 2, 0">
+                <Field label="Fan-out per level" hint="Sub-agents each agent may start, root first. e.g. 3, 0">
                   <input className={inputClass} value={options.fanOut} onChange={(e) => set("fanOut", e.target.value)} placeholder="Any" />
                 </Field>
               </div>

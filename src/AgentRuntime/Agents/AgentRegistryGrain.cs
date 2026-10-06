@@ -144,6 +144,18 @@ public sealed class AgentRegistryGrain(
         }
     }
 
+    public Task ReportActivityAsync(string agentId, AgentStatus status)
+    {
+        // A late report never overwrites how an agent finished.
+        if (state.State.Agents.TryGetValue(agentId, out var entry) && entry.Status != status
+            && entry.Status is not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut))
+        {
+            state.State.Agents[agentId] = entry with { Status = status };
+        }
+
+        return Task.CompletedTask;
+    }
+
     public async Task UnregisterAsync(string agentId)
     {
         if (state.State.Agents.Remove(agentId))

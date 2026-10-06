@@ -28,6 +28,8 @@ public sealed record StartTaskRequest
     public string Source { get; init; } = "api";
     /// <summary>Team-shape rules for this task, on top of the server's (they can only tighten them).</summary>
     public Safety.TeamPolicy? TeamPolicy { get; init; }
+    /// <summary>The caller set the budget's max_children itself; otherwise a fan-out per level sets it.</summary>
+    public bool MaxChildrenRequested { get; init; }
     /// <summary>The preview this task was started from; its estimate is kept for estimate vs actual.</summary>
     public string? PreviewId { get; init; }
     /// <summary>Replay a past run from its step journal instead of starting fresh (roadmap P6).</summary>
@@ -39,6 +41,8 @@ public sealed record StartTaskRequest
     public IReadOnlyList<string>? UploadIds { get; init; }
     /// <summary>Who started it (email or user id), recorded on its attachments.</summary>
     public string? By { get; init; }
+    /// <summary>Who is starting it, for usage by user in analytics (see <see cref="AgentRuntime.Infrastructure.Identity.Caller.ActorId"/>).</summary>
+    public string? StartedBy { get; init; }
     /// <summary>Tool connections (MCP servers, APIs) the task's agents can use from their first step.</summary>
     public IReadOnlyList<Integrations.ConnectionRequest>? Connections { get; init; }
 }
@@ -129,6 +133,16 @@ public sealed class TaskService(
     /// <summary>Separates a workspace id from the chat sequence number in a workspace request's id.</summary>
     private const char RequestSeparator = ':';
 
+    /// <summary>
+    /// With a fan-out per level and no max_children of the caller's own, the budget's child limit
+    /// follows the fan-out (its largest entry), so the two can't disagree: the fan-out limits each
+    /// level, and each agent's budget is split among the children it may actually start.
+    /// </summary>
+    private static ResourceBudget WithFanOut(ResourceBudget budget, StartTaskRequest request) =>
+        request.TeamPolicy?.MaxFanOutByDepth is { Count: > 0 } fanOut && !request.MaxChildrenRequested
+            ? budget with { MaxChildren = Math.Max(0, fanOut.Max()) }
+            : budget;
+
     public static string NewCorrelationId() => "corr-" + Guid.NewGuid().ToString("n")[..16];
 
     public async Task<TaskView> StartAsync(string tenantId, StartTaskRequest request, CancellationToken ct = default)
@@ -165,7 +179,7 @@ public sealed class TaskService(
                 throw new TaskServiceException($"Couldn't connect '{connection.Name}': {added.Message}");
             }
         }
-        var budget = ceiling.Value.Clamp(request.Budget ?? defaultBudget.Value.ToBudget());
+        var budget = ceiling.Value.Clamp(WithFanOut(request.Budget ?? defaultBudget.Value.ToBudget(), request));
 
         // The row exists before the root agent does, so a caller can poll the id it gets back at once.
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
@@ -193,7 +207,8 @@ public sealed class TaskService(
                 BudgetJson = JsonSerializer.Serialize(budget),
                 CallbackUrl = request.CallbackUrl,
                 PreviewId = estimateJson is null ? null : request.PreviewId,
-                EstimateJson = estimateJson
+                EstimateJson = estimateJson,
+                StartedBy = request.StartedBy
             });
             await db.SaveChangesAsync(ct);
         }
@@ -269,7 +284,7 @@ public sealed class TaskService(
     /// </summary>
     /// <param name="modelProfileId">For a fork, the model the live part runs on: the original's when null.</param>
     public async Task<TaskView> ReplayAsync(string tenantId, string sourceTaskId, Durability.ReplayMode mode, long? forkAfterStep,
-        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null)
+        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null, string? startedBy = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var source = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == sourceTaskId && t.TenantId == tenantId, ct)
@@ -284,7 +299,8 @@ public sealed class TaskService(
             Source = "replay",
             CorrelationId = Clip($"replay-of-{source.CorrelationId ?? sourceTaskId}", 128),
             Replay = new Durability.ReplaySpec { SourceTaskId = sourceTaskId, Mode = mode, ForkAfterSeq = forkAfterStep },
-            ModelProfileId = modelProfileId ?? source.ModelProfileId
+            ModelProfileId = modelProfileId ?? source.ModelProfileId,
+            StartedBy = startedBy
         }, ct);
     }
 

@@ -649,6 +649,7 @@ public sealed class AgentGrain(
             s.TurnIteration++;
             s.TransitionTo(AgentStatus.Thinking);
             await state.WriteStateAsync();
+            await ReportActivityAsync(AgentStatus.Thinking);
             await PublishAsync(RuntimeEventType.AgentThinking, $"Agent '{s.Name}' is reasoning about its next step.");
 
             var replayed = recorded is not null;
@@ -730,6 +731,7 @@ public sealed class AgentGrain(
             s.TurnNudged = false;
             s.TransitionTo(AgentStatus.Executing);
             await state.WriteStateAsync();
+            await ReportActivityAsync(AgentStatus.Executing);
         }
     }
 
@@ -1947,6 +1949,11 @@ public sealed class AgentGrain(
         await registry.UpdateStatusAsync(AgentId, status);
     }
 
+    /// <summary>Tells the registry the agent is thinking or running tools, so the graph and
+    /// find_agents see it busy (see <see cref="IAgentRegistryGrain.ReportActivityAsync"/>).</summary>
+    private Task ReportActivityAsync(AgentStatus status) =>
+        GrainFactory.GetGrain<IAgentRegistryGrain>(0).ReportActivityAsync(AgentId, status);
+
     private ValueTask PublishAsync(RuntimeEventType type, string summary, Dictionary<string, string>? data = null)
     {
         var s = S;
@@ -2001,6 +2008,7 @@ public sealed class AgentGrain(
         Replay = s.Replay,
         ModelProfileId = s.ModelProfileId,
         StartedExecutionAt = s.StartedExecutionAt,
-        FollowUps = s.FollowUps
+        FollowUps = s.FollowUps,
+        Paused = s.Paused
     };
 }

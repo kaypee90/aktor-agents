@@ -45,6 +45,10 @@ public sealed class TaskRecord
     public string? ReplayOfTaskId { get; set; }
     public string? ReplayMode { get; set; }
     public long? ForkAfterStep { get; set; }
+
+    /// <summary>Who started the task (docs/analytics.md): a user id, "key:&lt;id&gt;" for an API key, or
+    /// "local" when sign-in is off. Null for tasks from before this was recorded.</summary>
+    public string? StartedBy { get; set; }
 }
 
 /// <summary>A cost and team preview (roadmap P2): one planning call's team shape and estimate.</summary>

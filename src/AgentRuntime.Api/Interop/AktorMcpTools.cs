@@ -18,7 +18,7 @@ public sealed record McpBudget
     public decimal? MaxCostUsd { get; init; }
     [Description("Wall-clock limit for the task, in seconds.")]
     public int? MaxDurationSeconds { get; init; }
-    [Description("Most agents the root agent may start directly.")]
+    [Description("Most agents each agent may start directly. Optional: with team_policy.max_fan_out_by_depth it follows that.")]
     public int? MaxChildren { get; init; }
     [Description("Most tool calls the whole team may make.")]
     public int? MaxToolCalls { get; init; }
@@ -81,12 +81,14 @@ public sealed class AktorMcpTools(TaskService tasks, IHttpContextAccessor http, 
         {
             Goal = goal,
             Budget = budget?.ToBudget(defaultBudget.Value.ToBudget()),
+            MaxChildrenRequested = budget?.MaxChildren is not null,
             WorkspaceId = workspace,
             CallbackUrl = callback_url,
             CallbackSecret = callback_secret,
             CorrelationId = correlation_id,
             Source = "mcp",
-            TeamPolicy = team_policy
+            TeamPolicy = team_policy,
+            StartedBy = http.HttpContext!.Caller().ActorId
         }, cancellationToken));
 
         return wait ? await WaitAsync(started.TaskId, settings.Value.MaxWaitSeconds, progress, cancellationToken) : started;

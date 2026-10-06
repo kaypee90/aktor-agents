@@ -68,6 +68,13 @@ can tighten a wider one but never loosen it:
 - **A workspace:** `team` in its safety policy (`PUT /api/workspaces/{id}/policy`). It's read live,
   so a change applies to the next spawn.
 
+**Fan-out and the budget's `max_children`.** A task's budget also has `max_children`: the most
+children each agent may start, inherited down the tree, and the number of shares each agent's
+budget is split into for its children. When a task gives a fan-out per level and no
+`max_children` of its own, `max_children` is set to the fan-out's largest entry, so the two never
+disagree and only the fan-out needs setting (the dashboard shows only the fan-out). Given both,
+the stricter limit applies at each level.
+
 ## Approvals
 
 When a call needs approval:
