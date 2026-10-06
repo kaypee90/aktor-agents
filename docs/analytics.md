@@ -25,7 +25,7 @@ money go, which models and tools are worth it, and what takes long. It has two v
 | **Spend, tokens, average spend per day, model calls, triggers fired, approvals** | The headline figures, with the change against the previous period. Model calls show average and p95 response time; approvals how many were approved, rejected or expired. |
 | **Over time** | Spend, tokens, model calls or response time per hour or day. |
 | **By workspace** | Spend, tokens, model calls, triggers and approvals for each workspace. Click one to focus on it. |
-| **What consumes the most** | Tokens or spend by agent role (coordinator, standing agents, workers). |
+| **What consumes the most** | Tokens or spend by agent role: pipeline stages and their helpers. |
 | **Tools** and **By model** | As for tasks. |
 
 ## Filters
@@ -47,8 +47,9 @@ workspace. Filters live in the page's URL, so a filtered view can be bookmarked 
   dashboard, or the API key for the API, MCP, A2A and ACP. A replay belongs to whoever replayed
   it. Runs from before this was recorded show as **Not recorded**; with sign-in off, everything is
   **Local**. A member or key deleted since keeps its runs, under a short id.
-- Workspaces aren't broken down by user: their spend comes from triggers, schedules and standing
-  agents as much as from people.
+- A workspace pipeline's runs are tasks too (source `pipeline`), so they appear in the Tasks view
+  and by user: whoever started the run, or **Triggers (automatic runs)** for runs a schedule,
+  webhook or watch started.
 - Up to 20,000 runs and 100,000 model calls per query are included (the response says
   `truncated: true` beyond that).
 

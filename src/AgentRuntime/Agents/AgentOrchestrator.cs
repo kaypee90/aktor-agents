@@ -3,6 +3,7 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
+using AgentRuntime.Pipelines;
 using AgentRuntime.Simulation;
 using AgentRuntime.Tenancy;
 using AgentRuntime.Tools;
@@ -186,9 +187,9 @@ public sealed class AgentOrchestrator(
                     cancellationToken);
             }
 
-            // Workers come from a plan: plan_request decides whether splitting this request pays
-            // off and how many workers it needs. Standing agents (ongoing work) don't need one.
-            if (!request.Standing && parentSnapshot.PlannedWorkersLeft <= 0)
+            // Helpers come from a plan: plan_request decides whether splitting the work pays off and
+            // how many helpers it needs.
+            if (parentSnapshot.PlannedWorkersLeft <= 0)
             {
                 return await RejectSpawnAsync(parentAgentId, parentSnapshot.TaskId,
                     "No workers are planned for this request. If you haven't yet, call plan_request to break the request into " +
@@ -196,7 +197,7 @@ public sealed class AgentOrchestrator(
                     "workers are already started, do the remaining work yourself.", cancellationToken);
             }
 
-            childBudget = request.Standing ? policy.StandingBudget : policy.WorkerBudget;
+            childBudget = policy.WorkerBudget;
         }
         else
         {
@@ -228,14 +229,9 @@ public sealed class AgentOrchestrator(
                 .Union(inheritedWorkspaceTools, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             parentSnapshot.GrantedPermissions);
-        if (policy is not null && parentSnapshot.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions))
-        {
-            childTools = childTools.Union(WorkspaceToolCatalog.ToolNames, StringComparer.OrdinalIgnoreCase).ToList();
-        }
-
-        // A workspace worker can't spawn (its budget allows no children): leave the tool out
+        // A workspace helper can't spawn (its budget allows no children): leave the tool out
         // rather than offer it and reject every call.
-        var childMaySpawn = policy is null || request.Standing;
+        var childMaySpawn = policy is null;
         if (!childMaySpawn)
         {
             childTools = childTools.Where(t => !t.Equals("spawn_agent", StringComparison.OrdinalIgnoreCase) &&
@@ -248,7 +244,7 @@ public sealed class AgentOrchestrator(
         {
             // Workspace agents may use the workspace's connections if their parent could: the
             // user connected those services for this workspace's agents.
-            childPermissions |= parentSnapshot.GrantedPermissions & (ToolPermission.WorkspaceActions | ToolPermission.Integrations);
+            childPermissions |= parentSnapshot.GrantedPermissions & ToolPermission.Integrations;
         }
         else
         {
@@ -334,8 +330,6 @@ public sealed class AgentOrchestrator(
             TaskId = parentSnapshot.TaskId,
             AutoStart = true,
             WorkspaceId = parentSnapshot.WorkspaceId,
-            Standing = policy is not null && request.Standing,
-            ContextWindow = policy is not null && request.Standing ? policy.StandingContextWindow : 0,
             TenantId = tenant,
             CorrelationId = parentSnapshot.CorrelationId,
             TeamPolicy = parentSnapshot.TeamPolicy,
@@ -364,7 +358,7 @@ public sealed class AgentOrchestrator(
             AgentId = childId,
             Status = "created",
             GrantedBudget = policy is null ? childBudget : null,
-            Note = policy is null ? null : SpawnCostNote(childBudget, request.Standing, policy, parentSnapshot.SpawnsThisRequest + 1)
+            Note = policy is null ? null : SpawnCostNote(childBudget, policy, parentSnapshot.SpawnsThisRequest + 1)
         };
     }
 
@@ -379,12 +373,10 @@ public sealed class AgentOrchestrator(
 
     /// <summary>Tells the spawner what it just committed: the new agent is paid from the budget the
     /// whole workspace shares, which is what makes an unnecessary agent visible as a cost.</summary>
-    private static string SpawnCostNote(ResourceBudget budget, bool standing, WorkspacePolicy policy, int spawnsThisRequest) =>
-        (standing
-            ? $"This standing agent may spend up to {budget.MaxTokens:N0} tokens / ${budget.MaxCostUsd:F2} per day"
-            : $"This worker may spend up to {budget.MaxTokens:N0} tokens / ${budget.MaxCostUsd:F2}") +
-        $", paid from the workspace's shared daily budget ({policy.TokensLeftToday:N0} tokens / ${policy.CostLeftTodayUsd:F2} left today). " +
-        $"Agents started for this request: {spawnsThisRequest} of {policy.MaxSpawnsPerRequest}.";
+    private static string SpawnCostNote(ResourceBudget budget, WorkspacePolicy policy, int spawnsThisRequest) =>
+        $"This helper may spend up to {budget.MaxTokens:N0} tokens / ${budget.MaxCostUsd:F2}, paid from the workspace's shared daily " +
+        $"budget ({policy.TokensLeftToday:N0} tokens / ${policy.CostLeftTodayUsd:F2} left today). " +
+        $"Helpers started for this stage: {spawnsThisRequest} of {policy.MaxSpawnsPerRequest}.";
 
     public async Task<AgentMessageAck> SendMessageAsync(AgentMessage message, CancellationToken cancellationToken = default)
     {
@@ -448,8 +440,6 @@ public sealed class AgentOrchestrator(
             };
         }
 
-        var target = grainFactory.GetGrain<IAgentGrain>(message.ToAgentId);
-
         await events.PublishAsync(new RuntimeEvent
         {
             Type = RuntimeEventType.AgentMessageSent,
@@ -468,11 +458,19 @@ public sealed class AgentOrchestrator(
             }
         }, cancellationToken);
 
-        return await target.SendMessage(message);
+        // A pipeline run receives its stages' completion notices like any parent.
+        return PipelineIds.IsRun(message.ToAgentId)
+            ? await grainFactory.GetGrain<IPipelineRunGrain>(message.ToAgentId).Deliver(message)
+            : await grainFactory.GetGrain<IAgentGrain>(message.ToAgentId).SendMessage(message);
     }
 
     public async Task FollowUpAsync(string rootAgentId, TaskFollowUp followUp, CancellationToken cancellationToken = default)
     {
+        if (PipelineIds.IsRun(rootAgentId))
+        {
+            throw new InvalidOperationException("A pipeline run doesn't take follow-ups: start a new run with the new input.");
+        }
+
         var root = grainFactory.GetGrain<IAgentGrain>(rootAgentId);
         var snapshot = await root.GetSnapshot();
         await root.FollowUp(followUp);
@@ -486,6 +484,8 @@ public sealed class AgentOrchestrator(
     {
         var entry = await Registry.GetAsync(agentId);
         if (entry is null) return null;
+        // A pipeline run is the root of its tree, so it answers for itself like any root.
+        if (PipelineIds.IsRun(agentId)) return await grainFactory.GetGrain<IPipelineRunGrain>(agentId).GetSnapshot();
         return await grainFactory.GetGrain<IAgentGrain>(agentId).GetSnapshot();
     }
 
@@ -493,13 +493,92 @@ public sealed class AgentOrchestrator(
         Registry.GetChildrenAsync(agentId);
 
     public Task PauseAsync(string agentId, CancellationToken cancellationToken = default) =>
-        grainFactory.GetGrain<IAgentGrain>(agentId).Pause();
+        PipelineIds.IsRun(agentId) ? grainFactory.GetGrain<IPipelineRunGrain>(agentId).Pause() : grainFactory.GetGrain<IAgentGrain>(agentId).Pause();
 
     public Task ResumeAsync(string agentId, CancellationToken cancellationToken = default) =>
-        grainFactory.GetGrain<IAgentGrain>(agentId).Resume();
+        PipelineIds.IsRun(agentId) ? grainFactory.GetGrain<IPipelineRunGrain>(agentId).Resume() : grainFactory.GetGrain<IAgentGrain>(agentId).Resume();
 
     public Task StopAsync(string agentId, CancellationToken cancellationToken = default) =>
-        grainFactory.GetGrain<IAgentGrain>(agentId).Stop();
+        PipelineIds.IsRun(agentId)
+            ? grainFactory.GetGrain<IPipelineRunGrain>(agentId).Cancel("stopped by a person")
+            : grainFactory.GetGrain<IAgentGrain>(agentId).Stop();
+
+    public async Task<SpawnAgentResult> CreateStageAgentAsync(StageAgentLaunch launch, CancellationToken cancellationToken = default)
+    {
+        // Idempotent: a run that starts the same attempt again (after a crash) gets the same agent.
+        if (await Registry.GetAsync(launch.AgentId) is not null)
+        {
+            return new SpawnAgentResult { AgentId = launch.AgentId, Status = "created" };
+        }
+
+        var stage = launch.Stage;
+        var permissions = ToolPermission.NetworkAccess | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem
+                          | ToolPermission.Integrations | ToolPermission.SendMessages;
+        if (stage.MaxHelpers > 0) permissions |= ToolPermission.SpawnAgents;
+
+        var capabilities = (stage.Capabilities.Count == 0 ? ["research"] : stage.Capabilities)
+            .Append("filesystem").Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var tools = AgentToolCatalog.ResolveToolsForCapabilities(capabilities).ToList();
+        if (stage.MaxHelpers > 0) tools.Add(PlanRequestTool.Name);
+        else tools.RemoveAll(t => t is "spawn_agent" or "list_children");
+        if (!stage.MayMessageStages) tools.Remove("send_message");
+        tools = FilterToolsByPermission(tools, permissions);
+
+        var tenant = TenantIds.Normalize(launch.TenantId);
+        var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
+        {
+            AgentId = launch.AgentId,
+            Role = stage.EffectiveRole,
+            Goal = launch.Goal,
+            Status = AgentStatus.Created,
+            Capabilities = capabilities,
+            ParentAgentId = launch.RunId,
+            RootAgentId = launch.RunId,
+            TenantId = tenant
+        }, tenantMaxActive: (await Tenant(tenant).GetPlan()).MaxActiveAgents);
+        if (!validation.Allowed)
+        {
+            return new SpawnAgentResult { AgentId = string.Empty, Status = "rejected", RejectionReason = validation.RejectionReason };
+        }
+
+        await grainFactory.GetGrain<IAgentGrain>(launch.AgentId).Initialize(new AgentInitializationRequest
+        {
+            AgentId = launch.AgentId,
+            ParentAgentId = launch.RunId,
+            RootAgentId = launch.RunId,
+            Name = stage.Name,
+            Role = stage.EffectiveRole,
+            Goal = launch.Goal,
+            Capabilities = capabilities,
+            AllowedTools = tools,
+            GrantedPermissions = permissions,
+            Budget = launch.Budget,
+            Depth = validation.AllowedDepth,
+            InitialContext = launch.InitialContext,
+            TaskId = launch.RunId,
+            WorkspaceId = launch.WorkspaceId,
+            TenantId = tenant,
+            TeamPolicy = launch.Team,
+            ModelProfileId = stage.ModelProfileId,
+            CorrelationId = launch.CorrelationId,
+            Metadata = new Dictionary<string, string> { ["pipeline_run"] = launch.RunId, ["pipeline_stage"] = stage.StageId },
+            AutoStart = true
+        });
+        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
+
+        await events.PublishAsync(new RuntimeEvent
+        {
+            Type = RuntimeEventType.AgentSpawned,
+            AgentId = launch.RunId,
+            TargetAgentId = launch.AgentId,
+            TaskId = launch.RunId,
+            TenantId = tenant,
+            CorrelationId = launch.CorrelationId,
+            Summary = $"Run {launch.RunId} started stage '{stage.Name}' ({launch.AgentId})."
+        }, cancellationToken);
+
+        return new SpawnAgentResult { AgentId = launch.AgentId, Status = "created", GrantedBudget = launch.Budget };
+    }
 
     public async Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
@@ -572,63 +651,6 @@ public sealed class AgentOrchestrator(
         }
 
         return new SpawnAgentResult { AgentId = agentId, Status = "created" };
-    }
-
-    public async Task<string> CreateWorkspaceCoordinatorAsync(
-        string workspaceId, string workspaceName, string goal, WorkspacePolicy policy, string? tenantId = null, CancellationToken cancellationToken = default)
-    {
-        var agentId = WorkspaceIds.CoordinatorId(workspaceId);
-        var tenant = TenantIds.Normalize(tenantId);
-        var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
-                          | ToolPermission.ReadFilesystem | ToolPermission.WriteFilesystem | ToolPermission.WorkspaceActions
-                          | ToolPermission.Integrations;
-        // The coordinator never completes: it lives as long as the workspace, so no complete_task.
-        var tools = FilterToolsByPermission(
-            AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"])
-                .Union(WorkspaceToolCatalog.ToolNames, StringComparer.OrdinalIgnoreCase)
-                .Where(t => t != "complete_task")
-                .ToList(),
-            permissions);
-
-        var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
-        {
-            AgentId = agentId,
-            Role = "Coordinator",
-            Goal = goal,
-            Status = AgentStatus.Created,
-            Capabilities = ["coordination"],
-            RootAgentId = agentId,
-            TenantId = tenant
-        }, tenantMaxActive: (await Tenant(tenant).GetPlan()).MaxActiveAgents);
-        if (!validation.Allowed)
-        {
-            throw new InvalidOperationException($"Cannot create the workspace coordinator: {validation.RejectionReason}");
-        }
-
-        await grainFactory.GetGrain<IAgentGrain>(agentId).Initialize(new AgentInitializationRequest
-        {
-            AgentId = agentId,
-            RootAgentId = agentId,
-            Name = "Coordinator",
-            Role = "Coordinator",
-            Goal = $"Run the '{workspaceName}' workspace on the user's behalf. Its purpose: {goal}",
-            Capabilities = ["coordination"],
-            AllowedTools = tools,
-            GrantedPermissions = permissions,
-            Budget = policy.StandingBudget,
-            TaskId = workspaceId,
-            WorkspaceId = workspaceId,
-            TenantId = tenant,
-            Standing = true,
-            ContextWindow = policy.StandingContextWindow,
-            InitialContext = "This is the user's first request for the workspace. Handle it the cheapest way that works: " +
-                             "do it yourself if you can, and set up a standing agent, schedule, watch or webhook only if it " +
-                             "is ongoing. Tell the user what you did with notify_user, then call wait_for_events.",
-            AutoStart = true
-        });
-        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
-
-        return agentId;
     }
 
     public Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default) =>

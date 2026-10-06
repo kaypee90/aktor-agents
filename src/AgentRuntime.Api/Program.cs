@@ -57,6 +57,7 @@ builder.Services.AddAgentRuntimeInfrastructure(builder.Configuration);
 builder.Services.AddSingleton<UploadStore>();
 builder.Services.AddSingleton<TaskService>();
 builder.Services.AddSingleton<TaskPreviewService>();
+builder.Services.AddSingleton<PipelineDesignService>();
 builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));
 builder.Services.Configure<AgentRuntime.Api.Interop.McpServerSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.McpServerSettings.SectionName));
 

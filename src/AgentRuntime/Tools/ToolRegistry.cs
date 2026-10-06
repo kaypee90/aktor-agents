@@ -93,6 +93,11 @@ public static class AgentToolCatalog
         ["security-scanner"] = ["shell_exec", "http_request"]
     };
 
+    /// <summary>Capability words that grant tools, for a pipeline stage's settings.</summary>
+    public static IReadOnlyList<string> KnownCapabilities => CapabilityToolMap.Keys.Order().ToList();
+
+    public static bool IsKnownCapability(string capability) => CapabilityToolMap.ContainsKey(capability);
+
     public static IReadOnlyList<string> ResolveToolsForCapabilities(IEnumerable<string> capabilities)
     {
         var tools = new HashSet<string>(GovernanceTools, StringComparer.OrdinalIgnoreCase)

@@ -21,7 +21,7 @@ public sealed class PolicyEngineTests
     [Theory]
     [InlineData("spawn_agent")]
     [InlineData("send_message")]
-    [InlineData("notify_user")]
+    [InlineData("complete_task")]
     [InlineData("filesystem_write")]
     public void InternalTools_NeverNeedApproval_EvenWhenSupervised(string tool) =>
         Assert.Equal(PolicyDecisionKind.Allow, Decide(new() { Autonomy = AutonomyLevel.Supervised }, tool, ToolSideEffects.NonIdempotent));

@@ -32,7 +32,7 @@ The tenant is stamped by the runtime and inherited, never chosen by an agent.
 | `find_agents`, `get_agent_status`, `list_children` | Filtered by organization. |
 | Shared memory (`write_memory` with `shared`, `search_knowledge`, `read_memory`) | Shared within an organization only. |
 | `database_query` | Each organization gets its own Postgres role and schema (`agent_scratch_t_…`), provisioned on first use. Other tenants' schemas are owned by their roles and never granted. |
-| Agent limits (`MaxTotalAgents`, `MaxActiveAgents`) | Counted per organization, so one tenant filling up can't block another. The plan's limit applies on top. |
+| Agent limits (`MaxTotalAgents`, `MaxActiveAgents`) | Counted per organization, so one tenant filling up can't block another. The plan's limit applies on top. A workspace pipeline run isn't an agent itself, and agents of finished runs don't count toward the total (each run is bounded by its stages), so a scheduled pipeline can't use the allowance up. |
 | Events | Every event carries its organization. The live stream and the event history only return the caller's. |
 | Files | Each task and workspace has its own sandbox directory, and its ids are unique. |
 

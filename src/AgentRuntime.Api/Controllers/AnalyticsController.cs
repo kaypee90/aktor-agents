@@ -212,13 +212,14 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
 
     /// <summary>
     /// Display names for the starters of runs: a member's name or email, an API key's name, "Local"
-    /// when sign-in is off, and "Not recorded" for runs from before starters were recorded. A user
+    /// when sign-in is off, "Triggers" for pipeline runs a trigger started, and "Not recorded" for
+    /// runs from before starters were recorded. A user
     /// or key that has since been deleted keeps a recognisable short id.
     /// </summary>
     private async Task<Dictionary<string, Person>> PeopleAsync(string tenant, IEnumerable<string> starters, CancellationToken ct)
     {
         var ids = starters.Distinct().ToList();
-        var userIds = ids.Where(id => id is not (UnknownUser or "local") && !id.StartsWith("key:", StringComparison.Ordinal)).ToList();
+        var userIds = ids.Where(id => id is not (UnknownUser or "local" or "trigger") && !id.StartsWith("key:", StringComparison.Ordinal)).ToList();
         var keyIds = ids.Where(id => id.StartsWith("key:", StringComparison.Ordinal)).Select(id => id[4..]).ToList();
         var users = await db.Users.AsNoTracking().Where(u => userIds.Contains(u.UserId))
             .Select(u => new { u.UserId, u.Name, u.Email }).ToDictionaryAsync(u => u.UserId, ct);
@@ -229,6 +230,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         {
             UnknownUser => new Person("Not recorded", "unknown"),
             "local" => new Person("Local (sign-in off)", "user"),
+            "trigger" => new Person("Triggers (automatic runs)", "trigger"),
             _ when id.StartsWith("key:", StringComparison.Ordinal) =>
                 new Person(keys.TryGetValue(id[4..], out var key) ? $"API key · {key}" : $"API key · {Short(id[4..])} (deleted)", "api_key"),
             _ => users.TryGetValue(id, out var u)
@@ -363,8 +365,8 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
 
     /// <summary>
     /// Workspaces: their model calls (tokens, spend, time), tools, triggers that fired and approvals,
-    /// per workspace, role and model, within the range. Workspaces have no runs, so everything is
-    /// counted when it happened. Model calls are recorded from this release on.
+    /// per workspace, role and model, within the range, counted when it happened (a pipeline run spans
+    /// its stages, so per-run timing is in the Tasks view). Model calls are recorded from this release on.
     /// </summary>
     private async Task<object> WorkspacesAsync(DateTimeOffset start, DateTimeOffset end, string? workspaceFilter, string? modelFilter, TimeSpan offset, CancellationToken ct)
     {
@@ -386,8 +388,12 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             .ToListAsync(ct);
         var durations = rows.Select(r => (double)r.DurationMs).ToList();
 
+        // A pipeline's tools are called by its runs' agents, whose task is the run.
+        var scopes = ids.Concat(await db.Tasks.AsNoTracking()
+            .Where(t => t.TenantId == tenant && t.WorkspaceId != null && ids.Contains(t.WorkspaceId))
+            .Select(t => t.TaskId).ToListAsync(ct)).ToList();
         var tools = await db.ToolCalls.AsNoTracking()
-            .Where(c => c.TenantId == tenant && ids.Contains(c.TaskId) && c.Timestamp >= start && c.Timestamp < end)
+            .Where(c => c.TenantId == tenant && scopes.Contains(c.TaskId) && c.Timestamp >= start && c.Timestamp < end)
             .GroupBy(c => c.ToolName)
             .Select(g => new { Tool = g.Key, Calls = g.Count(), Failures = g.Count(c => !c.Success), Avg = g.Average(c => (double?)c.DurationMs), Total = g.Sum(c => (long?)c.DurationMs) ?? 0 })
             .OrderByDescending(x => x.Total)

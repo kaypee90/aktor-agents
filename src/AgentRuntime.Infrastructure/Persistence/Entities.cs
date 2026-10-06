@@ -20,8 +20,11 @@ public sealed class TaskRecord
     /// <summary>The caller's correlation id (or one generated for it), returned with every result
     /// and stamped on the run's events, so a failure can be traced across both systems.</summary>
     public string? CorrelationId { get; set; }
-    /// <summary>How the task was started: "api", "mcp", "a2a" or "acp".</summary>
+    /// <summary>How the task was started: "api", "mcp", "a2a", "acp", "replay", or "pipeline" for a
+    /// workspace pipeline's run.</summary>
     public string Source { get; set; } = "api";
+    /// <summary>For a pipeline run: its workspace.</summary>
+    public string? WorkspaceId { get; set; }
     /// <summary>The budget the root agent was granted (after the task ceiling was applied).</summary>
     public string? BudgetJson { get; set; }
 

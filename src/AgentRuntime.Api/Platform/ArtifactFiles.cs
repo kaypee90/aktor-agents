@@ -24,6 +24,32 @@ public static class ArtifactFiles
         return Latest(records, opts, scopeId);
     }
 
+    /// <summary>
+    /// A workspace's files: its own folder's, and every run's (each run of its pipeline has its own
+    /// folder), shown under "run-&lt;number&gt;/" so files of different runs never collide.
+    /// </summary>
+    public static async Task<List<FileView>> ListForWorkspaceAsync(AgentDbContext db, ToolsOptions opts, string workspaceId,
+        IReadOnlyDictionary<string, int> runNumbers, string tenantId, CancellationToken ct)
+    {
+        var scopes = await ScopesOfWorkspaceAsync(db, workspaceId, tenantId, ct);
+        var records = await db.Artifacts.AsNoTracking()
+            .Where(a => scopes.Contains(a.TaskId) && a.TenantId == tenantId)
+            .ToListAsync(ct);
+
+        return records.GroupBy(a => a.TaskId)
+            .SelectMany(scope => Latest(scope, opts, scope.Key).Select(f => scope.Key == workspaceId ? f
+                : f with { RelativePath = $"{RunFolder(scope.Key, runNumbers)}/{f.RelativePath}" }))
+            .OrderByDescending(f => f.Latest.CreatedAt)
+            .ToList();
+    }
+
+    /// <summary>The workspace's own id and its runs' ids: where its files can be.</summary>
+    public static async Task<List<string>> ScopesOfWorkspaceAsync(AgentDbContext db, string workspaceId, string tenantId, CancellationToken ct) =>
+        [workspaceId, .. await db.Tasks.AsNoTracking().Where(t => t.WorkspaceId == workspaceId && t.TenantId == tenantId).Select(t => t.TaskId).ToListAsync(ct)];
+
+    private static string RunFolder(string runId, IReadOnlyDictionary<string, int> runNumbers) =>
+        runNumbers.TryGetValue(runId, out var number) ? $"run-{number}" : runId;
+
     /// <summary>Collapses artifact records to one per file still on disk inside the sandbox.</summary>
     public static List<FileView> Latest(IEnumerable<ArtifactRecord> records, ToolsOptions opts, string scopeId)
     {
@@ -42,14 +68,17 @@ public static class ArtifactFiles
     }
 
     /// <summary>The files as one zip, keeping their folder layout relative to the sandbox root.</summary>
-    public static async Task<MemoryStream> ZipAsync(IEnumerable<string> locations, string root, CancellationToken ct)
+    public static Task<MemoryStream> ZipAsync(IEnumerable<string> locations, string root, CancellationToken ct) =>
+        ZipAsync(locations.Select(file => (file, Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/'))), ct);
+
+    /// <summary>The files as one zip, each under the name given.</summary>
+    public static async Task<MemoryStream> ZipAsync(IEnumerable<(string Location, string EntryName)> files, CancellationToken ct)
     {
         var buffer = new MemoryStream();
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
         {
-            foreach (var file in locations)
+            foreach (var (file, entryName) in files)
             {
-                var entryName = Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/');
                 var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
                 await using var entryStream = await entry.OpenAsync(ct);
                 await using var source = File.OpenRead(file);

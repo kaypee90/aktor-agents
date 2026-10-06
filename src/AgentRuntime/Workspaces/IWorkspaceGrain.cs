@@ -24,23 +24,49 @@ public enum WebhookOutcome
 }
 
 /// <summary>
-/// A long-running environment where a user's agents live (docs/workspaces.md): a standing
-/// coordinator that takes the user's commands, the standing and one-shot agents it spawns,
-/// schedules and webhooks that wake them, a conversation with the user, and one daily budget for
-/// all of it. State is durable; schedules are Orleans reminders, so they survive crashes.
+/// A reusable agent pipeline (docs/workspaces.md): a versioned graph of stages, each an agent,
+/// configured in plain language or on the canvas; triggers (schedules, webhooks, watches) and
+/// people start runs of it with an input; plus a conversation, connections, a safety policy and
+/// one daily budget for all of it. State is durable; schedules are Orleans reminders.
 ///
-/// Deadlock rule (as for worlds): agents call into this grain from their own turns, so every call
-/// it makes into an agent is interleaved (mailbox enqueues, snapshots) or one-way.
+/// Deadlock rule: agents call into this grain from their own turns (budget, policy, tools), so
+/// every call it makes into an agent is interleaved or one-way. Runs tell it they finished
+/// one-way, so its calls into a run (start, pause, cancel) can't deadlock with them.
 /// </summary>
 public interface IWorkspaceGrain : IGrainWithStringKey
 {
     Task Create(WorkspaceCreationRequest request);
 
-    /// <summary>A command from the user, delivered to the coordinator (or a named agent).</summary>
-    Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId);
+    /// <summary>A message from the user: the input of a new run, or guidance for an agent of a run
+    /// in progress (<paramref name="toAgentId"/>). "approve A3" decides an approval.</summary>
+    Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId, string? startedBy = null);
 
-    /// <summary>notify_user: an agent reporting to the user.</summary>
-    Task<WorkspaceActionResult> Notify(string agentId, string text, string urgency, string idempotencyKey);
+    // ---- Pipeline ----
+
+    Task<Pipelines.PipelineDefinition?> GetPipeline();
+
+    /// <summary>Earlier versions, newest first.</summary>
+    Task<List<Pipelines.PipelineDefinition>> GetPipelineHistory();
+
+    /// <summary>Replaces the pipeline (the canvas's save). Refused with a conflict if it changed
+    /// since <paramref name="baseVersion"/>, or with the reasons if it can't run.</summary>
+    Task<PipelineChangeResult> SetPipeline(Pipelines.PipelineDefinition pipeline, int baseVersion, string changedBy, string note);
+
+    /// <summary>Applies edits (from the natural-language editor) to the pipeline at <paramref name="baseVersion"/>.</summary>
+    Task<PipelineChangeResult> ApplyPipelineEdits(List<Pipelines.PipelineEditOp> ops, int baseVersion, string changedBy, string? note);
+
+    /// <summary>Makes an earlier version current again (as a new version).</summary>
+    Task<PipelineChangeResult> RestorePipelineVersion(int version, string changedBy);
+
+    /// <summary>Starts a run with <paramref name="input"/>, or queues it if the pipeline's
+    /// runs-at-once limit is reached or the workspace is paused.</summary>
+    Task<RunStartResult> StartRun(string input, string startedBy);
+
+    /// <summary>A run finished: recorded, reported in the chat, and the next queued run started.
+    /// One-way, so a run never waits on its workspace.</summary>
+    [OneWay]
+    Task OnRunFinished(string runId, Pipelines.PipelineRunStatus status, string summary);
+
 
     /// <summary>Creates a schedule or webhook. The webhook's secret URL goes to the user's
     /// conversation (and to the API caller when <paramref name="revealSecret"/>), never to an agent.</summary>
@@ -112,7 +138,7 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// <summary>A message arriving through a connection (an SMS reply, a Telegram message).</summary>
     Task<Integrations.InboundResponseDto> HandleInbound(string connectionId, string token, Integrations.InboundRequestDto request);
 
-    /// <summary>Delivers due notifications. One-way so notify_user never waits on an SMS provider.</summary>
+    /// <summary>Delivers due notifications. One-way so the workspace never waits on an SMS provider.</summary>
     [OneWay]
     Task ProcessNotificationOutbox();
 
@@ -139,8 +165,4 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [OneWay]
     Task PostBudgetNotice(string reason);
 
-    /// <summary>Tells the user, once per pause, that a standing agent used its own daily budget and
-    /// when it resumes. One-way: the agent calls it as it ends its turn.</summary>
-    [OneWay]
-    Task PostAgentPausedNotice(string agentId, string role, string reason, DateTimeOffset resumesAt);
 }

@@ -335,8 +335,57 @@ export function endWorld(worldId: string) {
 
 // ---- Workspaces (long-running agents with triggers) ----
 
+/** A workspace for `goal`; its pipeline is drafted from the goal by the pipeline editor. */
 export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number }) {
-  return apiFetch<{ workspace_id: string }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+  return apiFetch<{ workspace_id: string; draft: string | null }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+// ---- Pipelines and runs (docs/workspaces.md) ----
+
+export function getPipelineHistory(id: string) {
+  return apiFetch<import("./pipelineTypes").PipelineDefinition[]>(`/api/workspaces/${id}/pipeline/history`);
+}
+
+/** What the editor understood from a plain-language request; changes nothing until applied. */
+export function proposePipelineChange(id: string, request: string) {
+  return apiFetch<import("./pipelineTypes").PipelineProposal>(`/api/workspaces/${id}/pipeline/propose`, {
+    method: "POST",
+    body: JSON.stringify({ request }),
+  });
+}
+
+/** Applies edits to the pipeline at `baseVersion`; fails with a conflict if it changed since. */
+export function applyPipelineEdits(id: string, ops: import("./pipelineTypes").PipelineEditOp[], baseVersion: number, note?: string) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline/edits`, {
+    method: "POST",
+    body: JSON.stringify({ ops, base_version: baseVersion, note }),
+  });
+}
+
+export function savePipeline(id: string, pipeline: import("./pipelineTypes").PipelineDefinition, baseVersion: number, note?: string) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline`, {
+    method: "PUT",
+    body: JSON.stringify({ pipeline, base_version: baseVersion, note }),
+  });
+}
+
+export function restorePipelineVersion(id: string, version: number) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline/restore`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  });
+}
+
+export function startPipelineRun(id: string, input: string) {
+  return apiFetch<import("./pipelineTypes").RunStartResult>(`/api/workspaces/${id}/runs`, { method: "POST", body: JSON.stringify({ input }) });
+}
+
+export function getPipelineRun(id: string, runId: string) {
+  return apiFetch<import("./pipelineTypes").PipelineRunView>(`/api/workspaces/${id}/runs/${runId}`);
+}
+
+export function controlPipelineRun(id: string, runId: string, action: "pause" | "resume" | "cancel") {
+  return apiFetch<import("./pipelineTypes").PipelineRunView>(`/api/workspaces/${id}/runs/${runId}/${action}`, { method: "POST", body: "{}" });
 }
 
 export function listWorkspaceTemplates() {
@@ -372,11 +421,27 @@ export function postWorkspaceMessage(id: string, text: string, clientMessageId: 
   });
 }
 
+/** A watch's rule: which items of a read-only tool's result to check, and when they match. */
+export interface WatchInput {
+  source_tool: string;
+  /** The tool's arguments each check, e.g. {"path": "/todos?userId=1"}. */
+  source_arguments?: Record<string, unknown>;
+  items_path?: string;
+  conditions: { field: string; op: string; value?: string }[];
+  key_field?: string;
+  display_fields?: string[];
+  /** "notify": alert in the chat (and channels) with no model call; "run": run the pipeline with the matches. */
+  mode: "notify" | "run";
+  message?: string;
+  urgency?: "info" | "warning" | "urgent";
+}
+
+/** Creates a trigger. A watch's response includes a dry run of its rule (items found, matching now). */
 export function addWorkspaceTrigger(
   id: string,
-  trigger: { kind: "schedule" | "webhook"; name: string; instruction?: string; target_agent_id?: string; every_minutes?: number; cron?: string },
+  trigger: { kind: "schedule" | "webhook" | "watch"; name: string; instruction?: string; every_minutes?: number; cron?: string } & Partial<WatchInput>,
 ) {
-  return apiFetch<import("./workspaceTypes").TriggerView>(`/api/workspaces/${id}/triggers`, {
+  return apiFetch<import("./workspaceTypes").TriggerView & { dry_run?: { items_found: number; matching_now: number } }>(`/api/workspaces/${id}/triggers`, {
     method: "POST",
     body: JSON.stringify(trigger),
   });
@@ -522,7 +587,9 @@ export function apiErrorMessage(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err);
   const json = text.slice(text.indexOf("{"));
   try {
-    return (JSON.parse(json) as { error?: string }).error ?? text;
+    // Most errors are { error }; pipeline changes list every problem in { errors }.
+    const body = JSON.parse(json) as { error?: string; errors?: string[] };
+    return [body.error, ...(body.errors ?? [])].filter(Boolean).join(" ") || text;
   } catch {
     return text;
   }
@@ -935,7 +1002,7 @@ export type AnalyticsTaskRow = {
 export type AnalyticsUserRow = {
   user: string;
   name: string;
-  kind: "user" | "api_key" | "unknown";
+  kind: "user" | "api_key" | "trigger" | "unknown";
   runs: number;
   tokens: number;
   cost_usd: number;

@@ -27,7 +27,7 @@ flowchart LR
 - **"External" means effects outside the platform.** That covers connection tools
   (`{connection}__{tool}`), `shell_exec`, `http_request` and `database_query`.
 - **Internal work never waits for a human.** This includes agents spawning and messaging each
-  other, memory, schedules, workspace files and `notify_user`.
+  other, memory, files and reporting (`complete_task`).
 - **Reads never wait for a human either.** Whether a call is a read, a repeatable write or an
   unrepeatable write comes from the side-effect class that each tool, or its plugin, declares (see
   [plugins.md](plugins.md)).
@@ -111,7 +111,7 @@ When a call needs approval:
 Every action that matters is appended to the workspace's audit log:
 - **Every agent tool call**, with its outcome (`ok`, `failed`, or `unknown` for a call cut off by a
   crash), arguments, a truncated result and the agent's stated reason. Simulation moves and
-  `wait_for_events` / `end_turn` aren't recorded.
+  `end_turn` aren't recorded.
 - **Blocked calls**, and approvals requested, approved, rejected and expired.
 - **Your commands**, from the chat or channels.
 - **Configuration changes:** policy updates, connections added, changed or removed, triggers added

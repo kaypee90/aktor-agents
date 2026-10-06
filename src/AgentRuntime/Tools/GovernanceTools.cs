@@ -45,7 +45,6 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
             "goal": { "type": "string", "description": "The specific goal the new agent should pursue" },
             "capabilities": { "type": "array", "items": { "type": "string" } },
             "initial_context": { "type": "string" },
-            "standing": { "type": "boolean", "description": "Workspaces only: a long-lived agent (monitor, responder) that waits for events instead of finishing" },
             "why_not_myself": { "type": "string", "description": "One sentence: why you can't reasonably do this yourself (work that runs in parallel, expertise or tools you lack, or too big for your budget)" },
             "model": { "type": "string", "description": "Optional: the id of a model from MODELS for the new agent. Leave out to use your own model." }
           },
@@ -73,7 +72,6 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
             Goal = args.Goal,
             Capabilities = args.Capabilities ?? [],
             InitialContext = args.InitialContext,
-            Standing = args.Standing ?? false,
             Justification = args.WhyNotMyself.Trim(),
             Model = string.IsNullOrWhiteSpace(args.Model) ? null : args.Model.Trim()
         }, ToolJson.NullIfEmptyKey(request.IdempotencyKey));
@@ -88,7 +86,7 @@ public sealed class SpawnAgentTool(IAgentOrchestrator orchestrator) : ITool
 
     private const int MinJustificationLength = 10;
 
-    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext, bool? Standing, string? WhyNotMyself, string? Model);
+    private sealed record SpawnArgs(string Role, string Goal, List<string>? Capabilities, string? InitialContext, string? WhyNotMyself, string? Model);
 }
 
 public sealed class FindAgentsTool(IAgentOrchestrator orchestrator) : ITool

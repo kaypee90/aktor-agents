@@ -35,7 +35,7 @@ More of the same shape:
 
 | Watching | Rule |
 |---|---|
-| Deals in a CRM | `days_since_activity >= 7`, `mode: wake_agent` so an agent drafts follow-ups |
+| Deals in a CRM | `days_since_activity >= 7`, `mode: run` so the pipeline drafts follow-ups |
 | A service status API | `status != "ok"` |
 | Support tickets | `priority == "urgent"` and `assignee not_exists` |
 | A store | `inventory_quantity < 10` |
@@ -47,8 +47,8 @@ More of the same shape:
   it stays low. If it recovers and drops again, it's new again.
 - **Two modes:**
   - `notify` sends the alert to the user directly (and on to their channels by urgency);
-  - `wake_agent` wakes an agent, but only then, and with only the matching items, for when a
-    match needs judgement (e.g. "work out a reorder quantity").
+  - `run` starts a run of the workspace's pipeline, but only then, and with only the matching
+    items as its input, for when a match needs judgement (e.g. "work out a reorder quantity").
 - **Safe by construction.**
   - Watches may only call **read-only** tools, since they run unattended.
   - Conditions are data, not code: a JSONPath subset (`$`, `.name`, `['name']`, `[n]`, `[*]`)
@@ -57,11 +57,12 @@ More of the same shape:
   - JSON inside strings (an HTTP body, MCP text) is parsed along the way.
 - **Checked at creation.** A dry run reports `items_found` and `matching_now`, so a wrong path is
   caught immediately instead of silently never matching.
-- **Failures are visible.** After 3 failed checks in a row, the target agent is told once.
+- **Failures are visible.** After 3 failed checks in a row, the user is told once.
 - **Durable**, like every trigger: it runs on reminders and survives restarts.
 
-Agents are instructed to prefer `create_watch` over `create_schedule` whenever the check is a
-clear condition. The workspace header shows the running total of LLM calls avoided.
+Set them up on a workspace's Triggers tab (or `POST /api/workspaces/{id}/triggers` with
+`kind: watch`): use a watch rather than a schedule whenever the check is a clear condition. The
+workspace header shows the running total of LLM calls avoided.
 
 In the live test, a watch polled a JSON API every minute. It reported the one matching item once,
 then only the second item when that started matching too, and the agents spent no tokens across
@@ -82,19 +83,18 @@ all the checks.
 ## 3. Model routing
 
 Set `LLM_FAST_MODEL` (e.g. `claude-haiku-4-5-20251001` or `gpt-4o-mini`) and routine work moves to
-it: standing agents handling events, simulation residents, and history summaries. Routine calls
-also get a smaller output cap (`FastMaxOutputTokens`). The coordinator, which plans, and one-shot
-workers, which do the substantive work, stay on `LLM_MODEL`. Costs are tracked at each tier's own
+it: simulation residents and history summaries. Routine calls also get a smaller output cap
+(`FastMaxOutputTokens`). Task agents and pipeline stages, which do the substantive work, stay on
+`LLM_MODEL` (or the model a stage names). Costs are tracked at each tier's own
 price (`FastPricePerInputTokenUsd`, `FastPricePerOutputTokenUsd`).
 
 ## 4. Context compaction
 
 Every LLM call resends the agent's history, so history length is a direct multiplier on cost.
 
-- **Standing agents.** Once history outgrows the agent's window, older entries are folded into a
-  rolling summary, which the agent sees under *EARLIER CONTEXT*.
-- **Task agents.** Once history passes `CompactAboveTokens` (40k by default), all but the last
-  `CompactKeepRecentEntries` are summarized.
+- **Task agents and pipeline stages.** Once history passes `CompactAboveTokens` (40k by default),
+  all but the last `CompactKeepRecentEntries` are summarized; the agent sees the summary under
+  *EARLIER CONTEXT*.
 - **How the summary works.**
   - Summaries use the fast tier and keep facts, decisions, ids, numbers and open items.
   - If the model doesn't answer, an excerpt is kept instead, so compaction never loses work
@@ -113,7 +113,6 @@ Every LLM call resends the agent's history, so history length is a direct multip
 | `Llm:CachedInputPriceFactor` / `Llm:CacheWritePriceFactor` | per provider | Anthropic 0.1 / 1.25; OpenAI 0.5. |
 | `Llm:CompactAboveTokens` | 40000 | Task-agent compaction threshold. |
 | `Llm:CompactKeepRecentEntries` | 24 | Entries kept verbatim. |
-| `Workspaces:StandingContextWindow` | 40 | Standing agents compact beyond this. |
 | `Integrations:MaxEnabledToolsPerConnection` | 20 | Tool definitions cost tokens on every call. |
 
 ## Tests
@@ -121,11 +120,9 @@ Every LLM call resends the agent's history, so history length is a direct multip
 - `WatchEvaluatorTests` covers paths, operators and validation.
 - `WatchTests`:
   - a watch alerts once per newly matching item, with no LLM call during checks;
-  - `wake_agent` sends only the matches;
+  - `run` mode starts a run with only the matches;
   - write tools are refused.
 - `TokenEfficiencyTests` (unit): prompt ordering and cache boundary, Anthropic breakpoints and
   usage, OpenAI cached tokens, cost maths, tier selection.
-- `TokenEfficiencyTests` (integration):
-  - the monitor uses the fast model and the coordinator the main model;
-  - history compacts into a summary that later calls carry;
-  - a task agent keeps working after compaction.
+- `TokenEfficiencyTests` (integration): history compacts into a summary that later calls carry,
+  and a task agent keeps working after compaction.

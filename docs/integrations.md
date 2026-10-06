@@ -69,11 +69,11 @@ with header `Authorization: Bearer ak_…`.
 | `cancel_task` | `task_id` | The task, after every agent is stopped |
 | `list_agents` | `task_id` | The team: id, role, status, parent and depth of each agent |
 
-**Workspaces.** With `workspace: "ws-…"`, `run_goal` hands the goal to that workspace's coordinator
-instead of starting a new task. It then runs with the workspace's connections, safety policy
-(approvals included) and daily budget. The returned id (`ws-…:<n>`) works with `get_task_status`,
-`get_task_result` and `list_agents`. The request counts as done once the agents have replied and
-every one-shot worker it started has finished. Its result lists what the agents told you.
+**Workspaces.** With `workspace: "ws-…"`, `run_goal` starts a run of that workspace's pipeline with
+the goal as its input, instead of a new task. The run uses the workspace's connections, safety
+policy (approvals included) and daily budget. A run is a task: the returned id (`run-…`) works with
+`get_task_status`, `get_task_result`, `list_agents` and `cancel_task`, and its result is the
+pipeline's output. A run beyond the pipeline's runs-at-once limit waits in a queue first.
 
 ### Claude Code
 

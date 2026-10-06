@@ -289,7 +289,9 @@ function UsersCard({ rows, total, onPick }: { rows: AnalyticsUserRow[]; total: n
                 <tr key={u.user} onClick={() => onPick(u.user)} className="cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                   <td className="max-w-xs px-5 py-2.5">
                     <div className="flex items-center gap-2">
-                      {u.kind === "api_key" ? <Icons.Key className="h-3.5 w-3.5 shrink-0 text-zinc-400" /> : <Icons.User className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
+                      {u.kind === "api_key" ? <Icons.Key className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                        : u.kind === "trigger" ? <Icons.Bolt className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                        : <Icons.User className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
                       <span className={cx("truncate font-medium", u.kind === "unknown" ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100")} title={u.name}>{u.name}</span>
                     </div>
                   </td>

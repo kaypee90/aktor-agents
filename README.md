@@ -298,8 +298,9 @@ produces.
     graph colour-coded by status, a switch to move the team to another model, the run's full
     activity (history plus live events via `/ws/events`), the result, and a details panel per agent
     (goal, budget and usage, granted tools, structured reasoning trace).
-  - **Workspaces** and **Templates**: standing teams, their triggers, integrations, safety policy
-    (including team shape) and approvals.
+  - **Workspaces** and **Templates**: reusable pipelines on a resizable canvas (edit in plain
+    language or directly, run history with live stage status), their triggers, integrations,
+    safety policy (including team shape) and approvals.
   - **Skills**: write a skill in the browser or upload a `SKILL.md` or `.zip`; enable, edit,
     download or delete it. Skills belong to the whole organization or to one workspace, whose agents
     alone use them ([docs/skills.md](docs/skills.md)).
@@ -408,18 +409,26 @@ flowchart LR
   Snapshots are archived to the `Worlds` table every tick, so a world remains inspectable after a
   restart. Rules live in the `Simulation` section of `appsettings.json`.
 
-## 10b-2. Workspaces: agents that keep working for you
+## 10b-2. Workspaces: reusable agent pipelines
 
-Open **Workspaces** in the dashboard (`/workspaces`) and describe what you want: a daily research
-briefing, support-ticket triage, CRM follow-ups, service monitoring, store inventory alerts, and so
-on. Nothing is domain-specific; the building blocks are generic and your instructions and
-connections decide what a workspace does.
+Open **Workspaces** in the dashboard (`/workspaces`) and describe a job you want done again and
+again: market research reports, support-ticket triage, code reviews, incident investigation, and so
+on. Nothing is domain-specific; your description, stages and connections decide what a workspace
+does.
 
-- A standing **coordinator** takes that request, and any later instruction you send in the chat.
-- It sets up the agents it needs: standing monitors or one-shot workers.
-- It wires up **schedules** (intervals or cron) and **webhooks** (e.g. from Shopify) to wake them.
-- Agents report back to you with `notify_user`.
-- Everything is durable and has one **daily budget** that the runtime enforces.
+- A **pipeline** of agents is drafted from your description: stages, each an agent with a role,
+  instructions and tools, connected into a graph (parallel branches merge where a stage takes
+  several inputs).
+- **Change it in plain language** ("add a fact checker after Research") with a preview before it
+  applies, or **on the canvas** (+ on any connection, × on any stage). Every change is a version
+  you can restore.
+- **Run it** with an input, or let **triggers** run it: schedules (intervals or cron), webhooks
+  (e.g. from Shopify) and watches (checks in code, no model call until something matches).
+- Inside a stage the agent is autonomous within limits: tools, helpers through a plan, quick
+  questions to other stages. The runtime starts stages when their inputs are done, retries
+  failures, and enforces a time limit per run and one **daily budget** per workspace.
+- Every run is a task with its own agent graph, files, events and result; results reach you in
+  the chat and on your channels.
 
 See [docs/workspaces.md](docs/workspaces.md).
 
@@ -429,8 +438,8 @@ In a workspace's **Integrations** tab you can connect services, and you can add 
 - **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Slack,
   SMS (Twilio), email (SMTP) and Telegram.
 - **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`).
-- **Notifications:** `notify_user` reaches you on your channels by urgency.
-- **Commands back:** you can reply by SMS or Telegram to give instructions.
+- **Notifications:** run results, watch alerts and approvals reach you on your channels by urgency.
+- **Commands back:** you can reply by SMS or Telegram to start a run or decide an approval.
 - **Secrets** are encrypted in a vault and never reach agents.
 - **Your own plugins:** build against `AgentRuntime.Plugins.Sdk` and drop the DLL into `./plugins`.
 

@@ -93,4 +93,9 @@ public interface IAgentGrain : IGrainWithStringKey
 
     [AlwaysInterleave]
     Task<AgentStatus> GetStatus();
+
+    /// <summary>How the agent ended (its report, or why it failed), for a pipeline run waiting on
+    /// it. Read-only, so it always interleaves.</summary>
+    [AlwaysInterleave]
+    Task<Pipelines.AgentOutcome> GetOutcome();
 }

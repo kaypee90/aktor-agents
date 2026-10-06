@@ -54,37 +54,48 @@ public sealed class TenancyTests : IAsyncLifetime
     private static LlmCompletionResponse Respond(params ToolCall[] calls) =>
         new() { ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls, InputTokens = 500, OutputTokens = 100 };
 
-    /// <summary>User commands map to tool calls; every tool result is reported back with notify_user.</summary>
+    /// <summary>Each run's input maps to a tool call; the stage reports the tool's result.</summary>
     private LlmCompletionResponse Script(LlmCompletionRequest r)
     {
-        var system = r.Messages[0].Content ?? string.Empty;
-        _llmCallsBy.Enqueue(system.Contains("'Alpha'") ? "alpha" : system.Contains("'Beta'") ? "beta" : "other");
+        var kickoff = r.Messages.FirstOrDefault(m => m.Role == ChatRole.User)?.Content ?? string.Empty;
+        _llmCallsBy.Enqueue(kickoff.Contains("'Alpha' workspace") ? "alpha" : kickoff.Contains("'Beta' workspace") ? "beta" : "other");
 
         var last = r.Messages[^1];
         if (last.Role == ChatRole.Tool)
         {
-            return last.ToolName == "notify_user"
-                ? Respond(Call("wait_for_events", new { summary = "done" }))
-                : Respond(Call("notify_user", new { text = $"[{last.ToolName}] {last.Content}" }));
+            return last.ToolName == "find_agents" && Input(kickoff) == "twice"
+                ? Respond(Call("complete_task", new { status = "completed", summary = "twice done" }))
+                : Respond(Call("complete_task", new { status = "completed", summary = $"[{last.ToolName}] {last.Content}" }));
         }
 
-        var text = (last.Content ?? string.Empty).Split('\n').Last();
+        var text = Input(kickoff);
         string Arg(string prefix) => text[prefix.Length..].Trim();
         if (text.StartsWith("message ")) return Respond(Call("send_message", new { to_agent_id = Arg("message "), message_type = "InformationRequest", payload = "hello from another org" }));
         if (text.StartsWith("status ")) return Respond(Call("get_agent_status", new { agent_id = Arg("status ") }));
         if (text.StartsWith("remember ")) return Respond(Call("write_memory", new { key = "fact", value = Arg("remember "), shared = true }));
         if (text.StartsWith("search ")) return Respond(Call("search_knowledge", new { query = Arg("search ") }));
-        if (text.StartsWith("find")) return Respond(Call("find_agents", new { }));
-        if (text.StartsWith("spawn")) return Respond(Call("spawn_agent", new { role = "Helper", goal = "Help out.", capabilities = new[] { "research" }, standing = true, why_not_myself = "Ongoing help requests." }));
-        if (text.StartsWith("step")) return Respond(Call("notify_user", new { text = "stepped" }));
-        return Respond(Call("wait_for_events", new { summary = "ready" }));
+        if (text.StartsWith("find") || text == "twice") return Respond(Call("find_agents", new { }));
+        if (text.StartsWith("spawn")) return Respond(Call("plan_request", new { parts = new[] { new { title = "a", size = "large" }, new { title = "b", size = "large" } } }),
+            Call("spawn_agent", new { role = "Helper", goal = "Help out.", capabilities = new[] { "research" }, why_not_myself = "Parallel help." }));
+        return Respond(Call("complete_task", new { status = "completed", summary = "stepped" }));
     }
+
+    private static string Input(string kickoff) =>
+        kickoff.Split("## This run's input", 2).ElementAtOrDefault(1)?.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault() ?? string.Empty;
 
     private async Task<string> CreateAsync(string name, string tenant)
     {
         var id = WorkspaceIds.New();
-        await Workspace(id).Create(new WorkspaceCreationRequest { Name = name, Goal = "Help me.", TenantId = tenant });
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Status == "Waiting"));
+        await Workspace(id).Create(new WorkspaceCreationRequest
+        {
+            Name = name,
+            Goal = "Help me.",
+            TenantId = tenant,
+            Pipeline = new Pipelines.PipelineDefinition
+            {
+                Stages = [new Pipelines.PipelineStage { StageId = "assist", Name = "Assist", Instructions = "Do as the input says.", MaxHelpers = 2, Retries = 0 }]
+            }
+        });
         return id;
     }
 
@@ -102,12 +113,13 @@ public sealed class TenancyTests : IAsyncLifetime
         throw new TimeoutException("Condition not met. Conversation:\n" + string.Join("\n", s?.Conversation.Select(c => $"[{c.AuthorName}] {c.Text}") ?? []));
     }
 
-    private async Task<string> AskAsync(string id, string command, string tool)
+    /// <summary>Runs the pipeline with <paramref name="command"/> and returns the run's result.</summary>
+    private async Task<(string RunId, string Result)> AskAsync(string id, string command)
     {
-        var before = (await Workspace(id).GetSnapshot())!.Conversation.Count(c => c.Text.StartsWith($"[{tool}]"));
-        await Workspace(id).PostUserMessage(command, null, null);
-        var s = await WaitForAsync(id, s => s.Conversation.Count(c => c.Text.StartsWith($"[{tool}]")) > before);
-        return s.Conversation.Last(c => c.Text.StartsWith($"[{tool}]")).Text;
+        var started = await Workspace(id).StartRun(command, "user-1");
+        Assert.True(started.Success, started.Message);
+        var s = await WaitForAsync(id, s => s.Runs.Any(r => r.RunId == started.RunId && r.CompletedAt is not null));
+        return (started.RunId!, s.Runs.Single(r => r.RunId == started.RunId).Summary ?? string.Empty);
     }
 
     [Fact]
@@ -115,44 +127,39 @@ public sealed class TenancyTests : IAsyncLifetime
     {
         var alpha = await CreateAsync("Alpha", "t-alpha");
         var beta = await CreateAsync("Beta", "t-beta");
-        var betaCoordinator = WorkspaceIds.CoordinatorId(beta);
-        var alphaCoordinator = WorkspaceIds.CoordinatorId(alpha);
+        var (betaRun, _) = await AskAsync(beta, "step");
 
         Assert.Equal("t-alpha", await Workspace(alpha).GetTenantId());
-        Assert.Equal("t-alpha", (await _cluster.Client.GetGrain<IAgentGrain>(alphaCoordinator).GetSnapshot()).TenantId);
-
-        var sent = await AskAsync(alpha, $"message {betaCoordinator}", "send_message");
+        var (_, sent) = await AskAsync(alpha, $"message {betaRun}");
         Assert.Contains("No such agent", sent);
-        Assert.Contains("No such agent", await AskAsync(alpha, $"status {betaCoordinator}", "get_agent_status"));
-        Assert.DoesNotContain(betaCoordinator, await AskAsync(alpha, "find", "find_agents"));
+        Assert.Contains("No such agent", (await AskAsync(alpha, $"status {betaRun}")).Result);
+        Assert.DoesNotContain(betaRun, (await AskAsync(alpha, "find")).Result);
 
         // Beta never heard from Alpha.
-        var betaState = await _cluster.Client.GetGrain<IAgentGrain>(betaCoordinator).GetSnapshot();
         Assert.DoesNotContain((await Workspace(beta).GetSnapshot())!.Conversation, c => c.Text.Contains("hello from another org"));
 
         // Shared knowledge is shared within an organization only.
-        await AskAsync(alpha, "remember the launch code is 1234", "write_memory");
-        Assert.Contains("1234", await AskAsync(alpha, "search launch", "search_knowledge"));
-        Assert.DoesNotContain("1234", await AskAsync(beta, "search launch", "search_knowledge"));
-        Assert.Equal(AgentRuntime.Contracts.AgentStatus.Waiting, betaState.Status);
+        await AskAsync(alpha, "remember the launch code is 1234");
+        Assert.Contains("1234", (await AskAsync(alpha, "search launch")).Result);
+        Assert.DoesNotContain("1234", (await AskAsync(beta, "search launch")).Result);
     }
 
     [Fact]
     public async Task Usage_IsMeteredPerOrganization()
     {
         var alpha = await CreateAsync("Alpha", "t-meter-a");
-        await Workspace(alpha).PostUserMessage("step", null, null);
-        await WaitForAsync(alpha, s => s.Conversation.Any(c => c.Text == "stepped") && s.Agents.All(a => a.Status == "Waiting"));
+        await AskAsync(alpha, "twice");
         await CreateAsync("Beta", "t-meter-b");
 
         var a = await Tenant("t-meter-a").GetUsage();
         var b = await Tenant("t-meter-b").GetUsage();
         var alphaCalls = _llmCallsBy.Count(x => x == "alpha");
+        Assert.Equal(2, alphaCalls);
         Assert.Equal(alphaCalls, a.Current.LlmCalls);
         Assert.Equal(alphaCalls * 600, a.Current.Tokens);
         Assert.True(a.Current.ToolCalls >= 2);
         Assert.Equal(1, a.Current.AgentsCreated);
-        Assert.Equal(_llmCallsBy.Count(x => x == "beta"), b.Current.LlmCalls);
+        Assert.Equal(0, b.Current.LlmCalls);
         Assert.Equal(TenantUsagePeriod.PeriodOf(DateTimeOffset.UtcNow), a.Current.Period);
     }
 
@@ -160,14 +167,12 @@ public sealed class TenancyTests : IAsyncLifetime
     public async Task OverQuota_AgentsPause_WithoutCallingTheModel_AndResumeWhenThePlanChanges()
     {
         await Tenant("t-quota").SetBilling(new TenantBillingState { PlanId = "tiny" });
-        var alpha = await CreateAsync("Alpha", "t-quota"); // 1 call: 600 tokens
-        await Workspace(alpha).PostUserMessage("step", null, null); // 2nd call: 1200 >= 1000, then the next is refused
+        var alpha = await CreateAsync("Alpha", "t-quota");
+        await AskAsync(alpha, "twice"); // two calls: 1,200 tokens >= 1,000, so the next is refused
+        await Workspace(alpha).StartRun("step", "user-1");
 
-        var coordinator = _cluster.Client.GetGrain<IAgentGrain>(WorkspaceIds.CoordinatorId(alpha));
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        while ((await coordinator.GetSnapshot()).CurrentTask?.StartsWith("Paused:") != true && DateTime.UtcNow < deadline) await Task.Delay(150);
-        var parked = await coordinator.GetSnapshot();
-        Assert.StartsWith("Paused:", parked.CurrentTask);
+        var s = await WaitForAsync(alpha, s => s.Agents.Any(a => a.CurrentTask?.StartsWith("Paused:") == true));
+        var parked = s.Agents.Single(a => a.CurrentTask?.StartsWith("Paused:") == true);
         Assert.Contains("Tiny plan", parked.CurrentTask);
 
         var calls = _llmCallsBy.Count;
@@ -178,11 +183,8 @@ public sealed class TenancyTests : IAsyncLifetime
         Assert.Equal(1, usage.ParkedAgents);
 
         await Tenant("t-quota").SetBilling(new TenantBillingState { PlanId = "unlimited", SubscriptionStatus = "active" });
-        var resumeDeadline = DateTime.UtcNow.AddSeconds(20);
-        while (_llmCallsBy.Count == calls && DateTime.UtcNow < resumeDeadline) await Task.Delay(150);
+        s = await WaitForAsync(alpha, s => s.Runs.All(r => r.CompletedAt is not null));
         Assert.True(_llmCallsBy.Count > calls);
-        await Task.Delay(500);
-        Assert.DoesNotContain("Paused:", (await coordinator.GetSnapshot()).CurrentTask ?? string.Empty);
         Assert.Equal(0, (await Tenant("t-quota").GetUsage()).ParkedAgents);
     }
 
@@ -191,8 +193,10 @@ public sealed class TenancyTests : IAsyncLifetime
     {
         await Tenant("t-solo").SetBilling(new TenantBillingState { PlanId = "solo" });
         var alpha = await CreateAsync("Alpha", "t-solo");
-        var result = await AskAsync(alpha, "spawn", "spawn_agent");
+        var (runId, result) = await AskAsync(alpha, "spawn");
+        // The stage's agent is the one active agent the plan allows: its run doesn't count, its helper is refused.
         Assert.Contains("plan allows 1 active agents", result);
-        Assert.Single((await Workspace(alpha).GetSnapshot())!.Agents);
+        var team = await _cluster.Client.GetGrain<IAgentRegistryGrain>(0).FindAsync(new AgentRuntime.Contracts.FindAgentsQuery { RootAgentId = runId });
+        Assert.Equal(2, team.Count); // the run and its stage
     }
 }

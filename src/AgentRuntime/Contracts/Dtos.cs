@@ -23,8 +23,6 @@ public sealed record AgentInitializationRequest
     /// crash can't leave an agent created but never started.</summary>
     [Id(15)] public bool AutoStart { get; init; }
     [Id(16)] public string? WorkspaceId { get; init; }
-    [Id(17)] public bool Standing { get; init; }
-    [Id(18)] public int ContextWindow { get; init; }
     [Id(19)] public string TenantId { get; init; } = string.Empty;
     /// <summary>The caller's correlation id (API, MCP, A2A), stamped on every event of the agent
     /// tree so a run can be traced across systems.</summary>
@@ -64,9 +62,6 @@ public sealed record SpawnAgentRequest
     [Id(3)] public string? InitialContext { get; init; }
     [Id(4)] public List<string>? RequestedTools { get; init; }
     [Id(5)] public ResourceBudget? RequestedBudget { get; init; }
-    /// <summary>Inside a workspace: the child is a standing agent (monitor, responder) rather than
-    /// a one-shot worker.</summary>
-    [Id(6)] public bool Standing { get; init; }
     /// <summary>The spawning agent's stated reason for not doing the work itself (shown in events).</summary>
     [Id(7)] public string? Justification { get; init; }
     /// <summary>The model the new agent should run on: an organization model's id or name.
@@ -175,7 +170,6 @@ public sealed record AgentSnapshot
     [Id(17)] public string? FailureReason { get; init; }
     [Id(20)] public string? WorldId { get; init; }
     [Id(21)] public string? WorkspaceId { get; init; }
-    [Id(22)] public bool Standing { get; init; }
     [Id(23)] public string TenantId { get; init; } = string.Empty;
     [Id(24)] public int SpawnsThisRequest { get; init; }
     [Id(25)] public int PlannedWorkersLeft { get; init; }

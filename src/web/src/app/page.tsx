@@ -280,7 +280,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </Button>
         </header>
         <div className="min-h-0 flex-1">
-          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop}
+          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id}
             budget={task?.budget} ceiling={task?.budget_ceiling}
             onShowAgents={(id) => { if (id) setSelected(id); onView("agents"); }} />
         </div>

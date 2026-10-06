@@ -27,7 +27,6 @@ export interface TriggerView {
   trigger_id: string;
   kind: TriggerKind;
   name: string;
-  target_agent_id: string;
   instruction: string;
   interval_seconds: number | null;
   cron: string | null;
@@ -53,7 +52,6 @@ export interface WorkspaceAgentView {
   goal: string;
   status: string;
   parent_agent_id: string | null;
-  standing: boolean;
   tokens_used: number;
   cost_usd: number;
   current_task: string | null;
@@ -74,8 +72,11 @@ export interface WorkspaceSnapshot {
   status: WorkspaceStatus;
   created_at: string;
   updated_at: string;
-  coordinator_agent_id: string;
   conversation: ChatEntry[];
+  pipeline: import("./pipelineTypes").PipelineDefinition | null;
+  /** Recent runs, newest first. */
+  runs: import("./pipelineTypes").WorkspaceRunSummary[];
+  queued_runs: number;
   triggers: TriggerView[];
   agents: WorkspaceAgentView[];
   daily_token_limit: number;

@@ -91,7 +91,7 @@ public sealed class RunDiffTests
     [InlineData("web_search", false)]
     [InlineData("shell_exec", false)]
     [InlineData("crm__create_ticket", false)]
-    [InlineData("notify_user", false)]
+    [InlineData("search_knowledge", false)]
     [InlineData("write_memory", false)]
     public void Replays_rerun_only_internal_actions(string tool, bool reruns) => Assert.Equal(reruns, ReplayPolicy.ReRuns(tool));
 }

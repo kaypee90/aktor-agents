@@ -9,9 +9,10 @@ namespace AgentRuntime.IntegrationTests;
 
 /// <summary>
 /// Roadmap P9 end to end on the Mock provider, through the real API: a workspace from the
-/// incident-response template receives an alert on its webhook, starts investigators for logs,
-/// metrics and deploys, writes an incident report, and proposes a rollback that waits for a human.
-/// Once approved, the rollback runs exactly once, the user is told, and every step is audited.
+/// incident-response template receives an alert on its webhook, which runs its pipeline: triage,
+/// investigators for logs, metrics and deploys in parallel, an incident report, and a proposed
+/// rollback that waits for a human. Once approved, the rollback runs exactly once, the run's
+/// result reaches the user, and every step is audited.
 /// </summary>
 public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutputHelper output) : IClassFixture<ApiTestHostFixture>
 {
@@ -46,8 +47,9 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
             string.Join("\n", last.GetProperty("conversation").EnumerateArray().Select(c => $"{c.GetProperty("author_name")}: {c.GetProperty("text")}")));
     }
 
-    private static IEnumerable<string> AgentMessages(JsonElement ws) =>
-        ws.GetProperty("conversation").EnumerateArray().Where(c => c.GetProperty("author_kind").GetString() == "Agent").Select(c => c.GetProperty("text").GetString()!);
+    /// <summary>What finished runs reported in the chat.</summary>
+    private static IEnumerable<string> RunResults(JsonElement ws) =>
+        ws.GetProperty("conversation").EnumerateArray().Select(c => c.GetProperty("text").GetString()!).Where(t => t.Contains(" finished.") || t.Contains(" failed."));
 
     [Fact]
     public async Task Alert_to_investigation_report_and_approved_rollback()
@@ -61,9 +63,11 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
         Assert.True(created.GetProperty("connections")[0].GetProperty("ok").GetBoolean(), created.ToString());
         var hookPath = created.GetProperty("webhooks")[0].GetProperty("path").GetString()!;
 
-        var ws = await WaitForAsync(api, id, w => AgentMessages(w).Any(t => t.Contains("Incident response is set up")), "the coordinator to stand by");
+        var ws = await Json(await api.GetAsync($"/api/workspaces/{id}"));
         Assert.Equal("SemiAutonomous", ws.GetProperty("safety_policy").GetProperty("autonomy").GetString());
         Assert.Equal("incident-response", ws.GetProperty("template_id").GetString());
+        var stages = ws.GetProperty("pipeline").GetProperty("stages").EnumerateArray().Select(s => s.GetProperty("stage_id").GetString()).ToList();
+        Assert.Equal(["triage", "logs", "metrics", "deploys", "diagnose", "remediate"], stages);
 
         // The alert arrives on the workspace's real webhook, as a monitoring system would send it.
         using var anonymous = Host.Factory.CreateClient();
@@ -74,11 +78,13 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
         ws = await WaitForAsync(api, id, w => w.GetProperty("approvals").EnumerateArray().Any(a => a.GetProperty("status").GetString() == "Pending"),
             "the rollback to wait for approval");
 
-        // Three investigators ran in parallel and reported; the report was written before the proposal.
-        var roles = ws.GetProperty("agents").EnumerateArray().Select(a => a.GetProperty("role").GetString()).ToList();
-        Assert.Contains("Logs Investigator", roles);
-        Assert.Contains("Metrics Investigator", roles);
-        Assert.Contains("Deploy Investigator", roles);
+        // The alert started one run; its investigators ran and reported; the report was written before the proposal.
+        var run = Assert.Single(ws.GetProperty("runs").EnumerateArray());
+        Assert.Equal("webhook", run.GetProperty("source").GetString());
+        var view = await Json(await api.GetAsync($"/api/workspaces/{id}/runs/{run.GetProperty("run_id").GetString()}"));
+        var byStage = view.GetProperty("stages").EnumerateArray().ToDictionary(s => s.GetProperty("stage_id").GetString()!, s => s.GetProperty("status").GetString());
+        Assert.All(new[] { "triage", "logs", "metrics", "deploys", "diagnose" }, s => Assert.Equal("Completed", byStage[s]));
+        Assert.Equal("Running", byStage["remediate"]);
         // The file's history row is written by the event persister, a moment after the write.
         JsonElement files = default;
         for (var i = 0; i < 40; i++)
@@ -96,11 +102,11 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
         var connectionId = ws.GetProperty("connections").EnumerateArray().Single(c => c.GetProperty("name").GetString() == "ops").GetProperty("connection_id").GetString()!;
         Assert.False(DemoOpsPlugin.Rollbacks.TryGetValue(connectionId, out var none) && none.Count > 0, "nothing rolls back before approval");
 
-        // A human approves; the rollback runs once and the user is told.
+        // A human approves; the rollback runs once and the run's result tells the user.
         await Json(await api.PostAsJsonAsync($"/api/workspaces/{id}/approvals/{approval.GetProperty("code").GetString()}/decision", new { approve = true, reason = "go" }));
-        ws = await WaitForAsync(api, id, w => AgentMessages(w).Any(t => t.Contains("rolled it back")), "the user to be told about the rollback");
+        ws = await WaitForAsync(api, id, w => RunResults(w).Any(t => t.Contains("rolled back to v2.13.2")), "the user to be told about the rollback");
         Assert.Single(DemoOpsPlugin.Rollbacks[connectionId]);
-        output.WriteLine(string.Join("\n", AgentMessages(ws)));
+        output.WriteLine(string.Join("\n", RunResults(ws)));
 
         // Every step is in the audit log, and the chain verifies.
         var audit = await Json(await api.GetAsync($"/api/workspaces/{id}/audit?limit=200"));
@@ -119,8 +125,6 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
         using var api = Host.ClientFor(org);
         var id = (await Json(await api.PostAsJsonAsync("/api/workspaces/from-template", new { template = "incident-response", name = "Prod incidents" })))
             .GetProperty("workspace_id").GetString()!;
-        await WaitForAsync(api, id, w => AgentMessages(w).Any(t => t.Contains("Incident response is set up")), "the coordinator to stand by");
-
         var simulated = await api.PostAsync($"/api/workspaces/{id}/simulate-alert", new StringContent("{}", Encoding.UTF8, "application/json"));
         Assert.True(simulated.IsSuccessStatusCode, await simulated.Content.ReadAsStringAsync());
 
@@ -129,7 +133,7 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
         await Json(await api.PostAsJsonAsync($"/api/workspaces/{id}/approvals/{approval.GetProperty("approval_id").GetString()}/decision",
             new { approve = false, reason = "fixing forward instead" }));
 
-        ws = await WaitForAsync(api, id, w => AgentMessages(w).Any(t => t.Contains("did not run")), "the user to be told it didn't run");
+        ws = await WaitForAsync(api, id, w => RunResults(w).Any(t => t.Contains("did not run")), "the user to be told it didn't run");
         var connectionId = ws.GetProperty("connections").EnumerateArray().Single(c => c.GetProperty("name").GetString() == "ops").GetProperty("connection_id").GetString()!;
         Assert.False(DemoOpsPlugin.Rollbacks.TryGetValue(connectionId, out var rollbacks) && rollbacks.Count > 0);
     }

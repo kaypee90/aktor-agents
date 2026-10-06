@@ -33,8 +33,6 @@ public static class WorkspaceIds
 
     /// <summary>Workspace agents use the workspace id as their task id.</summary>
     public static bool IsWorkspace(string? taskId) => taskId?.StartsWith(Prefix, StringComparison.Ordinal) == true;
-
-    public static string CoordinatorId(string workspaceId) => $"coord-{workspaceId[Prefix.Length..]}";
 }
 
 [GenerateSerializer]
@@ -50,8 +48,13 @@ public sealed record WorkspaceCreationRequest
     [Id(5)] public string TenantId { get; init; } = string.Empty;
     /// <summary>The template the workspace was made from (see WorkspaceTemplates), if any.</summary>
     [Id(6)] public string? TemplateId { get; init; }
-    /// <summary>A safety policy to start with, in force before the coordinator's first step.</summary>
+    /// <summary>A safety policy to start with, in force before the first run.</summary>
     [Id(7)] public Safety.WorkspaceSafetyPolicy? SafetyPolicy { get; init; }
+    /// <summary>The pipeline to start with (from a template, or drafted from the goal); null: one
+    /// stage that does the goal.</summary>
+    [Id(8)] public Pipelines.PipelineDefinition? Pipeline { get; init; }
+    /// <summary>Who created it (a user id or "key:&lt;id&gt;"), recorded on the first pipeline version.</summary>
+    [Id(9)] public string? CreatedBy { get; init; }
 }
 
 [GenerateSerializer]
@@ -74,8 +77,7 @@ public sealed class TriggerDefinition
     [Id(0)] public required string TriggerId { get; set; }
     [Id(1)] public required TriggerKind Kind { get; set; }
     [Id(2)] public required string Name { get; set; }
-    /// <summary>The agent woken when the trigger fires.</summary>
-    [Id(3)] public required string TargetAgentId { get; set; }
+    // Id 3 held the agent a trigger woke (before pipelines: every trigger now starts a run).
     /// <summary>What the agent is told to do each time, e.g. "Summarize new support tickets and flag urgent ones".</summary>
     [Id(4)] public string Instruction { get; set; } = string.Empty;
     [Id(5)] public int? IntervalSeconds { get; set; }
@@ -95,8 +97,8 @@ public sealed class TriggerDefinition
     /// <summary>The read-only connection tool the watch calls, e.g. "shop__get".</summary>
     [Id(16)] public string? SourceTool { get; set; }
     [Id(17)] public string SourceArgumentsJson { get; set; } = "{}";
-    /// <summary>"notify": the runtime alerts the user itself. "wake_agent": the target agent is
-    /// woken with only the matching items, when judgement is needed.</summary>
+    /// <summary>"notify": the runtime alerts the user itself. "run": a run of the pipeline is started
+    /// with only the matching items as its input, when judgement is needed.</summary>
     [Id(18)] public string WatchMode { get; set; } = "notify";
     [Id(19)] public string? MessageTemplate { get; set; }
     [Id(20)] public string Urgency { get; set; } = "warning";
@@ -113,7 +115,6 @@ public sealed record TriggerSpec
 {
     [Id(0)] public required TriggerKind Kind { get; init; }
     [Id(1)] public required string Name { get; init; }
-    [Id(2)] public string? TargetAgentId { get; init; }
     [Id(3)] public string Instruction { get; init; } = string.Empty;
     [Id(4)] public double? EveryMinutes { get; init; }
     [Id(5)] public string? Cron { get; init; }
@@ -133,7 +134,6 @@ public sealed record TriggerView
     [Id(0)] public required string TriggerId { get; init; }
     [Id(1)] public TriggerKind Kind { get; init; }
     [Id(2)] public required string Name { get; init; }
-    [Id(3)] public required string TargetAgentId { get; init; }
     [Id(4)] public string Instruction { get; init; } = string.Empty;
     [Id(5)] public int? IntervalSeconds { get; init; }
     [Id(6)] public string? Cron { get; init; }
@@ -174,12 +174,11 @@ public sealed record BudgetDecision
 [GenerateSerializer]
 public sealed record WorkspacePolicy
 {
-    [Id(0)] public required Contracts.ResourceBudget StandingBudget { get; init; }
+    /// <summary>What each stage's agent and each helper may spend in one run.</summary>
     [Id(1)] public required Contracts.ResourceBudget WorkerBudget { get; init; }
-    [Id(2)] public int StandingContextWindow { get; init; }
     [Id(3)] public int MaxAgents { get; init; }
     [Id(4)] public WorkspaceStatus Status { get; init; }
-    /// <summary>Agents one agent may spawn per outside request (a user message or an event).</summary>
+    /// <summary>Helpers one stage's agent may start in a run.</summary>
     [Id(5)] public int MaxSpawnsPerRequest { get; init; }
     /// <summary>What's left of the workspace's shared daily budget, told to agents when they spawn.</summary>
     [Id(6)] public long TokensLeftToday { get; init; }
@@ -204,6 +203,7 @@ public sealed class WorkspaceState
     [Id(3)] public string OwnerId { get; set; } = "local";
     [Id(4)] public WorkspaceStatus Status { get; set; } = WorkspaceStatus.Active;
     [Id(5)] public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>The coordinator agent of workspaces made before pipelines; cleared once migrated.</summary>
     [Id(6)] public string CoordinatorAgentId { get; set; } = string.Empty;
     [Id(7)] public List<ChatEntry> Conversation { get; set; } = [];
     [Id(8)] public long NextChatSeq { get; set; } = 1;
@@ -245,13 +245,64 @@ public sealed class WorkspaceState
     [Id(28)] public int NextApprovalNumber { get; set; } = 1;
     [Id(29)] public string TenantId { get; set; } = string.Empty;
 
-    /// <summary>Agents whose own daily budget ran out, and when each resumes: the user is told once
-    /// per pause.</summary>
-    [Id(30)] public Dictionary<string, DateTimeOffset> AgentPauseNotices { get; set; } = [];
+    // Id 30 held standing agents' budget pause notices; don't reuse it.
 
     /// <summary>The day the "80% of today's budget used" warning was last posted.</summary>
     [Id(31)] public string? BudgetWarningDay { get; set; }
     [Id(32)] public string? TemplateId { get; set; }
+
+    // ---- Pipeline ----
+    [Id(33)] public Pipelines.PipelineDefinition? Pipeline { get; set; }
+    /// <summary>Earlier versions, newest last (bounded), for undo.</summary>
+    [Id(34)] public List<Pipelines.PipelineDefinition> PipelineHistory { get; set; } = [];
+    /// <summary>Recent runs, newest last (bounded).</summary>
+    [Id(35)] public List<WorkspaceRunSummary> Runs { get; set; } = [];
+    [Id(36)] public List<string> ActiveRunIds { get; set; } = [];
+    /// <summary>Runs waiting for a free slot (the pipeline's runs-at-once limit), oldest first.</summary>
+    [Id(37)] public List<Pipelines.PipelineRunRequest> RunQueue { get; set; } = [];
+    [Id(38)] public int NextRunNumber { get; set; } = 1;
+    /// <summary>Runs refused because the queue was full.</summary>
+    [Id(39)] public long DroppedRuns { get; set; }
+}
+
+/// <summary>One run in a workspace's history.</summary>
+[GenerateSerializer]
+public sealed record WorkspaceRunSummary
+{
+    [Id(0)] public required string RunId { get; init; }
+    [Id(1)] public int Number { get; init; }
+    [Id(2)] public Pipelines.PipelineRunStatus Status { get; init; }
+    [Id(3)] public string Source { get; init; } = "manual";
+    [Id(4)] public string? TriggerName { get; init; }
+    [Id(5)] public string Input { get; init; } = string.Empty;
+    [Id(6)] public string? StartedBy { get; init; }
+    [Id(7)] public int PipelineVersion { get; init; }
+    [Id(8)] public DateTimeOffset CreatedAt { get; init; }
+    [Id(9)] public DateTimeOffset? CompletedAt { get; init; }
+    [Id(10)] public string? Summary { get; init; }
+}
+
+/// <summary>The outcome of changing a workspace's pipeline.</summary>
+[GenerateSerializer]
+public sealed record PipelineChangeResult
+{
+    [Id(0)] public bool Success { get; init; }
+    [Id(1)] public Pipelines.PipelineDefinition? Pipeline { get; init; }
+    [Id(2)] public List<string> Errors { get; init; } = [];
+    [Id(3)] public List<string> Changes { get; init; } = [];
+    /// <summary>True when the pipeline changed since the version the change was based on.</summary>
+    [Id(4)] public bool Conflict { get; init; }
+}
+
+/// <summary>The outcome of asking for a run.</summary>
+[GenerateSerializer]
+public sealed record RunStartResult
+{
+    [Id(0)] public bool Success { get; init; }
+    [Id(1)] public string? RunId { get; init; }
+    [Id(2)] public int Number { get; init; }
+    /// <summary>"started", "queued", or why it was refused.</summary>
+    [Id(3)] public string Message { get; init; } = string.Empty;
 }
 
 [GenerateSerializer]
@@ -262,7 +313,6 @@ public sealed record WorkspaceAgentView
     [Id(2)] public string Goal { get; init; } = string.Empty;
     [Id(3)] public string Status { get; init; } = string.Empty;
     [Id(4)] public string? ParentAgentId { get; init; }
-    [Id(5)] public bool Standing { get; init; }
     [Id(6)] public long TokensUsed { get; init; }
     [Id(7)] public decimal CostUsd { get; init; }
     [Id(8)] public string? CurrentTask { get; init; }
@@ -283,7 +333,6 @@ public sealed record WorkspaceSnapshot
     [Id(3)] public WorkspaceStatus Status { get; init; }
     [Id(4)] public DateTimeOffset CreatedAt { get; init; }
     [Id(5)] public DateTimeOffset UpdatedAt { get; init; }
-    [Id(6)] public string CoordinatorAgentId { get; init; } = string.Empty;
     [Id(7)] public List<ChatEntry> Conversation { get; init; } = [];
     [Id(8)] public List<TriggerView> Triggers { get; init; } = [];
     [Id(9)] public List<WorkspaceAgentView> Agents { get; init; } = [];
@@ -301,6 +350,10 @@ public sealed record WorkspaceSnapshot
     [Id(20)] public List<Safety.ApprovalRecord> Approvals { get; init; } = [];
     [Id(21)] public string TenantId { get; init; } = string.Empty;
     [Id(22)] public string? TemplateId { get; init; }
+    [Id(23)] public Pipelines.PipelineDefinition? Pipeline { get; init; }
+    /// <summary>Recent runs, newest first.</summary>
+    [Id(24)] public List<WorkspaceRunSummary> Runs { get; init; } = [];
+    [Id(25)] public int QueuedRuns { get; init; }
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

@@ -146,8 +146,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         (long Tokens, decimal Cost) Branch(string agentId)
         {
             var own = snapshots[agentId].Usage;
-            long tokens = own.TokensUsed + own.LifetimeTokens;
-            var cost = own.CostUsd + own.LifetimeCostUsd;
+            long tokens = own.TokensUsed;
+            var cost = own.CostUsd;
             foreach (var child in children[agentId])
             {
                 var (t, c) = Branch(child.AgentId);
@@ -420,6 +420,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             result_summary = task.ResultSummary,
             correlation_id = task.CorrelationId,
             source = task.Source,
+            // A run of a workspace's pipeline: it takes no follow-ups (a new run does).
+            kind = task.Source == "pipeline" ? "pipeline_run" : "task",
+            workspace_id = task.WorkspaceId,
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
             fork_after_step = task.ForkAfterStep,

@@ -1,143 +1,96 @@
 # Workspaces
 
-A workspace is a long-running environment where a user's agents live. The user describes what
-they want once, or keeps giving instructions over time. The agents set themselves up (standing
-monitors, schedules, webhooks) and keep working for as long as the workspace exists, surviving
-restarts and crashes (see [durability.md](durability.md)).
+A workspace is a reusable agent pipeline. You describe the job once ("research a market I name
+and write a fact-checked report"), a pipeline of agents is drafted from it, and you run it as
+often as you like: by hand with an input, or automatically from a schedule, a webhook or a watch.
+Change any stage in plain language ("add a security reviewer after Backend") or on the canvas;
+every change is a new version you can undo.
 
 ```mermaid
 flowchart LR
-    User((User)) -- "chat: commands" --> WS[WorkspaceGrain<br/>conversation, triggers, daily budget]
-    WS -- "durable message" --> Coord[Coordinator<br/>standing]
-    Coord -- "spawn_agent standing=true" --> Mon[Monitor<br/>standing]
-    Coord -- "spawn_agent" --> Worker[Worker<br/>one-shot]
-    Mon -- "create_schedule / create_webhook" --> WS
-    Shopify[(Shopify, Stripe,<br/>any service)] -- "POST /api/hooks/..." --> WS
-    WS -- "schedule / webhook event" --> Mon
-    Mon -- "notify_user" --> WS
-    WS -- "chat" --> User
+    You((You)) -- "describe a change" --> Editor[Pipeline editor<br/>LLM proposes, runtime validates]
+    Editor -- "new version" --> P[(Pipeline<br/>stages + edges)]
+    You -- "Run with an input" --> WS[WorkspaceGrain<br/>triggers, queue, budget, chat]
+    Hooks[(Schedules · webhooks · watches)] --> WS
+    WS -- "starts" --> Run[PipelineRunGrain<br/>one per run]
+    Run -- "starts when inputs are done" --> A[Stage agent A]
+    Run --> B[Stage agent B]
+    A -- "result" --> C[Stage agent C]
+    B -- "result" --> C
+    C -- "complete_task" --> Run
+    Run -- "result" --> WS
+    WS -- "chat + channels" --> You
 ```
 
 ## Pieces
 
 | Piece | What it is |
 |---|---|
-| **Coordinator** | A standing agent created with the workspace. It receives every user message and decides whether to do the work itself, hand it to an existing agent (`find_agents`, `send_message`), or spawn a new one. It never completes. |
-| **Standing agent** | Spawned with `spawn_agent standing=true`. It handles each wake-up (message, schedule, webhook, a child finishing), then calls `wait_for_events`. It sees a sliding window of recent history (`Workspaces:StandingContextWindow`) and keeps long-lived facts in `write_memory`. Its budget renews every 24 hours. |
-| **Worker** | Spawned with `standing=false`. It does one job, then calls `complete_task`, and its parent is notified automatically. |
-| **Schedule** | `create_schedule` with `every_minutes` or a 5-field UTC `cron` expression. Backed by an Orleans reminder, so it survives crashes and restarts. |
-| **Webhook** | `create_webhook` creates `POST /api/hooks/{workspace}/{trigger}/{secret}`. The secret URL is shown to the user, never to an agent. |
-| **Conversation** | The user's messages, agents' `notify_user` messages (with urgency `info`, `warning` or `urgent`), and system notices. Phase 3 connectors (Slack, SMS, email) will forward these. |
-| **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call. At 80% the chat warns once. When it's used up, the chat says so once, a banner with a **Raise budget** button stays in the header, and agents that need to run are paused: they show **paused · budget** with the time they resume. A paused agent keeps its turn open and re-checks every minute without calling the LLM, so it carries on by itself after midnight UTC or as soon as the budget is raised, including answering messages that arrived meanwhile. |
+| **Pipeline** | A graph of stages, versioned. Stages with no inputs start with the run; a stage starts once all its inputs have finished; stages nothing depends on give the run's result. Limits come from `Pipelines:*` (20 stages, 5 helpers per stage, 3 retries, 240 minutes per run). |
+| **Stage** | An agent with a name, role, instructions and tools (from capability words such as `research`, `http`, `shell`). Settings: helpers it may start (`max_helpers`), whether it may message the run's other stages, retries, what happens if it fails (`FailRun` or `Continue`), and an optional cost cap. Every stage can read and write the run's files and use the workspace's connections. |
+| **Run** | One execution of the pipeline with an input: a task typed by a person, a schedule's instruction, a webhook's payload, or a watch's matches. A run is an actor (`PipelineRunGrain`) and the root of its agent tree, and it is also a task: `/api/tasks/{run_id}` and the dashboard's task view show its agent graph, files, events, spend and result. |
+| **Trigger** | A schedule (`every_minutes` or a 5-field UTC `cron`), a webhook, or a watch. Schedules and webhooks start a run; a watch alerts you, or starts a run with only the newly matching items. Schedules are Orleans reminders, so they survive crashes and restarts. |
+| **Conversation** | Run notices and results, watch alerts, approvals and system notices. A message typed in the chat starts a run with it as the input; addressed to an agent of a run in progress, it reaches that agent instead. Results go to connected channels (SMS, Slack, email) by the pipeline's result urgency. |
+| **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call of every run. At 80% the chat warns once. When it's used up, the chat says so once, a banner with a **Raise budget** button stays in the header, and agents that need to run are paused until midnight UTC or until the budget is raised. |
 
-## Webhooks
+## How a run works
 
-- **Authentication:** the secret in the URL, compared in constant time. A wrong secret and an
-  unknown trigger both return `404`, so ids can't be probed.
-- **Acknowledgement:** `202 Accepted` is returned only after the event is durably in the target
-  agent's mailbox.
-- **Deduplication:** senders retry, so redeliveries are dropped. The delivery id is taken from
-  `Idempotency-Key`, `X-Shopify-Webhook-Id`, `X-GitHub-Delivery`, `Webhook-Id`, `X-Request-Id`
-  or `X-Delivery-Id`, or failing that the body within the same minute. A duplicate returns
-  `200 {"status":"duplicate"}`.
-- **Rate limiting:** deliveries beyond `Workspaces:MaxWebhookEventsPerMinute` per trigger get
-  `429` and are counted as dropped. A chatty integration can't turn into an LLM bill.
-- **Payload handling:** payloads are truncated to `Workspaces:MaxWebhookPayloadChars` and
-  labelled as untrusted external data for the agent. Bodies over `MaxWebhookBodyBytes` get `413`.
-- **Paused or archived workspaces** return `409`.
-- **Dead targets:** if a trigger's agent is no longer running, the event goes to the coordinator
-  with a note, so nothing fires into the void.
+1. The workspace checks the pipeline's runs-at-once limit (`max_concurrent_runs`). With no free
+   slot, or while the workspace is paused, the run waits in a queue (a run and its task row exist
+   from the start, so callers can follow it). Queued runs start on the pipeline as it is then.
+2. The run starts every stage whose inputs are done. Each stage's agent gets its instructions as
+   its goal, plus the run's input, the summaries and files of its inputs, and who gets its result.
+   Independent stages run at the same time.
+3. A stage finishes with `complete_task`. Its summary and files are handed to the stages that take
+   it as input. A stage that fails (or stops without reporting) is retried with a note about what
+   went wrong; after its retries, `FailRun` stops the run and skips what's left, while `Continue`
+   lets later stages run, told it failed.
+4. When every stage has finished, failed or been skipped, the run's result is its output stages'
+   summaries. It's recorded on the run and the task, posted in the chat, and forwarded to
+   channels. The run times out after `max_run_minutes`.
 
-## Token efficiency
+Pausing a run (or the workspace) pauses its agents and starts no new stages; resuming carries on.
+Cancelling stops every agent of the run and skips its unfinished stages.
 
-Everything that runs indefinitely is designed to cost nothing while nothing is happening:
-- **No polling loops:** agents only run when woken by an event.
-- **Flat cost per wake-up:** standing agents see a bounded window of history, however long they've
-  been running.
-- **Prompt rules for workspace agents:**
-  - prefer webhooks over polling;
-  - pick the longest schedule interval that works;
-  - reuse existing agents and triggers instead of creating new ones;
-  - never send "nothing happened" notifications.
-- **Hard caps:** a daily workspace budget, and a daily budget for each standing agent, enforced by
-  the runtime. The coordinator has no per-agent cap: it's how the user reaches the workspace, so only
-  the workspace budget limits it. A standing agent that uses up its own budget pauses until it renews,
-  and the chat says so once, with the time it resumes.
-- **Resuming is cheap:** resuming a paused workspace unpauses agents without forcing an LLM call
-  for each one.
+## Editing a pipeline
 
-Phase 4 adds compiled watchers: rules the LLM writes once, which the runtime evaluates without an
-LLM call. For example, "alert when stock < 10" would cost zero tokens per check.
+- **In plain language:** "Describe a change" sends the request and the current pipeline to one
+  model call (`PipelineDesignPrompt`), which proposes edits: `add_stage` (after a stage, before
+  one, or with explicit inputs for a parallel branch), `update_stage`, `remove_stage`, `connect`,
+  `disconnect`. The runtime applies and validates them (`PipelineEditor`, `PipelineValidator`): no
+  loops, inputs that exist, known capabilities, limits. The canvas previews the result (new stages
+  green, changed amber, removed struck through) and nothing changes until you apply it.
+- **On the canvas:** a + on any connection inserts a stage there, + before an entry stage or after
+  an output stage adds one at the ends, × removes a stage (its inputs are joined to what it fed),
+  and clicking a stage edits its settings.
+- **Versions:** every applied change is a new version; an edit based on an older version is
+  refused as a conflict. **History** restores any kept version (as a new version).
+- **A new workspace** is drafted from its description by the same editor. If the model can't
+  propose a valid pipeline, the workspace starts with one stage that does its purpose.
 
-## The workspace screen
+## Inside a stage
 
-The middle of the screen shows the team working, like the simulation map. You sit at the top, then
-the coordinator, then the agents it started, joined by dashed lines. For about 20 seconds after
-something happens:
-- messages between agents animate as coloured arrows (task, done, question and answer, started);
-- chat goes between you and the coordinator;
-- speech bubbles show what each agent last said or did, such as planning, saving a file or searching.
-
-Workers that finished over 30 minutes ago are hidden behind a "Show earlier finished agents"
-button. The chat is a floating widget in the corner: minimise it to watch, and it counts replies and
-pending approvals while minimised. The side panel keeps the Agents, Files, Skills & knowledge,
-Triggers, Integrations, Safety and Events tabs. **Skills & knowledge** opens the workspace's own skills
-and knowledge, which only its agents use ([skills.md](skills.md), [memory.md](memory.md#organization-and-workspace-knowledge)).
-
-## Files
-
-Agents save deliverables (reports, documents, data, code) with `filesystem_write`. The prompt asks
-them to use a clear name and to mention the file in `notify_user`. Files live in the workspace's own
-sandbox folder and appear in the **Files** tab, which reloads whenever an agent saves one. Download
-them one at a time or all as a zip. Each file is labelled by its author's state:
-- **final:** the worker that wrote it has finished;
-- **in progress:** that worker is still running, so the file may change;
-- **unfinished:** that worker failed or was stopped;
-- **saved:** a standing agent or the coordinator wrote it. These never finish, so there's no "final" moment.
-
-Only files inside the workspace's sandbox, for the caller's organization, are ever served.
-
-## How many agents a request gets
-
-Each agent resends its whole prompt on every step, so an agent that isn't needed costs more than
-the work it does. The model decides whether to spawn, and the runtime limits the damage when it
-decides badly.
-
-**Prompts (the model's side).** Agents are told to do the work themselves by default. They spawn
-only for a part that is substantial and can run in parallel, that needs tools or expertise they
-lack, or that won't fit in their budget. A sequence of steps is one agent's job. The coordinator
-handles most requests (a question, a lookup, a short report) alone and uses a standing agent only
-for ongoing work.
-
-**Planning (`plan_request`).** Before a request with more than a couple of steps, an agent lists its
-parts. For each part it gives a size (small, medium, large) and whether it needs another part's result
-first. The model is good at that breakdown, and the decision that follows is a fixed rule applied by
-the runtime (`WorkPlanner`):
-- **split:** two or more parts are medium or large and independent, so one worker per part (up to the
-  per-request cap; extra parts are grouped). The agent does the small or dependent parts itself and
-  combines the workers' results;
-- **delegate:** the only substantial independent part is large, so it goes to one worker. That keeps the
-  coordinator free to answer the user;
-- **self:** otherwise the agent does everything itself.
-
-The plan's worker count becomes the agent's worker allowance for that request. A worker spawn with
-no plan, or beyond the plan, is rejected. Standing agents for ongoing work don't need a plan. This
-is how "research the governments of Togo, Nigeria and Ivory Coast" becomes three parallel workers
-without the user asking for parallel work.
+Stages are autonomous within their limits:
+- they use their tools and the workspace's connections, under the workspace's safety policy;
+- with `max_helpers` above 0, they can start helpers for big parallel parts, through
+  `plan_request`: the model lists the parts, and a fixed rule (`WorkPlanner`) decides whether
+  splitting pays off and how many helpers it needs, never more than the stage allows;
+- with `may_message_stages`, they can ask a stage working at the same time a quick question
+  (`find_agents`, `send_message`).
 
 **Runtime rules (enforced whatever the model says):**
 
 | Rule | Effect |
 |---|---|
-| `spawn_agent` requires `why_not_myself` | A spawn without a stated reason is rejected. The reason appears in the `AgentSpawnRequested` and `AgentSpawned` events, so the event stream shows why each agent exists. |
-| At most `Workspaces:MaxSpawnsPerRequest` (default 3) spawns per request | Counted per agent. The count resets on a new user message or environment event (schedule, webhook), not when a child reports back, so a chain of replies can't keep reopening it. |
-| Workers can't spawn | One-shot workers get no `spawn_agent` tool and a `MaxChildren` of 0. Standing agents can still spawn workers. |
-| The spawn result states the cost | For example: "This worker may spend up to 150,000 tokens / $0.75, paid from the workspace's shared daily budget (412,000 tokens / $1.64 left today)." |
+| `spawn_agent` requires `why_not_myself` | A spawn without a stated reason is rejected. The reason appears in the `AgentSpawnRequested` and `AgentSpawned` events. |
+| Helpers come from a plan | A spawn with no plan, or beyond it, is rejected. The plan's helper count is capped by the stage's `max_helpers`. |
+| Helpers can't spawn | Helpers get no `spawn_agent` tool and a `MaxChildren` of 0. |
+| The spawn result states the cost | For example: "This helper may spend up to 150,000 tokens / $0.75, paid from the workspace's shared daily budget (412,000 tokens / $1.64 left today)." |
+| A stage that stops without reporting fails | Nothing else would ever wake it, so waiting would stall the run. |
 
 ## Running out of budget
 
-An agent with a lifetime budget (a worker, or any task agent) doesn't fail when its budget runs
-out. `BudgetGuard` checks before every LLM call:
+An agent doesn't fail when its own budget runs out. `BudgetGuard` checks before every LLM call:
 
 1. **Warning.** Once 75% (`RuntimeLimits:WrapUpAtFraction`) of any budget is spent (tokens, tool
    calls, cost or time), or only a few calls' worth of tokens remain, the agent is told to finish
@@ -149,58 +102,113 @@ out. `BudgetGuard` checks before every LLM call:
    the runtime completes it as `partial` with its latest notes and the unfinished goal as
    remaining work.
 
-Either way the parent receives a completion notice with the remaining work and a suggestion to do
-the rest itself or give just that rest to one new agent. A partial result sends the leftover work
-back up the tree.
+A partial result is handed on like any other, marked partial, so later stages work with what
+there is.
 
-Time works the same way. An agent parked on a reply that never comes runs no steps of its own, so
-a deadline reminder wakes it when its time budget ends and it takes its final step. Standing
-agents are unaffected: their budgets renew daily and they pause instead.
+## Webhooks
 
-`SpawnEfficiencyEval` measures the model's side against a real model. It runs only when
-`EVAL_LLM_PROVIDER` and `EVAL_LLM_MODEL` are set; see the class comment.
+- **Authentication:** the secret in the URL, compared in constant time. A wrong secret and an
+  unknown trigger both return `404`, so ids can't be probed.
+- **Acknowledgement:** `202 Accepted` once the run is started or queued.
+- **Deduplication:** senders retry, so redeliveries are dropped. The delivery id is taken from
+  `Idempotency-Key`, `X-Shopify-Webhook-Id`, `X-GitHub-Delivery`, `Webhook-Id`, `X-Request-Id`
+  or `X-Delivery-Id`, or failing that the body within the same minute. A duplicate returns
+  `200 {"status":"duplicate"}`. The run id is derived from the delivery, so a retried fire after a
+  crash can't start a second run.
+- **Rate limiting:** deliveries beyond `Workspaces:MaxWebhookEventsPerMinute` per trigger get
+  `429` and are counted as dropped.
+- **Payload handling:** payloads are truncated to `Workspaces:MaxWebhookPayloadChars` and
+  labelled as untrusted external data in the run's input. Bodies over `MaxWebhookBodyBytes` get `413`.
+- **Paused or archived workspaces** return `409`.
+
+## Token efficiency
+
+- **No polling loops:** nothing runs between runs; a schedule or webhook starts one.
+- **Watches** check a connected service in code, at zero tokens per check, and only alert or start
+  a run for newly matching items (see [efficiency.md](efficiency.md)).
+- **Stages work alone by default.** Helpers cost a model call per step each, so a stage starts them
+  only through a plan, and only up to its limit.
+- **Hard caps:** the workspace's daily budget, each stage's cost cap, and the run's time limit.
+
+## Files
+
+Agents save deliverables with `filesystem_write`. Each run has its own folder, so later stages of
+the run can read what earlier ones saved, and runs never overwrite each other. The **Files** tab
+lists every run's files under `run-<number>/`; download them one at a time or all as a zip. A file
+is marked **in progress** while its author is still running, **unfinished** if it failed, and
+**final** otherwise.
+
+## The workspace screen
+
+Every section is resizable: drag a divider (or focus it and use the arrow keys; double-click
+resets it). Sizes are remembered per browser.
+
+- **Left:** your workspaces.
+- **Center top:** the pipeline canvas, with "Describe a change", **History** and **Run settings**
+  (time limit, runs at once, result urgency). With a run selected, the canvas shows that run: each
+  stage's status, a pulsing marker on stages working now, and its result when clicked.
+- **Center bottom:** **Run** with an input, and the runs, newest first, with pause, resume and
+  cancel for runs in progress and a link to each run's full page.
+- **Right:** Chat, Agents (of runs in progress), Files, Skills & knowledge, Triggers (schedules,
+  webhooks, watches), Integrations, Safety and Events. Clicking an agent opens its details beside
+  the canvas.
+
+## Workspaces made before pipelines
+
+Earlier workspaces ran on a coordinator agent and standing agents. On first use they are converted:
+they get a one-stage pipeline that does their purpose, their schedules and webhooks start runs of
+it, and the old agents are retired. Their chat, files, connections, safety policy and budget stay.
 
 ## API
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?}` |
+| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?}`; without `pipeline`, one is drafted from `goal` |
 | `GET` | `/api/workspaces` | List |
-| `GET` | `/api/workspaces/{id}` | Snapshot: conversation, agents, triggers, budget |
-| `POST` | `/api/workspaces/{id}/messages` | `{text, to_agent_id?, client_message_id?}`; retries with the same `client_message_id` deliver once |
-| `GET` / `POST` | `/api/workspaces/{id}/triggers` | `{kind: schedule\|webhook, name, instruction, target_agent_id?, every_minutes?, cron?}`; a created webhook's response includes its secret `webhook_path` |
+| `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of runs in progress, triggers, budget |
+| `GET` | `/api/workspaces/{id}/pipeline` | The pipeline |
+| `PUT` | `/api/workspaces/{id}/pipeline` | `{pipeline, base_version, note?}`: replace it (409 if it changed since `base_version`) |
+| `POST` | `/api/workspaces/{id}/pipeline/propose` | `{request}`: the editor's proposal (`ops`, `summary`, `changes`, `errors`, `preview`); changes nothing |
+| `POST` | `/api/workspaces/{id}/pipeline/edits` | `{ops, base_version, note?}`: apply edits |
+| `GET` | `/api/workspaces/{id}/pipeline/history` | Earlier versions, newest first |
+| `POST` | `/api/workspaces/{id}/pipeline/restore` | `{version}` |
+| `POST` | `/api/workspaces/{id}/runs` | `{input}`: start (or queue) a run; follow it at `/api/tasks/{run_id}` |
+| `GET` | `/api/workspaces/{id}/runs` | Recent runs |
+| `GET` | `/api/workspaces/{id}/runs/{runId}` | A run with each stage's status, attempts, result and agent |
+| `POST` | `/api/workspaces/{id}/runs/{runId}/pause` \| `resume` \| `cancel` | |
+| `POST` | `/api/workspaces/{id}/messages` | `{text, to_agent_id?, client_message_id?}`: starts a run (or reaches an agent of a run in progress); retries with the same `client_message_id` act once |
+| `GET` / `POST` | `/api/workspaces/{id}/triggers` | `{kind: schedule\|webhook\|watch, name, instruction, every_minutes?, cron?}`, plus for a watch `source_tool, items_path, conditions, key_field, display_fields, mode (notify\|run), message, urgency`; a created webhook's response includes its secret `webhook_path`, a watch's a `dry_run` |
 | `DELETE` | `/api/workspaces/{id}/triggers/{triggerId}` | |
 | `PUT` | `/api/workspaces/{id}/budget` | `{daily_token_limit?, daily_cost_limit_usd?}` |
 | `POST` | `/api/workspaces/{id}/pause` \| `resume` \| `archive` | |
-| `GET` | `/api/workspaces/{id}/files` | Files agents saved with `filesystem_write`: one entry per file (its latest write), newest first, with author, size and version count |
+| `GET` | `/api/workspaces/{id}/files` | Every run's files (under `run-<number>/`), one entry per file, newest first |
 | `GET` | `/api/workspaces/{id}/files/{artifactId}/content` | Download one file |
 | `GET` | `/api/workspaces/{id}/files.zip` | Every file as one zip, keeping folders |
 | `POST` | `/api/hooks/{workspaceId}/{triggerId}/{secret}` | Inbound webhook (public) |
 
-The live event stream is `/ws/events?taskId={workspaceId}`.
+MCP's `run_goal` and A2A take a `workspace`: the goal becomes the input of a run, and the run's id is
+the task id they report. The live event stream is `/ws/events?taskId={workspaceId}` (pipeline
+changes and run progress) or `?taskId={runId}` (one run's agents).
 
 ## Tests
 
-`WorkspaceTests` checks, with a scripted LLM:
-- a goal becomes a standing agent whose schedule reports each time it fires;
-- a user command sent twice with the same client id is delivered once;
-- webhooks: the wrong secret is rejected, a redelivery is deduplicated, a burst is rate-limited,
-  and the secret never appears in anything an agent sees;
+`PipelineEditorTests` (unit) covers the rules and edits: adding before, after and in parallel,
+removing with the neighbours joined up, loops and limits refused. `PipelineTests` checks, with a
+scripted LLM:
+- stages run in order, each with its inputs' results, and the output is the run's result;
+- parallel branches run at the same time and the stage merging them waits for both;
+- a failing stage is retried, then fails the run and later stages are skipped, or with
+  `Continue` later stages run, told it failed;
+- webhooks start one run per delivery: the wrong secret is rejected, a redelivery is deduplicated,
+  a burst is rate-limited, and the secret never appears in anything an agent sees;
+- a schedule runs the pipeline and keeps firing after the silo is killed;
 - the daily budget stops LLM calls and posts one notice;
-- pause stops triggers and resume starts them;
-- schedules keep firing after the silo is killed.
+- runs beyond the limit queue, pause holds them, resume starts them;
+- a chat message starts one run even when the client retries;
+- edits make new versions, stale and invalid edits are refused, and a version can be restored.
 
-`SpawnDisciplineTests` checks that one request starts at most three agents (and the next request
-gets a fresh allowance), that a spawn without a reason is rejected, and that workers can't spawn. It
-also checks that a worker needs a plan, and that a plan of small parts allows none. `WorkPlannerTests`
-covers the split, delegate and self rule.
-
-`BudgetWrapUpTests` checks that an agent running out of tokens is warned, then reports a partial
-result at its final step. It also covers an agent that ignores its final step (the runtime reports
-for it), an agent out of tool calls that can still report, and an agent parked past its deadline
-that is woken to report. `BudgetGuardTests` covers the thresholds.
-
-`ArtifactFilesTests` checks that each file is listed once, as its latest write; that files outside
-the sandbox or already deleted are never offered; and that the zip keeps the folder layout.
-
-`CronScheduleTests` covers cron parsing.
+`SpawnDisciplineTests` checks a stage's helpers: no more than allowed, a reason and a plan needed,
+helpers can't spawn, a finished helper can't be messaged, and a stage without helpers isn't
+offered spawning. `WorkPlannerTests` covers the split, delegate and self rule. `BudgetWrapUpTests`
+checks the wrap-up above. `ArtifactFilesTests` checks file listing and zips. `CronScheduleTests`
+covers cron parsing.

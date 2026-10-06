@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AgentRuntime.Api.Platform;
 using AgentRuntime.Infrastructure.Persistence;
+using AgentRuntime.Pipelines;
 using AgentRuntime.Workspaces;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,19 +9,26 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentRuntime.Api.Controllers;
 
 /// <summary>
-/// Workspaces: long-running environments where a user's agents live, take commands at any time,
-/// and are woken by schedules and webhooks (docs/workspaces.md).
+/// Workspaces: reusable agent pipelines, configured in plain language or on the canvas, run by
+/// people and by triggers (schedules, webhooks, watches). See docs/workspaces.md.
 /// </summary>
 [ApiController]
 [Route("api/workspaces")]
 [AgentRuntime.Api.Platform.WorkspaceAccess]
 public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db, AgentRuntime.Api.Platform.TenantAccess access,
-    Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions) : ControllerBase
+    Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions, PipelineDesignService designer,
+    Microsoft.Extensions.Options.IOptions<PipelineOptions> pipelineOptions) : ControllerBase
 {
-    public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd);
+    /// <summary>Without a pipeline, one is drafted from the goal by the pipeline editor.</summary>
+    public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd, PipelineDefinition? Pipeline = null);
+    public sealed record PipelineBody(PipelineDefinition Pipeline, int BaseVersion, string? Note);
+    public sealed record ProposeBody(string Request);
+    public sealed record EditsBody(List<PipelineEditOp> Ops, int BaseVersion, string? Note);
+    public sealed record RestoreBody(int Version);
+    public sealed record RunBody(string Input);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
     public sealed record WatchConditionBody(string Field, string Op, string? Value);
-    public sealed record TriggerBody(string Kind, string Name, string? Instruction, string? TargetAgentId, double? EveryMinutes, string? Cron,
+    public sealed record TriggerBody(string Kind, string Name, string? Instruction, double? EveryMinutes, string? Cron,
         // Watches (kind "watch"): a read-only connection tool, where the items are, and the rule.
         string? SourceTool = null, JsonElement? SourceArguments = null, string? ItemsPath = null, List<WatchConditionBody>? Conditions = null,
         string? KeyField = null, List<string>? DisplayFields = null, string? Mode = null, string? Message = null, string? Urgency = null);
@@ -43,6 +51,21 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             return StatusCode(402, new { error = $"The {plan.Name} plan allows {plan.MaxWorkspaces} active workspaces. Archive one or upgrade." });
         }
 
+        // Configured by natural language: the goal describes what the workspace is for, and the
+        // editor drafts the pipeline from it. If it can't, the workspace starts with one stage.
+        var pipeline = body.Pipeline;
+        string? draftNote = null;
+        if (pipeline is null)
+        {
+            var draft = await designer.ProposeAsync(caller.TenantId, null, body.Goal, null, body.Goal, ct);
+            pipeline = draft.Valid ? draft.Preview : null;
+            draftNote = draft.Valid ? draft.Summary : string.Join(" ", draft.Errors);
+        }
+        else if (PipelineValidator.Validate(pipeline, pipelineOptions.Value) is { Count: > 0 } errors)
+        {
+            return BadRequest(new { error = "The pipeline can't run.", errors });
+        }
+
         var id = WorkspaceIds.New();
         await Workspace(id).Create(new WorkspaceCreationRequest
         {
@@ -51,9 +74,11 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             DailyTokenLimit = body.DailyTokenLimit,
             DailyCostLimitUsd = body.DailyCostLimitUsd,
             TenantId = caller.TenantId,
-            OwnerId = caller.ActorId
+            OwnerId = caller.ActorId,
+            CreatedBy = caller.ActorId,
+            Pipeline = pipeline
         });
-        return Ok(new { workspace_id = id });
+        return Ok(new { workspace_id = id, pipeline = await Workspace(id).GetPipeline(), draft = draftNote });
     }
 
     [HttpGet]
@@ -92,12 +117,94 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         if (!WorkspaceIds.IsWorkspace(id) || await Workspace(id).GetSnapshot() is null) return NotFound();
         try
         {
-            return Ok(await Workspace(id).PostUserMessage(body.Text, body.ToAgentId, body.ClientMessageId));
+            return Ok(await Workspace(id).PostUserMessage(body.Text, body.ToAgentId, body.ClientMessageId, HttpContext.Caller().ActorId));
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             return BadRequest(new { error = ex.Message });
         }
+    }
+
+    // ---- Pipeline -------------------------------------------------------------------
+
+    [HttpGet("{id}/pipeline")]
+    public async Task<IActionResult> Pipeline(string id) =>
+        WorkspaceIds.IsWorkspace(id) && await Workspace(id).GetPipeline() is { } pipeline ? Ok(pipeline) : NotFound();
+
+    [HttpGet("{id}/pipeline/history")]
+    public async Task<IActionResult> PipelineHistory(string id) =>
+        WorkspaceIds.IsWorkspace(id) ? Ok(await Workspace(id).GetPipelineHistory()) : NotFound();
+
+    /// <summary>Replaces the pipeline (the canvas's save). 409 if it changed since base_version.</summary>
+    [HttpPut("{id}/pipeline")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> SavePipeline(string id, [FromBody] PipelineBody body) =>
+        ChangeResult(await Workspace(id).SetPipeline(body.Pipeline, body.BaseVersion, HttpContext.Caller().ActorId, body.Note ?? string.Empty));
+
+    /// <summary>Asks the editor for the changes a plain-language request means. Changes nothing:
+    /// apply the returned ops with POST pipeline/edits.</summary>
+    [HttpPost("{id}/pipeline/propose")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Propose(string id, [FromBody] ProposeBody body, CancellationToken ct)
+    {
+        var snapshot = await Workspace(id).GetSnapshot();
+        if (snapshot is null) return NotFound();
+        return Ok(await designer.ProposeAsync(access.TenantId, id, snapshot.Goal, snapshot.Pipeline, body.Request, ct));
+    }
+
+    /// <summary>Applies edits (a proposal's, or the canvas's) to the pipeline at base_version.</summary>
+    [HttpPost("{id}/pipeline/edits")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> ApplyEdits(string id, [FromBody] EditsBody body) =>
+        ChangeResult(await Workspace(id).ApplyPipelineEdits(body.Ops, body.BaseVersion, HttpContext.Caller().ActorId, body.Note));
+
+    [HttpPost("{id}/pipeline/restore")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Restore(string id, [FromBody] RestoreBody body) =>
+        ChangeResult(await Workspace(id).RestorePipelineVersion(body.Version, HttpContext.Caller().ActorId));
+
+    private IActionResult ChangeResult(PipelineChangeResult result) =>
+        result.Success ? Ok(result) : result.Conflict ? Conflict(result) : BadRequest(result);
+
+    // ---- Runs -------------------------------------------------------------------------
+
+    /// <summary>Runs the pipeline with an input. The run is a task: follow it at /api/tasks/{run_id}.</summary>
+    [HttpPost("{id}/runs")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> StartRun(string id, [FromBody] RunBody body)
+    {
+        var result = await Workspace(id).StartRun(body.Input, HttpContext.Caller().ActorId);
+        return result.Success ? Ok(result) : BadRequest(new { error = result.Message });
+    }
+
+    [HttpGet("{id}/runs")]
+    public async Task<IActionResult> Runs(string id) =>
+        await Workspace(id).GetSnapshot() is { } snapshot ? Ok(snapshot.Runs) : NotFound();
+
+    /// <summary>A run with each stage's status, result and agent.</summary>
+    [HttpGet("{id}/runs/{runId}")]
+    public async Task<IActionResult> Run(string id, string runId) =>
+        await RunOf(id, runId) is { } run ? Ok(await run.GetView()) : NotFound();
+
+    [HttpPost("{id}/runs/{runId}/{command:regex(^(pause|resume|cancel)$)}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> ControlRun(string id, string runId, string command)
+    {
+        if (await RunOf(id, runId) is not { } run) return NotFound();
+        await (command switch
+        {
+            "pause" => run.Pause(),
+            "resume" => run.Resume(),
+            _ => run.Cancel("cancelled by a person")
+        });
+        return Ok(await run.GetView());
+    }
+
+    private async Task<IPipelineRunGrain?> RunOf(string workspaceId, string runId)
+    {
+        if (!PipelineIds.IsRun(runId)) return null;
+        var run = grains.GetGrain<IPipelineRunGrain>(runId);
+        return (await run.GetView())?.WorkspaceId == workspaceId ? run : null;
     }
 
     [HttpGet("{id}/triggers")]
@@ -118,7 +225,6 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             Kind = kind,
             Name = body.Name,
             Instruction = body.Instruction ?? string.Empty,
-            TargetAgentId = body.TargetAgentId,
             EveryMinutes = body.EveryMinutes,
             Cron = body.Cron,
             SourceTool = body.SourceTool,
@@ -175,10 +281,11 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     // ---- Files: what the workspace's agents saved with filesystem_write ----
 
     /// <summary>One entry per file the workspace's agents wrote, newest first, with who wrote it.</summary>
+    /// <summary>The workspace's files: its own and every run's (under run-&lt;number&gt;/).</summary>
     [HttpGet("{id}/files")]
     public async Task<IActionResult> Files(string id, CancellationToken ct)
     {
-        var files = await AgentRuntime.Api.Platform.ArtifactFiles.ListAsync(db, toolsOptions.Value, id, access.TenantId, ct);
+        var files = await WorkspaceFilesAsync(id, ct);
         return Ok(files.Select(f => new
         {
             artifact_id = f.Latest.ArtifactId,
@@ -195,15 +302,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpGet("{id}/files/{artifactId}/content")]
     public async Task<IActionResult> FileContent(string id, string artifactId, CancellationToken ct)
     {
-        var artifact = await db.Artifacts.AsNoTracking()
-            .FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId && a.TenantId == access.TenantId, ct);
-        if (artifact is null ||
-            !AgentRuntime.Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(toolsOptions.Value, id, artifact.Location) ||
-            !System.IO.File.Exists(artifact.Location))
-        {
-            return NotFound();
-        }
-
+        if (await FileOfAsync(id, artifactId, ct) is not { } artifact) return NotFound();
         return PhysicalFile(Path.GetFullPath(artifact.Location),
             AgentRuntime.Infrastructure.Documents.DocumentFormats.ContentTypeOf(artifact.Location), Path.GetFileName(artifact.Location));
     }
@@ -212,32 +311,41 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpGet("{id}/files/{artifactId}/preview")]
     public async Task<IActionResult> FilePreview(string id, string artifactId, CancellationToken ct)
     {
-        var artifact = await db.Artifacts.AsNoTracking()
-            .FirstOrDefaultAsync(a => a.TaskId == id && a.ArtifactId == artifactId && a.TenantId == access.TenantId, ct);
-        var opts = toolsOptions.Value;
-        if (artifact is null ||
-            !AgentRuntime.Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(opts, id, artifact.Location) ||
-            !System.IO.File.Exists(artifact.Location))
-        {
-            return NotFound();
-        }
-
-        var relative = Path.GetRelativePath(AgentRuntime.Infrastructure.Tools.WorkspacePath.TaskRoot(opts, id), artifact.Location)
+        if (await FileOfAsync(id, artifactId, ct) is not { } artifact) return NotFound();
+        var relative = Path.GetRelativePath(AgentRuntime.Infrastructure.Tools.WorkspacePath.TaskRoot(toolsOptions.Value, artifact.TaskId), artifact.Location)
             .Replace(Path.DirectorySeparatorChar, '/');
         return Ok(await AgentRuntime.Api.Platform.FilePreviews.BuildAsync(artifact.Location, relative, artifact.CreatedByAgent, artifact.CreatedAt, ct));
     }
 
-    /// <summary>Every file as one zip, keeping the folders agents used.</summary>
+    /// <summary>Every file as one zip, keeping the folders agents used (each run's under run-&lt;number&gt;/).</summary>
     [HttpGet("{id}/files.zip")]
     public async Task<IActionResult> FilesZip(string id, CancellationToken ct)
     {
-        var opts = toolsOptions.Value;
-        var files = await AgentRuntime.Api.Platform.ArtifactFiles.ListAsync(db, opts, id, access.TenantId, ct);
+        var files = await WorkspaceFilesAsync(id, ct);
         if (files.Count == 0) return NotFound(new { error = "This workspace has no files yet." });
 
-        var zip = await AgentRuntime.Api.Platform.ArtifactFiles.ZipAsync(files.Select(f => f.Latest.Location),
-            AgentRuntime.Infrastructure.Tools.WorkspacePath.TaskRoot(opts, id), ct);
+        var zip = await AgentRuntime.Api.Platform.ArtifactFiles.ZipAsync(files.Select(f => (f.Latest.Location, f.RelativePath)), ct);
         return File(zip, "application/zip", $"{id}-files.zip");
+    }
+
+    private async Task<List<AgentRuntime.Api.Platform.ArtifactFiles.FileView>> WorkspaceFilesAsync(string id, CancellationToken ct)
+    {
+        var runs = (await Workspace(id).GetSnapshot())?.Runs ?? [];
+        return await AgentRuntime.Api.Platform.ArtifactFiles.ListForWorkspaceAsync(db, toolsOptions.Value, id,
+            runs.ToDictionary(r => r.RunId, r => r.Number), access.TenantId, ct);
+    }
+
+    /// <summary>A recorded file of the workspace or one of its runs, still on disk inside its sandbox.</summary>
+    private async Task<ArtifactRecord?> FileOfAsync(string id, string artifactId, CancellationToken ct)
+    {
+        var scopes = await AgentRuntime.Api.Platform.ArtifactFiles.ScopesOfWorkspaceAsync(db, id, access.TenantId, ct);
+        var artifact = await db.Artifacts.AsNoTracking()
+            .FirstOrDefaultAsync(a => scopes.Contains(a.TaskId) && a.ArtifactId == artifactId && a.TenantId == access.TenantId, ct);
+        return artifact is not null &&
+               AgentRuntime.Infrastructure.Tools.WorkspacePath.IsInsideTaskRoot(toolsOptions.Value, artifact.TaskId, artifact.Location) &&
+               System.IO.File.Exists(artifact.Location)
+            ? artifact
+            : null;
     }
 }
 

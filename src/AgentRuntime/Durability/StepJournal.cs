@@ -98,7 +98,7 @@ public static class ReplayPolicy
     private static readonly HashSet<string> Rerun = new(StringComparer.OrdinalIgnoreCase)
     {
         "spawn_agent", "send_message", "find_agents", "get_agent_status", "list_children", "complete_task",
-        "read_memory", "plan_request", "wait_for_events", "end_turn",
+        "read_memory", "plan_request", "end_turn",
         "filesystem_read", "filesystem_write", "filesystem_list", "create_document"
     };
 

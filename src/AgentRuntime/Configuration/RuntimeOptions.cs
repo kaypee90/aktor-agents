@@ -78,9 +78,7 @@ public sealed class TaskBudgetCeilingOptions
         MaxDurationSeconds = Math.Clamp(requested.MaxDurationSeconds, 0, MaxDurationSeconds),
         MaxChildren = Math.Clamp(requested.MaxChildren, 0, MaxChildren),
         MaxToolCalls = Math.Clamp(requested.MaxToolCalls, 0, MaxToolCalls),
-        MaxCostUsd = Math.Clamp(requested.MaxCostUsd, 0, MaxCostUsd),
-        // A task's budget is for its lifetime; renewing budgets belong to workspaces.
-        PeriodHours = 0
+        MaxCostUsd = Math.Clamp(requested.MaxCostUsd, 0, MaxCostUsd)
     };
 }
 

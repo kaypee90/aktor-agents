@@ -27,8 +27,8 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
     }));
 
     /// <summary>
-    /// Creates a workspace from a template: its goal, its safety policy (in force before the
-    /// coordinator's first step), its webhooks, and, with use_demo_system, the simulated
+    /// Creates a workspace from a template: its goal, its pipeline, its safety policy (in force
+    /// before the first run), its webhooks, and, with use_demo_system, the simulated
     /// connections it needs to be tried right away. Returns the webhook URLs (they hold a secret).
     /// </summary>
     [HttpPost("api/workspaces/from-template")]
@@ -56,7 +56,9 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
             TenantId = caller.TenantId,
             OwnerId = caller.ActorId,
             TemplateId = template.Id,
-            SafetyPolicy = template.Safety
+            SafetyPolicy = template.Safety,
+            Pipeline = template.Pipeline,
+            CreatedBy = caller.ActorId
         });
 
         var connections = new List<object>();
@@ -70,7 +72,7 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
         foreach (var w in template.Webhooks)
         {
             var added = await workspace.AddTrigger(
-                new TriggerSpec { Kind = TriggerKind.Webhook, Name = w.Name, Instruction = w.Instruction, TargetAgentId = WorkspaceIds.CoordinatorId(id) },
+                new TriggerSpec { Kind = TriggerKind.Webhook, Name = w.Name, Instruction = w.Instruction },
                 "user", $"template:{id}:{w.Name}", revealSecret: true);
             string? path = null;
             if (added.ResultJson is { } json)

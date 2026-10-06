@@ -4,14 +4,14 @@ import { useEffect, useState } from "react";
 import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
 import type { WorkspaceTemplate } from "@/lib/workspaceTypes";
 
-// Deliberately varied: workspaces are generic, and these only seed the form.
+// Deliberately varied: workspaces are generic, and these only seed the form. Each describes a
+// job to do again and again; the pipeline is drafted from it.
 const EXAMPLES = [
-  { name: "Morning briefing", goal: "Every weekday at 08:00 UTC, research the latest news in my industry and send me a five-bullet summary." },
-  { name: "Support inbox", goal: "Create a webhook for new support tickets. Classify each by urgency, draft a reply, and alert me immediately about urgent ones." },
-  { name: "Sales follow-ups", goal: "Each afternoon, check my CRM for deals with no activity in 7 days and draft follow-up emails for me to review." },
-  { name: "Ops watchdog", goal: "Watch our status API every 5 minutes and alert me by SMS if any service reports an error." },
-  { name: "Research project", goal: "Research the market for AI-powered property management software and produce a report with competitors and pricing." },
-  { name: "Shop inventory", goal: "Check my store's inventory every hour and alert me when any product drops below 10 units." },
+  { name: "Market research", goal: "Research a market I name: size, competitors with pricing, and trends, then write a report with sources and have it fact-checked." },
+  { name: "Support triage", goal: "For each support ticket: classify its urgency, find the relevant help-centre answer, and draft a reply in our tone." },
+  { name: "Morning briefing", goal: "Research the latest news in my industry and turn it into a five-bullet briefing." },
+  { name: "Code review", goal: "Review a pull request I link: check correctness, security and tests in parallel, then write one combined review." },
+  { name: "Sales follow-ups", goal: "For deals with no activity in 7 days, look up each account and draft a follow-up email for me to review." },
 ];
 
 export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => void }) {
@@ -62,8 +62,8 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       <div>
         <h2 className="text-base font-semibold">New workspace</h2>
         <p className="text-xs text-zinc-500">
-          Tell it what you want done, once or on an ongoing basis. A coordinator agent sets up the agents, schedules and
-          webhooks it needs, keeps running, and takes new instructions from you at any time.
+          Describe a job you want done again and again. A pipeline of agents is drafted from it; change any stage in plain
+          language or on the canvas, then run it with an input, or add a schedule, webhook or watch to run it automatically.
         </p>
       </div>
       {templates.length > 0 && (
@@ -107,7 +107,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
         <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
       </label>
       <label className="block space-y-1 text-xs">
-        <span className="text-zinc-500">What should it do?</span>
+        <span className="text-zinc-500">What is this pipeline for?</span>
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={4} className={input} />
       </label>
       <div className="grid grid-cols-2 gap-3 text-xs">
@@ -121,12 +121,12 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
         </label>
       </div>
       <p className="text-[11px] text-zinc-500">
-        The budget covers every agent in the workspace, all day. When it runs out, agents pause until midnight UTC. The
+        The budget covers every run of the pipeline, all day. When it runs out, agents pause until midnight UTC. The
         runtime enforces it, not the agents.
       </p>
       {error && <div className="rounded border border-rose-300 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
       <button type="submit" disabled={busy || !goal.trim()} className="rounded bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-        {busy ? "Creating…" : "Create workspace"}
+        {busy ? "Drafting the pipeline…" : "Create workspace"}
       </button>
     </form>
   );

@@ -5,15 +5,17 @@ import { Button, PageHeader, StatusBadge, cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
+import { getPipelineRun, getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
+import type { PipelineRunView } from "@/lib/pipelineTypes";
 import type { RuntimeEvent } from "@/lib/types";
 import type { WorkspaceListItem, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
+import { Split } from "@/components/ui/Split";
 import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm";
-import { WorkspaceChatWidget, readChatOpen, rememberChatOpen } from "@/components/workspace/WorkspaceChatWidget";
+import { PipelinePanel } from "@/components/workspace/PipelinePanel";
+import { RunsPanel } from "@/components/workspace/RunsPanel";
 import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
-import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
 const POLL_MS = 2000;
 const MAX_EVENTS = 500;
@@ -50,14 +52,9 @@ function Workspaces() {
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
   const [events, setEvents] = useState<RuntimeEvent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<PipelineRunView | null>(null);
   const [creating, setCreating] = useState(false);
-  // Shared by the chat widget and the team view, which keeps the agents clear of the open chat.
-  const [chatOpen, setChatOpen] = useState(readChatOpen);
-
-  const changeChatOpen = useCallback((open: boolean) => {
-    setChatOpen(open);
-    rememberChatOpen(open);
-  }, []);
 
   const reloadList = useCallback(() => listWorkspaces().then(setWorkspaces).catch(() => {}), []);
 
@@ -83,6 +80,7 @@ function Workspaces() {
       setWorkspace(null);
       setEvents([]);
       setSelectedAgent(null);
+      setSelectedRunId(null);
       setCreating(false);
     }
   }
@@ -92,6 +90,7 @@ function Workspaces() {
     setWorkspace(null);
     setEvents([]);
     setSelectedAgent(null);
+    setSelectedRunId(null);
     setCreating(false);
     remember(id);
     reloadList();
@@ -140,6 +139,28 @@ function Workspaces() {
     return () => { cancelled = true; };
   }, [workspaceId]);
 
+  // The run shown on the canvas, kept current while it's in progress.
+  const refreshRun = useCallback(async () => {
+    if (!workspaceId || !selectedRunId) return;
+    try {
+      setSelectedRun(await getPipelineRun(workspaceId, selectedRunId));
+    } catch {
+      // The poll loop retries.
+    }
+  }, [workspaceId, selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function poll() {
+      await refreshRun();
+      if (!cancelled) timer = setTimeout(poll, POLL_MS);
+    }
+    poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [selectedRunId, refreshRun]);
+
   useEffect(() => {
     if (!workspaceId) return;
     const source = subscribeToEvents((evt) => {
@@ -147,17 +168,80 @@ function Workspaces() {
         const next = [...prev, evt];
         return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
       });
-      // Chat messages and trigger fires should appear immediately, not on the next poll.
-      if (evt.type === "WorkspaceMessage" || evt.type === "TriggerFired" || evt.type === "WorkspaceChanged") refresh();
+      // Chat, triggers, pipeline changes and run progress should appear at once, not on the next poll.
+      if (["WorkspaceMessage", "TriggerFired", "WorkspaceChanged", "PipelineChanged", "PipelineRunUpdated"].includes(evt.type)) {
+        refresh();
+        if (evt.type === "PipelineRunUpdated" && evt.data?.run_id === selectedRunId) refreshRun();
+      }
     }, workspaceId);
     return () => source.close();
-  }, [workspaceId, refresh]);
+  }, [workspaceId, refresh, refreshRun, selectedRunId]);
+
+  const list = (
+    <aside className="h-full overflow-y-auto bg-zinc-50/50 p-2 dark:bg-zinc-950">
+      {workspaces.length === 0 && <div className="p-4 text-xs text-zinc-500">No workspaces yet.</div>}
+      <ul className="space-y-1">
+        {workspaces.map((w) => (
+          <li key={w.workspace_id}>
+            <button onClick={() => open(w.workspace_id)}
+              className={cx(
+                "block w-full rounded-lg px-3 py-2.5 text-left transition-colors",
+                w.workspace_id === workspaceId
+                  ? "bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800"
+                  : "hover:bg-zinc-100 dark:hover:bg-zinc-900/60",
+              )}>
+              <span className="flex items-center justify-between gap-2">
+                <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{w.name}</span>
+                <StatusBadge status={w.status} />
+              </span>
+              <span className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{withoutTemplateTag(w.goal)}</span>
+              <span className="mt-1 block text-[11px] text-zinc-400">{w.triggers} trigger{w.triggers === 1 ? "" : "s"}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+
+  let main: React.ReactNode;
+  if (creating) {
+    main = <div className="h-full overflow-y-auto"><CreateWorkspaceForm onCreated={open} /></div>;
+  } else if (!workspace || !workspace.pipeline) {
+    main = (
+      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        {workspaceId ? "Loading workspace…" : "Select a workspace or create a new one."}
+      </div>
+    );
+  } else {
+    // The run on the canvas: only once it's loaded (not a previously selected one).
+    const shownRun = selectedRun?.run_id === selectedRunId ? selectedRun : null;
+    // Every section can be resized: drag a divider, or focus it and use the arrow keys.
+    const center = (
+      <Split direction="vertical" sized="second" initial={260} min={120} minOther={220} storageKey="workspace-runs" label="Resize the runs panel">
+        <PipelinePanel workspace={workspace} run={shownRun} onCloseRun={() => setSelectedRunId(null)} onChanged={refresh} onSelectAgent={setSelectedAgent} />
+        <RunsPanel workspace={workspace} selectedRun={shownRun} onSelectRun={setSelectedRunId} onChanged={() => { refresh(); refreshRun(); }} />
+      </Split>
+    );
+    const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onSelectRun={setSelectedRunId} onChanged={refresh} />;
+    main = (
+      <div className="flex h-full min-w-0 flex-col">
+        <WorkspaceHeader workspace={workspace} onChanged={refresh} />
+        <Split className="min-h-0 flex-1" sized="second" initial={380} min={280} max={900} minOther={420} storageKey="workspace-side" label="Resize the side panel">
+          <Split sized="second" initial={360} min={260} max={720} minOther={360} storageKey="workspace-agent" label="Resize the agent details">
+            {center}
+            {selectedAgent ? <AgentDetailsPanel agentId={selectedAgent} onClose={() => setSelectedAgent(null)} /> : null}
+          </Split>
+          {side}
+        </Split>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Workspaces"
-        description="Long-running agent teams that work for you: they take new instructions any time, react to schedules, webhooks and watches, and stay inside a daily budget."
+        description="Reusable agent pipelines: describe what you need, adjust the stages in plain language or on the canvas, and run them by hand or from schedules, webhooks and watches."
         actions={
           <>
             <Link href="/templates"><Button icon={<Icons.Templates className="h-3.5 w-3.5" />}>Templates</Button></Link>
@@ -167,62 +251,10 @@ function Workspaces() {
           </>
         }
       />
-
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-60 shrink-0 overflow-y-auto border-r border-zinc-200 bg-zinc-50/50 p-2 dark:border-zinc-800 dark:bg-zinc-950">
-          {workspaces.length === 0 && <div className="p-4 text-xs text-zinc-500">No workspaces yet.</div>}
-          <ul className="space-y-1">
-            {workspaces.map((w) => (
-              <li key={w.workspace_id}>
-                <button onClick={() => open(w.workspace_id)}
-                  className={cx(
-                    "block w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-                    w.workspace_id === workspaceId
-                      ? "bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800"
-                      : "hover:bg-zinc-100 dark:hover:bg-zinc-900/60",
-                  )}>
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{w.name}</span>
-                    <StatusBadge status={w.status} />
-                  </span>
-                  <span className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{withoutTemplateTag(w.goal)}</span>
-                  <span className="mt-1 block text-[11px] text-zinc-400">{w.agents} agents · {w.triggers} triggers</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        {creating && (
-          <div className="flex-1 overflow-y-auto"><CreateWorkspaceForm onCreated={open} /></div>
-        )}
-
-        {!creating && !workspace && (
-          <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
-            {workspaceId ? "Loading workspace…" : "Select a workspace or create a new one."}
-          </div>
-        )}
-
-        {!creating && workspace && (
-          <div className="flex min-w-0 flex-1 flex-col">
-            <WorkspaceHeader workspace={workspace} onChanged={refresh} />
-            <div className="flex min-h-0 flex-1">
-              <div className="relative min-w-0 flex-1 border-r border-zinc-200 dark:border-zinc-800">
-                <WorkspaceTeamView workspace={workspace} events={events} selectedId={selectedAgent} onSelect={setSelectedAgent} chatOpen={chatOpen} />
-                <WorkspaceChatWidget workspace={workspace} open={chatOpen} onOpenChange={changeChatOpen} onSent={refresh} onSelectAgent={setSelectedAgent} />
-              </div>
-              {selectedAgent && (
-                <div className="w-96 shrink-0 border-r border-zinc-200 dark:border-zinc-800">
-                  <AgentDetailsPanel agentId={selectedAgent} onClose={() => setSelectedAgent(null)} />
-                </div>
-              )}
-              <div className="w-96 shrink-0">
-                <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onChanged={refresh} />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <Split className="min-h-0 flex-1" initial={240} min={180} max={480} minOther={600} storageKey="workspace-list" label="Resize the workspace list">
+        {list}
+        {main}
+      </Split>
     </div>
   );
 }

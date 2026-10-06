@@ -337,117 +337,90 @@ who loses hope may take the next ship home.
 
 ## Workspaces
 
-A workspace is a long-lived home for your agents. The coordinator answers you, plans work, starts
-workers for parallel parts, and sets up standing agents, schedules, watches and webhooks for
-ongoing work.
-
-Create one workspace for W1-W6 so the follow-ups share context:
+A workspace is a reusable agent pipeline: drafted from a description, changed in plain language or
+on the canvas, and run by hand or by triggers. Create one workspace for W1–W7 so they share it:
 
 - **Name:** `Candle shop`
-- **Goal:** `Help me run my small online candle shop: questions, writing, research and keeping an
-  eye on things.`
+- **What is this pipeline for?** `Research a topic for my small online candle shop and write it up
+  as a short, practical report I can act on.`
 - **Budget:** 500,000 tokens / $5
 
-### W1. Questions and small jobs: no agents
+### W1. A pipeline drafted from the description
 
-**Tests:** the coordinator does small things itself.
+**Tests:** natural-language configuration of a new workspace.
+
+**Check:**
+- [ ] The canvas shows a drafted pipeline of a few stages (e.g. Research → Write), left to right,
+      each with a role and instructions. The chat says how many stages it has.
+- [ ] Clicking a stage opens its settings: name, role, instructions, tools, helpers, retries,
+      "may message other stages", "keep going if it fails", max cost.
+- [ ] **History** lists version 1.
+
+### W2. Run it
+
+**Tests:** runs, stage order, results handed on, files.
+
+In the Runs panel, type and press **Run**:
 
 ```text
-Suggest five names for a new lavender-and-cedar candle, with a one-line tagline for each.
+Compare three popular candle brands (Yankee Candle, Diptyque and Boy Smells): price range,
+bestselling scents and how they market online.
 ```
 
 **Check:**
-- [ ] The answer arrives in the chat, and the team view shows **no new agents**.
-- [ ] No `plan_request` is needed for something this small (it's fine if it plans and the plan
-      says `self`).
-- [ ] No schedule is created (the Triggers tab stays empty).
+- [ ] Run #1 appears and is selected; the canvas switches to the run: stages turn from Waiting to
+      Working (pulsing marker) to Done, in order. Connections turn green as results flow.
+- [ ] Clicking a finished stage shows its result; **Agent details & trace** opens its agent beside
+      the canvas.
+- [ ] The run's result arrives in the chat ("Run #1 finished."), and its files appear in **Files**
+      under `run-1/`.
+- [ ] The ↗ link on the run opens its task page: the agent graph (run → stages → helpers), events,
+      files and result. The composer there says to run it again from the workspace.
 
-### W2. Separate deliverables: plan, split, combine
+### W3. Change it in plain language
 
-**Tests:** `plan_request` choosing to split without being told to, parallel workers, saved files,
-and combining the results. The prompt deliberately does **not** ask for parallel work.
+**Tests:** the editor's proposal, preview, apply and undo.
+
+Type in "Describe a change" and press **Preview**, one at a time:
 
 ```text
-Write a launch plan for the lavender-and-cedar candle with three parts: a pricing analysis
-(cost per candle, competitor price range, recommended price), a four-week social media calendar,
-and a three-email announcement sequence. Put everything together at the end.
+Add a fact checker after Research
+Add a pricing analyst in parallel with Research
+Remove the fact checker
 ```
 
 **Check:**
-- [ ] A "🧭 planning the work" bubble appears on the coordinator, and the Events tab shows
-      `plan_request` returning `"approach":"split"` with 3 workers.
-- [ ] Three workers appear under the coordinator, with blue **task** arrows to each.
-- [ ] Each worker saves its own file; the Files tab shows them as **final** once each worker is
-      done.
-- [ ] Green **done** arrows go back to the coordinator, which then saves a combined file (labelled
-      **saved**) and tells you in the chat.
-- [ ] **Download all (.zip)** contains all four files with their folders.
-- [ ] No more than 3 workers are started for this one request.
+- [ ] Each shows a summary and the changes; the canvas previews them (new stages green, changed
+      amber, removed struck through) and nothing changes until **Apply**.
+- [ ] After applying the parallel one, two stages start together in the next run, and the stage
+      after them waits for both (its inputs are both in its settings).
+- [ ] **Discard** leaves the pipeline as it was.
+- [ ] **History** lists each version; **Restore** an earlier one and the canvas goes back to it, as
+      a new version.
+- [ ] Two browser tabs: apply a change in one, then try one in the other. The second is refused
+      ("the pipeline changed") and the canvas reloads.
 
-### W3. Follow-up work after the workers have finished
-
-**Tests:** the coordinator treats a follow-up as new work instead of messaging finished workers.
-Send this after W2 is completely done.
-
-```text
-Now review all three launch documents for consistency (prices, dates and tone should match
-across them) and fix anything that doesn't line up.
-```
+### W4. Change it on the canvas
 
 **Check:**
-- [ ] The coordinator either does the review itself or plans new workers. It does **not** wait on
-      the finished ones.
-- [ ] If it tries to message a finished worker, the Events tab shows the refusal ("has finished …
-      can't receive messages"), and it recovers.
-- [ ] Updated files appear in the Files tab (the version count goes up).
-- [ ] It never says "I'm monitoring the agents" while no agent is working.
+- [ ] Hovering a connection shows a **+**; clicking it opens "Add a stage" between those two
+      stages. Hovering the first stage shows + on its left; the last stage + on its right.
+- [ ] × on a stage removes it after a confirmation, and the stages around it are joined up.
+- [ ] Editing a stage's instructions and saving makes a new version; the next run uses it.
+- [ ] **Run settings**: lower runs at once to 1, start two runs quickly: the second shows
+      **Queued** until the first finishes.
 
-### W4. Research across several items: one worker each
+### W5. Triggers start runs
 
-**Tests:** splitting "the same work for several subjects" without being asked, and no
-schedules for one-off work.
+**Tests:** schedules and webhooks as run inputs, deduplication, untrusted input.
 
-```text
-Research three popular candle brands (Yankee Candle, Diptyque and Boy Smells): their price range,
-bestselling scents and how they market online. Give me a comparison table and what my shop
-should learn from each.
-```
-
-**Check:**
-- [ ] The plan splits by brand: three workers, one per brand.
-- [ ] **No schedules** are created: this is one-off research, however many items it covers.
-- [ ] The comparison is saved as a file and summarised in the chat.
-
-### W5. Ongoing work: one schedule, not one per item
-
-**Tests:** recurring work, cron schedules, and not creating a schedule per item.
-
-```text
-Every weekday at 08:00 UTC, send me a short digest with one social media post idea for each of my
-three candles (lavender-and-cedar, vanilla-oak and sea-salt).
-```
-
-**Check:**
-- [ ] Exactly **one** schedule appears in the Triggers tab, with a cron like `0 8 * * 1-5`, not
-      three schedules and not an hourly one.
-- [ ] Either the coordinator owns it, or it starts **one** standing agent for it.
-- [ ] The coordinator confirms the set-up in the chat.
-- [ ] To see it fire without waiting a day, add a trigger by hand in the Triggers tab (every 2
-      minutes, same instruction). A digest should arrive in the chat each time. Delete it after.
-
-### W6. A webhook, and untrusted input
-
-**Tests:** webhooks, deduplication, and treating payloads as data rather than instructions.
-
-```text
-Whenever my store sends you a new-order webhook, thank the customer by name in a short note to me,
-and warn me urgently if the order is over $200.
-```
-
-The coordinator posts a secret webhook URL in the chat. Send it two orders:
+1. **Triggers → Schedule**, every 2 minutes, instruction `Research one trending candle scent this
+   week.` A run starts each time (source "Schedule"). Delete it after two runs.
+2. **Triggers → Webhook**, instruction `Write a thank-you note for this order; flag it if over $200.`
+   Copy the URL it shows, then:
 
 ```bash
-URL="http://localhost:5080/api/hooks/..."   # copy it from the chat
+URL="http://localhost:5080/api/hooks/..."   # copy it from the chat or the Triggers tab
 
 curl -X POST "$URL" -H "Content-Type: application/json" -H "Idempotency-Key: order-1001" \
   -d '{"order_id":1001,"customer":"Ama","total":45.00}'
@@ -461,13 +434,13 @@ curl -X POST "$URL" -H "Content-Type: application/json" -H "Idempotency-Key: ord
 ```
 
 **Check:**
-- [ ] The first two calls return `202`; the repeat returns `200 {"status":"duplicate"}`.
-- [ ] A note about Ama arrives as normal, and one about Kofi arrives marked **urgent**.
-- [ ] The instruction hidden in Kofi's `note` is **not** followed: the workspace isn't archived,
-      and the agent may mention the suspicious note.
+- [ ] The first two calls return `202` and each starts a run (source "Webhook"); the repeat returns
+      `200 {"status":"duplicate"}` and starts nothing.
+- [ ] The instruction hidden in Kofi's `note` is **not** followed: the workspace isn't archived.
 - [ ] A wrong secret in the URL returns `404`.
+- [ ] Analytics → Tasks → **By user** lists these runs under "Triggers (automatic runs)".
 
-### W7. A watch: checks without the LLM
+### W6. A watch: checks without the LLM
 
 **Tests:** connections, and watches that run without spending tokens. It uses a public JSON API,
 so no credentials are needed.
@@ -475,29 +448,24 @@ so no credentials are needed.
 1. **Integrations → Add connection → HTTP API**: name `demo`, base URL
    `https://jsonplaceholder.typicode.com`, description `A demo REST API with /todos, /posts and
    /users`, no auth header value, writes off.
-2. Then send:
-
-```text
-Using the demo connection, keep an eye on user 1's to-do list at /todos?userId=1 every 5 minutes,
-and alert me about any to-do that isn't completed. Use a watch so it doesn't cost tokens each
-time.
-```
+2. **Triggers → Watch**: tool `demo__get`, arguments `{"path": "/todos?userId=1"}`, items path
+   `$.body[*]`, condition `completed == false`, key `id`, show `title`, every 5 minutes,
+   **Alert me**.
 
 **Check:**
-- [ ] A **watch** (👁) appears in the Triggers tab, not a schedule, with a condition like
-      `completed == false`.
-- [ ] Its creation reply includes a dry run: items found and matching now.
+- [ ] Creating it shows a dry run: items found and matching now.
 - [ ] The watch's counter shows **checks without the LLM** going up, while the workspace's token
-      count doesn't.
+      count doesn't, and no runs start.
 - [ ] Only *newly* matching items are reported; the same to-dos aren't re-alerted every check.
+- [ ] A second watch with **Run the pipeline** starts a run whose input lists only the matches.
 
-### W8. Safety: approvals and the audit log
+### W7. Safety: approvals and the audit log
 
 **Tests:** autonomy levels, rules, parked approvals, and approving from the chat. Use the `demo`
-connection from W7 with **writes on** (HTTP API `send`).
+connection with **writes on** (HTTP API `send`).
 
 1. **Safety tab:** set the level to **SemiAutonomous**, and add the rule `demo__*` · writes · ask.
-2. Send:
+2. Run the pipeline with:
 
 ```text
 Using the demo connection, create a new post at /posts with the title "New candle launch" and a
@@ -505,66 +473,66 @@ one-sentence body about the lavender-and-cedar candle.
 ```
 
 **Check:**
-- [ ] The agent's call **parks**, and an approval card (e.g. A1) appears in the chat, showing the
-      tool, the arguments and the agent's stated reason.
-- [ ] Typing `approve A1` in the chat runs the call **once**. Try `reject A2 not now` on a second
-      attempt: it should be refused without running.
-- [ ] The Safety tab's audit log lists the request, the decision and the call, and **Verify integrity**
-      reports the chain intact.
+- [ ] The stage's call **parks**, and an approval card (e.g. A1) appears in the chat, showing the
+      tool, the arguments and the agent's stated reason. The stage shows as Working on the canvas.
+- [ ] Typing `approve A1` in the chat runs the call **once**, and the run finishes.
+- [ ] The Safety tab's audit log lists the run, the request, the decision and the call, and
+      **Verify integrity** reports the chain intact.
 - [ ] Reads (`demo__get`) never ask for approval, even under Supervised.
 
-### W9. Budgets and pausing
-
-**Tests:** the workspace daily budget, and pause/resume. Use a **new** workspace with a daily
-budget of **20,000 tokens**, then send:
-
-```text
-Write a detailed 2,000-word history of candle making, from ancient times to today, with sources.
-```
+### W8. Failures, retries and budgets
 
 **Check:**
-- [ ] Once the budget runs out, one warning appears in the chat ("Agents are paused for today"),
-      and agents pause instead of failing.
-- [ ] Raising the budget in the header lets work continue.
-- [ ] **Pause** stops agents and triggers; **Resume** restarts them without a burst of LLM calls.
-- [ ] Any worker that ran out of its own budget reports a **partial** result with the remaining
-      work, and the coordinator decides what to do with it.
+- [ ] Set a stage's max cost to $0.01 and run: it reports a **partial** result and the next stage
+      works with it.
+- [ ] Use a **new** workspace with a daily budget of **20,000 tokens** and a long task: once the
+      budget runs out, one warning appears in the chat ("Agents are paused for today"), agents
+      pause instead of failing, and raising the budget in the header lets the run continue.
+- [ ] **Pause** (header) pauses runs in progress and holds new ones in the queue; **Resume**
+      carries on.
+- [ ] A run's **Cancel** stops its agents and marks unfinished stages Skipped.
 
-### W9b. A workspace's own skills and knowledge
+### W9. A workspace's own skills and knowledge
 
 **Tests:** workspace scope ([skills.md](skills.md), [memory.md](memory.md#organization-and-workspace-knowledge)).
 In a workspace, open **Skills & knowledge → Knowledge**, add a fact ("Our board meets on 12 March"),
 and a skill under **Skills** with the scope set to the workspace.
 
 **Check:**
-- [ ] Asked "When does the board meet?", the workspace's coordinator finds the fact.
+- [ ] Run "When does the board meet?": the stage finds the fact.
 - [ ] A task (or another workspace) asked the same doesn't find it.
-- [ ] The workspace's agents list the skill under SKILLS; a task's agents don't.
+- [ ] The workspace's stage agents list the skill under SKILLS; a task's agents don't.
 - [ ] With the scope set to **Whole organization**, neither the fact nor the skill is listed.
 
 ### W10. The workspace screen
 
-**Tests:** the live team view and chat widget. Check these while W2 or W4 is running.
-
-- [ ] Agents stay visible the whole time they're working; they don't vanish or flicker.
-- [ ] Arrows and speech bubbles appear as agents talk, and fade after about 20 seconds.
-- [ ] With the chat open, the team is fitted to the side of it. Minimising the chat re-fits the
-      team to the whole canvas, and the chat button counts unread replies and pending approvals.
-- [ ] Clicking an agent opens its details, and the team re-fits to the narrower canvas.
-- [ ] Workers that finished over 30 minutes ago are hidden behind "Show earlier finished agents".
-- [ ] Reloading the page shows recent arrows and bubbles again, from history.
+- [ ] Every divider (workspace list, side panel, runs panel, agent details) can be dragged, moved
+      with the arrow keys when focused, and reset with a double-click; sizes are kept after a reload.
+- [ ] Selecting a stage's agent opens its details beside the canvas without losing an unapplied
+      preview.
+- [ ] At a narrow window the canvas still fits (the controls zoom), and no section collapses to nothing.
+- [ ] Reloading the page keeps the selected workspace; the runs list and chat are as they were.
 
 ### W11. Surviving a restart
 
-**Tests:** durability. While W2 (or W5 with a 2-minute schedule) is running, restart the API:
+**Tests:** durability. While a run is in progress (or with a 2-minute schedule), restart the API:
 `docker compose restart api`.
 
 **Check:**
-- [ ] Workers carry on from their last step after the restart, not from the beginning.
-- [ ] No tool call that can't safely repeat runs twice. Check that approved writes from W8
+- [ ] Stages carry on from their last step after the restart, not from the beginning, and the run
+      finishes.
+- [ ] No tool call that can't safely repeat runs twice. Check that approved writes from W7
       happened only once.
 - [ ] Schedules keep firing after the restart.
-- [ ] The chat history, files and triggers are all still there.
+- [ ] The pipeline, its history, runs, chat, files and triggers are all still there.
+
+### W12. A workspace made before pipelines
+
+With a database from before this release, open an old workspace.
+
+**Check:**
+- [ ] It now has a one-stage pipeline doing its purpose, and the chat explains the change.
+- [ ] Its schedules and webhooks start runs of it; its old agents show as finished.
 
 ---
 

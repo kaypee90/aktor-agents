@@ -82,7 +82,12 @@ public sealed class PersistenceEventSubscriber(
                         Goal = evt.Data.TryGetValue("goal", out var goal) ? goal : evt.Summary,
                         RootAgentId = evt.Data.TryGetValue("rootAgentId", out var rootId) ? rootId : evt.AgentId,
                         CorrelationId = evt.CorrelationId,
-                        CreatedAt = evt.Timestamp
+                        CreatedAt = evt.Timestamp,
+                        // Pipeline runs say where they come from and who started them.
+                        Source = evt.Data.GetValueOrDefault("source") is { Length: > 0 } source ? source : "api",
+                        Status = evt.Data.GetValueOrDefault("status") is { Length: > 0 } status ? status : "Running",
+                        WorkspaceId = evt.Data.GetValueOrDefault("workspace_id") is { Length: > 0 } workspaceId ? workspaceId : null,
+                        StartedBy = evt.Data.GetValueOrDefault("started_by") is { Length: > 0 } startedBy ? startedBy : null
                     });
                 }
                 else

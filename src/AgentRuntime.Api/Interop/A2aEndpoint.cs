@@ -390,7 +390,6 @@ public static class A2aEndpoint
                 foreach (var f in findings.EnumerateArray()) text.Append("- ").AppendLine(f.GetString());
             }
 
-            if (result?.Replies is { Count: > 0 } replies) text.Append("\n\n").AppendJoin("\n", replies);
             text.Append($"\n\nFull run: {view.DashboardUrl}");
 
             var parts = new JsonArray(v1 ? new JsonObject { ["text"] = text.ToString() } : Kind("text", new JsonObject { ["text"] = text.ToString() }));

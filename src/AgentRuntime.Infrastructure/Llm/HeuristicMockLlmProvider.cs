@@ -74,14 +74,18 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             return Task.FromResult(MockWorldBehavior.Resident(request));
         }
 
-        // Workspace agents: coordinators and standing agents have wait_for_events; one-shot
-        // workers in a workspace have the workspace tools (e.g. notify_user) too.
-        if (request.Tools.Any(t => t.Name is "wait_for_events" or "notify_user"))
+        // Workspace pipelines: the natural-language editor, and the stages' agents.
+        if (MockPipelineBehavior.IsDesignRequest(request))
         {
-            return Task.FromResult(MockWorkspaceBehavior.Respond(request));
+            return Task.FromResult(MockPipelineBehavior.Design(request));
         }
 
         var systemText = request.Messages.FirstOrDefault(m => m.Role == ChatRole.System)?.Content ?? string.Empty;
+        if (MockPipelineBehavior.IsStageAgent(systemText))
+        {
+            return Task.FromResult(MockPipelineBehavior.Stage(request, systemText));
+        }
+
         var role = ExtractBetween(systemText, "acting as: ", ".") ?? "Agent";
         // The goal as written: the section goes on with attached files and follow-ups after a blank line.
         var goal = ExtractSection(systemText, "## GOAL")?.Split("\n\n", 2)[0].Trim() ?? "the assigned goal";

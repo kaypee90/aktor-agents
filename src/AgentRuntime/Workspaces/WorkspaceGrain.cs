@@ -27,6 +27,7 @@ public sealed partial class WorkspaceGrain(
     IOptions<IntegrationsOptions> integrationOptions,
     IOptions<Durability.DurabilityOptions> durabilityOptions,
     IAuditLog audit,
+    IOptions<Pipelines.PipelineOptions> pipelineOptions,
     ILogger<WorkspaceGrain> logger) : Grain, IWorkspaceGrain, IRemindable
 {
     private const string TriggerReminderPrefix = "trigger-";
@@ -41,6 +42,7 @@ public sealed partial class WorkspaceGrain(
     private const int ActionResultCacheSize = 2000;
 
     private readonly WorkspaceOptions _opts = options.Value;
+    private readonly Pipelines.PipelineOptions _pipelineOpts = pipelineOptions.Value;
 
     private WorkspaceState S => state.State;
     private bool Exists => !string.IsNullOrEmpty(S.WorkspaceId);
@@ -61,23 +63,22 @@ public sealed partial class WorkspaceGrain(
         s.CreatedAt = DateTimeOffset.UtcNow;
         s.DailyTokenLimit = Math.Max(1_000, request.DailyTokenLimit ?? _opts.DefaultDailyTokenLimit);
         s.DailyCostLimitUsd = Math.Max(0.01m, request.DailyCostLimitUsd ?? _opts.DefaultDailyCostLimitUsd);
-        s.CoordinatorAgentId = WorkspaceIds.CoordinatorId(s.WorkspaceId);
         s.TemplateId = request.TemplateId;
         if (request.SafetyPolicy is { } policy)
         {
             s.SafetyPolicy = policy with { ApprovalTimeoutHours = Math.Clamp(policy.ApprovalTimeoutHours, 1, 24 * 30), Rules = policy.Rules.Take(50).ToList() };
         }
 
-        AppendChat(ChatAuthorKind.User, "user", "You", s.Goal);
+        var pipeline = request.Pipeline is { } given && Pipelines.PipelineValidator.Validate(given, _pipelineOpts).Count == 0
+            ? given
+            : DefaultPipeline(s.Goal);
         AppendChat(ChatAuthorKind.System, "system", "Workspace",
-            $"Workspace created. Daily budget: {s.DailyTokenLimit:N0} tokens / ${s.DailyCostLimitUsd:F2}.");
-        await SaveAsync();
-
-        // The coordinator's first turn is the workspace goal itself.
-        await orchestrator.CreateWorkspaceCoordinatorAsync(s.WorkspaceId, s.Name, s.Goal, BuildPolicy(), s.TenantId);
+            $"Workspace created with a {pipeline.Stages.Count}-stage pipeline: {string.Join(" → ", Pipelines.PipelineValidator.TopologicalOrder(pipeline)!.Select(st => st.Name))}. " +
+            $"Run it with an input, or add a trigger to run it automatically. Daily budget: {s.DailyTokenLimit:N0} tokens / ${s.DailyCostLimitUsd:F2}.");
+        await CommitPipelineAsync(pipeline, request.CreatedBy ?? request.OwnerId, request.TemplateId is null ? "Created" : $"Created from the '{request.TemplateId}' template");
 
         await PublishAsync(RuntimeEventType.WorkspaceCreated, $"Workspace '{s.Name}' created.",
-            new Dictionary<string, string> { ["name"] = s.Name, ["coordinator"] = s.CoordinatorAgentId });
+            new Dictionary<string, string> { ["name"] = s.Name });
         await ArchiveAsync();
     }
 
@@ -88,11 +89,11 @@ public sealed partial class WorkspaceGrain(
         if (!Exists || S.Status != WorkspaceStatus.Active) return;
 
         S.Status = WorkspaceStatus.Paused;
-        AppendChat(ChatAuthorKind.System, "system", "Workspace", "Workspace paused: triggers won't fire and agents are paused.");
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", "Workspace paused: triggers won't fire, runs in progress are paused and new runs wait.");
         await SaveAsync();
-        foreach (var agent in await LiveAgentsAsync())
+        foreach (var runId in S.ActiveRunIds.ToList())
         {
-            await orchestrator.PauseAsync(agent.AgentId);
+            await GrainFactory.GetGrain<Pipelines.IPipelineRunGrain>(runId).Pause();
         }
 
         await AuditAsync("user", "user", "You", "workspace.paused", S.Name, "ok", $"Workspace paused");
@@ -106,12 +107,12 @@ public sealed partial class WorkspaceGrain(
         S.Status = WorkspaceStatus.Active;
         AppendChat(ChatAuthorKind.System, "system", "Workspace", "Workspace resumed.");
         await SaveAsync();
-        // Unpause without forcing a turn: agents wake on their next message, schedule or webhook,
-        // so resuming a big workspace doesn't cost one LLM call per agent.
-        foreach (var agent in await LiveAgentsAsync())
+        foreach (var runId in S.ActiveRunIds.ToList())
         {
-            await orchestrator.UnpauseAsync(agent.AgentId);
+            await GrainFactory.GetGrain<Pipelines.IPipelineRunGrain>(runId).Resume();
         }
+
+        await DrainRunQueueAsync();
 
         await AuditAsync("user", "user", "You", "workspace.resumed", S.Name, "ok", $"Workspace resumed");
         await ChangedAsync("resumed");
@@ -127,11 +128,13 @@ public sealed partial class WorkspaceGrain(
             await UnregisterTriggerReminderAsync(trigger.TriggerId);
         }
 
-        AppendChat(ChatAuthorKind.System, "system", "Workspace", "Workspace archived: all agents retired and triggers removed.");
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", "Workspace archived: runs cancelled and triggers stopped.");
+        var queued = S.RunQueue.Select(q => S.Runs.FirstOrDefault(r => r.Number == q.Number)?.RunId).OfType<string>().ToList();
+        S.RunQueue.Clear();
         await SaveAsync();
-        foreach (var agent in await LiveAgentsAsync())
+        foreach (var runId in S.ActiveRunIds.Concat(queued).ToList())
         {
-            await orchestrator.RetireAsync(agent.AgentId, "the workspace was archived");
+            await GrainFactory.GetGrain<Pipelines.IPipelineRunGrain>(runId).Cancel("the workspace was archived");
         }
 
         await AuditAsync("user", "user", "You", "workspace.archived", S.Name, "ok", $"Workspace archived");
@@ -153,7 +156,7 @@ public sealed partial class WorkspaceGrain(
 
     // ---- Conversation -------------------------------------------------------
 
-    public async Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId)
+    public async Task<ChatEntry> PostUserMessage(string text, string? toAgentId, string? clientMessageId, string? startedBy = null)
     {
         // "approve A7" typed in the chat decides the approval instead of reaching an agent.
         var command = ApprovalCommand().Match(text.Trim());
@@ -173,10 +176,14 @@ public sealed partial class WorkspaceGrain(
             return S.Conversation[^1];
         }
 
-        return await PostUserMessageCoreAsync(text, toAgentId, clientMessageId, "You");
+        return await PostUserMessageCoreAsync(text, toAgentId, clientMessageId, "You", startedBy);
     }
 
-    private async Task<ChatEntry> PostUserMessageCoreAsync(string text, string? toAgentId, string? clientMessageId, string authorName)
+    /// <summary>
+    /// A message in the workspace chat. Addressed to an agent of a run in progress, it reaches that
+    /// agent (guidance mid-run). Otherwise it is the input of a new run of the pipeline.
+    /// </summary>
+    private async Task<ChatEntry> PostUserMessageCoreAsync(string text, string? toAgentId, string? clientMessageId, string authorName, string? startedBy = null)
     {
         if (!Exists) throw new InvalidOperationException("No such workspace.");
         if (S.Status == WorkspaceStatus.Archived) throw new InvalidOperationException("This workspace is archived.");
@@ -190,67 +197,54 @@ public sealed partial class WorkspaceGrain(
         var body = Clip(text, _opts.MaxMessageLength, string.Empty);
         if (body.Length == 0) throw new ArgumentException("Message text is required.");
 
-        var target = S.CoordinatorAgentId;
+        AgentDirectoryEntry? target = null;
         if (!string.IsNullOrWhiteSpace(toAgentId))
         {
-            var entry = await Registry.GetAsync(toAgentId);
-            if (entry is null || entry.RootAgentId != S.CoordinatorAgentId)
+            target = await Registry.GetAsync(toAgentId);
+            if (target is null || !S.ActiveRunIds.Contains(target.RootAgentId))
             {
-                throw new ArgumentException($"No agent '{toAgentId}' in this workspace.");
+                throw new ArgumentException($"No agent '{toAgentId}' in a run in progress here.");
             }
 
-            if (entry.Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut)
+            if (IsTerminal(target.Status))
             {
-                throw new ArgumentException($"'{entry.Role}' has finished and can't take new instructions. Send it to the coordinator instead.");
+                throw new ArgumentException($"'{target.Role}' has finished and can't take new instructions. Start a new run instead.");
             }
-
-            target = toAgentId;
         }
 
         var chat = AppendChat(ChatAuthorKind.User, "user", authorName, body);
         if (dedupeKey is not null) Remember(dedupeKey, WorkspaceActionResult.Ok("delivered"));
         await SaveAsync();
-        await AuditAsync("user", "user", authorName, "user.command", target, "ok", Truncate(body, 300), key: $"{S.WorkspaceId}-chat-{chat.Seq}");
-
-        // Durable delivery: the message id is fixed by the chat entry, so a retry of this call
-        // can't reach the agent twice.
-        await orchestrator.SendMessageAsync(new AgentMessage
-        {
-            MessageId = $"{S.WorkspaceId}-chat-{chat.Seq}",
-            FromAgentId = "user",
-            ToAgentId = target,
-            MessageType = MessageType.TaskRequest,
-            TaskId = S.WorkspaceId,
-            Payload = body
-        });
-
+        await AuditAsync("user", "user", authorName, "user.command", target?.AgentId ?? "pipeline", "ok", Truncate(body, 300), key: $"{S.WorkspaceId}-chat-{chat.Seq}");
         await PublishAsync(RuntimeEventType.WorkspaceMessage, $"User: {Truncate(body, 120)}", ChatData(chat));
+
+        if (target is not null)
+        {
+            // Durable delivery: the message id is fixed by the chat entry, so a retry of this call
+            // can't reach the agent twice.
+            await orchestrator.SendMessageAsync(new AgentMessage
+            {
+                MessageId = $"{S.WorkspaceId}-chat-{chat.Seq}",
+                FromAgentId = "user",
+                ToAgentId = target.AgentId,
+                MessageType = MessageType.TaskRequest,
+                TaskId = target.RootAgentId,
+                Payload = body
+            });
+        }
+        else
+        {
+            var started = await StartRunCoreAsync(body, "chat", startedBy, trigger: null,
+                eventId: dedupeKey is null ? null : $"{S.WorkspaceId}:{dedupeKey}");
+            if (!started.Success)
+            {
+                AppendChat(ChatAuthorKind.System, "system", "Workspace", started.Message, "warning");
+                await SaveAsync();
+            }
+        }
+
         await ArchiveAsync();
         return chat;
-    }
-
-    public async Task<WorkspaceActionResult> Notify(string agentId, string text, string urgency, string idempotencyKey)
-    {
-        if (TryReplay(idempotencyKey, out var replayed)) return replayed;
-        if (!Exists) return WorkspaceActionResult.Fail("No such workspace.");
-
-        var body = Clip(text, _opts.MaxMessageLength, string.Empty);
-        if (body.Length == 0) return WorkspaceActionResult.Fail("text must not be empty.");
-
-        var level = urgency?.ToLowerInvariant() is "warning" or "urgent" ? urgency.ToLowerInvariant() : "info";
-        var author = await Registry.GetAsync(agentId);
-        var chat = AppendChat(ChatAuthorKind.Agent, agentId, author?.Role ?? agentId, body, level);
-        var channels = QueueNotifications(chat);
-        var result = WorkspaceActionResult.Ok(
-            channels.Count == 0 ? "The user has been notified in the workspace chat." : $"The user has been notified (chat, {string.Join(", ", channels)}).",
-            JsonSerializer.Serialize(new { delivered = true, message_seq = chat.Seq, channels }, ToolJson.Options));
-        Remember(idempotencyKey, result);
-        await SaveAsync();
-        await KickOutboxAsync();
-
-        await PublishAsync(RuntimeEventType.WorkspaceMessage, $"{chat.AuthorName}: {Truncate(body, 120)}", ChatData(chat), agentId);
-        await ArchiveAsync();
-        return result;
     }
 
     // ---- Triggers -----------------------------------------------------------
@@ -268,21 +262,11 @@ public sealed partial class WorkspaceGrain(
         var name = Clip(spec.Name, 80, string.Empty);
         if (name.Length == 0) return WorkspaceActionResult.Fail("A trigger needs a name.");
 
-        // Default target: whoever asked (an agent), else the coordinator.
-        var target = !string.IsNullOrWhiteSpace(spec.TargetAgentId) ? spec.TargetAgentId.Trim()
-            : createdBy == "user" ? S.CoordinatorAgentId : createdBy;
-        var targetEntry = await Registry.GetAsync(target);
-        if (targetEntry is null || targetEntry.RootAgentId != S.CoordinatorAgentId)
-        {
-            return WorkspaceActionResult.Fail($"No agent '{target}' in this workspace to receive the trigger.");
-        }
-
         var trigger = new TriggerDefinition
         {
             TriggerId = DeterministicId.FromOrNew("trg-", string.IsNullOrEmpty(idempotencyKey) ? null : idempotencyKey),
             Kind = spec.Kind,
             Name = name,
-            TargetAgentId = target,
             Instruction = Clip(spec.Instruction, 1000, string.Empty),
             CreatedBy = createdBy
         };
@@ -330,10 +314,10 @@ public sealed partial class WorkspaceGrain(
         var path = trigger.Kind == TriggerKind.Webhook ? WebhookPath(trigger) : null;
         AppendChat(ChatAuthorKind.System, "system", "Workspace", trigger.Kind switch
         {
-            TriggerKind.Webhook => $"Webhook '{trigger.Name}' created for {targetEntry.Role}. Point your service at: POST {path}  (keep this URL secret).",
+            TriggerKind.Webhook => $"Webhook '{trigger.Name}' created: each delivery starts a run with its payload. Point your service at: POST {path}  (keep this URL secret).",
             TriggerKind.Watch => $"Watch '{trigger.Name}' created: {Describe(trigger)}, checking {trigger.SourceTool} for {WatchSummary(trigger)}. " +
-                                 "It runs without the LLM and only reports newly matching items.",
-            _ => $"Schedule '{trigger.Name}' created for {targetEntry.Role}: {Describe(trigger)}."
+                                 (trigger.WatchMode == "notify" ? "It runs without the LLM and only reports newly matching items." : "It runs without the LLM and starts a run only for newly matching items."),
+            _ => $"Schedule '{trigger.Name}' created: runs the pipeline {Describe(trigger)}."
         });
 
         // Agents never see a webhook's secret; the API caller (the user) does.
@@ -349,7 +333,7 @@ public sealed partial class WorkspaceGrain(
         Remember(idempotencyKey, result);
         await SaveAsync();
         await AuditAsync(createdBy == "user" ? "user" : "agent", createdBy, createdBy == "user" ? "You" : createdBy, "trigger.added", trigger.Name, "ok",
-            $"{trigger.Kind} '{trigger.Name}' for {trigger.TargetAgentId}: {(trigger.Kind == TriggerKind.Webhook ? "on webhook" : Describe(trigger))}",
+            $"{trigger.Kind} '{trigger.Name}': {(trigger.Kind == TriggerKind.Webhook ? "on webhook" : Describe(trigger))}",
             JsonSerializer.Serialize(new { kind = trigger.Kind.ToString(), trigger.Instruction, trigger.SourceTool, watch = trigger.Kind == TriggerKind.Watch ? WatchSummary(trigger) : null }),
             key: $"trigger:{trigger.TriggerId}:added");
 
@@ -488,31 +472,27 @@ public sealed partial class WorkspaceGrain(
         return WebhookOutcome.Accepted;
     }
 
-    /// <summary>Wakes the trigger's agent. If that agent is gone, the coordinator gets the event
-    /// instead, so a trigger never fires into the void.</summary>
-    private async Task FireAsync(TriggerDefinition trigger, string eventId, string eventName, string payload)
-    {
-        var target = trigger.TargetAgentId;
-        var entry = await Registry.GetAsync(target);
-        if (entry is null || IsTerminal(entry.Status))
-        {
-            target = S.CoordinatorAgentId;
-            payload = $"(The trigger's agent {trigger.TargetAgentId} is no longer running, so this came to you. " +
-                      "Reassign or delete the trigger.)\n" + payload;
-        }
+    /// <summary>Who started a run a trigger started (for usage by user).</summary>
+    private const string TriggerStarter = "trigger";
 
+    /// <summary>Starts a run of the pipeline with the event as its input. The run id is fixed by the
+    /// event id, so an event fired twice (after a crash) starts one run.</summary>
+    private async Task FireAsync(TriggerDefinition trigger, string eventId, string eventName, string input)
+    {
         trigger.LastFiredAt = DateTimeOffset.UtcNow;
         trigger.FireCount++;
 
-        await GrainFactory.GetGrain<IAgentGrain>(target).HandleEvent(new EnvironmentEvent
+        var source = eventName.ToLowerInvariant();
+        var result = await StartRunCoreAsync(input, source, startedBy: TriggerStarter, trigger, eventId);
+        if (!result.Success)
         {
-            EventId = eventId,
-            EventName = eventName,
-            Payload = payload
-        });
+            trigger.DroppedCount++;
+            AppendChat(ChatAuthorKind.System, "system", "Workspace", $"{eventName} trigger '{trigger.Name}' couldn't start a run: {result.Message}", "warning");
+            await SaveAsync();
+        }
 
-        await PublishAsync(RuntimeEventType.TriggerFired, $"{eventName} trigger '{trigger.Name}' fired for {target}.",
-            new Dictionary<string, string> { ["trigger_id"] = trigger.TriggerId, ["kind"] = eventName, ["target"] = target }, target);
+        await PublishAsync(RuntimeEventType.TriggerFired, $"{eventName} trigger '{trigger.Name}' fired: run #{result.Number} {result.Message}.",
+            new Dictionary<string, string> { ["trigger_id"] = trigger.TriggerId, ["kind"] = eventName, ["run_id"] = result.RunId ?? string.Empty });
     }
 
     // ---- Watches: recurring checks with no LLM in the loop -------------------------
@@ -530,7 +510,8 @@ public sealed partial class WorkspaceGrain(
         // Only reads: a watch runs unattended, forever, so it must never change anything.
         if (source.SideEffects != Tools.ToolSideEffects.ReadOnly) return ($"'{spec.SourceTool}' can change data; a watch may only call read-only tools.", null);
 
-        var mode = spec.WatchMode?.ToLowerInvariant() is "wake_agent" ? "wake_agent" : "notify";
+        // "wake_agent" is the name from before pipelines.
+        var mode = spec.WatchMode?.ToLowerInvariant() is "run" or "wake_agent" ? "run" : "notify";
         trigger.Rule = spec.Rule;
         trigger.SourceTool = spec.SourceTool.Trim();
         trigger.SourceArgumentsJson = string.IsNullOrWhiteSpace(spec.SourceArgumentsJson) ? "{}" : spec.SourceArgumentsJson;
@@ -590,9 +571,11 @@ public sealed partial class WorkspaceGrain(
             trigger.ConsecutiveFailures++;
             if (trigger.ConsecutiveFailures == 3)
             {
-                // Tell someone once, rather than failing silently forever or on every tick.
-                await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-fail-{tick}", "WatchFailing",
-                    $"[Watch '{trigger.Name}' has failed 3 checks in a row: {error}]\nFix or delete it (list_triggers, delete_trigger).");
+                // Tell the user once, rather than failing silently forever or on every tick.
+                var failing = AppendChat(ChatAuthorKind.System, $"watch:{trigger.TriggerId}", $"Watch: {trigger.Name}",
+                    $"Watch '{trigger.Name}' has failed 3 checks in a row: {error}. Fix or delete it in Triggers.", "warning");
+                QueueNotifications(failing);
+                await KickOutboxAsync();
             }
 
             return;
@@ -611,7 +594,7 @@ public sealed partial class WorkspaceGrain(
         trigger.Alerts++;
         var list = string.Join("; ", fresh.Take(20).Select(x => x.Summary)) + (fresh.Count > 20 ? $"; …and {fresh.Count - 20} more" : string.Empty);
 
-        if (trigger.WatchMode == "wake_agent")
+        if (trigger.WatchMode is "run" or "wake_agent")
         {
             // Pay for an LLM call only now, and only for the matching items.
             await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{tick}", "Watch",
@@ -1215,20 +1198,6 @@ public sealed partial class WorkspaceGrain(
         return Task.FromResult(new BudgetDecision { Allowed = reason is null, Reason = reason });
     }
 
-    public async Task PostAgentPausedNotice(string agentId, string role, string reason, DateTimeOffset resumesAt)
-    {
-        if (!Exists || S.AgentPauseNotices.GetValueOrDefault(agentId) == resumesAt) return;
-
-        S.AgentPauseNotices[agentId] = resumesAt;
-        var notice = AppendChat(ChatAuthorKind.System, "system", "Workspace",
-            $"'{role}' has used its own daily {reason} and is paused until {resumesAt.UtcDateTime:yyyy-MM-dd HH:mm} UTC. " +
-            "The coordinator and other agents keep working.", "warning");
-        QueueNotifications(notice);
-        await SaveAsync();
-        await KickOutboxAsync();
-        await ChangedAsync("agent paused");
-    }
-
     public async Task PostBudgetNotice(string reason)
     {
         var today = Today();
@@ -1289,26 +1258,16 @@ public sealed partial class WorkspaceGrain(
 
     private WorkspacePolicy BuildPolicy() => new()
     {
-        StandingBudget = new ResourceBudget
-        {
-            MaxTokens = _opts.StandingAgentDailyTokens,
-            MaxToolCalls = _opts.StandingAgentDailyToolCalls,
-            MaxCostUsd = _opts.StandingAgentDailyCostUsd,
-            MaxChildren = 20,
-            MaxDurationSeconds = int.MaxValue,
-            PeriodHours = 24
-        },
         WorkerBudget = new ResourceBudget
         {
             MaxTokens = _opts.WorkerTokens,
             MaxToolCalls = _opts.WorkerToolCalls,
             MaxCostUsd = _opts.WorkerCostUsd,
-            // Workers do their one job themselves. Work that turns out bigger goes back to whoever
-            // spawned them as a partial result, rather than growing a tree of helpers.
+            // Helpers do their one job themselves. Work that turns out bigger goes back to the stage
+            // that started them as a partial result, rather than growing a tree of helpers.
             MaxChildren = 0,
             MaxDurationSeconds = _opts.WorkerMaxDurationSeconds
         },
-        StandingContextWindow = _opts.StandingContextWindow,
         MaxAgents = _opts.MaxAgentsPerWorkspace,
         MaxSpawnsPerRequest = _opts.MaxSpawnsPerRequest,
         TokensLeftToday = Math.Max(0, S.DailyTokenLimit - (S.UsageDay == Today() ? S.TokensToday : 0)),
@@ -1323,7 +1282,8 @@ public sealed partial class WorkspaceGrain(
     {
         if (!Exists) return null;
 
-        var entries = await Registry.FindAsync(new FindAgentsQuery { RootAgentId = S.CoordinatorAgentId });
+        // The agents of runs in progress (stages and their helpers); finished runs' agents are on the runs' pages.
+        var entries = await RunAgentsAsync(liveOnly: false);
         var agents = await Task.WhenAll(entries.Select(async e =>
         {
             AgentSnapshot? snap = null;
@@ -1337,9 +1297,8 @@ public sealed partial class WorkspaceGrain(
                 Goal = e.Goal,
                 Status = e.Status.ToString(),
                 ParentAgentId = e.ParentAgentId,
-                Standing = snap?.Standing ?? false,
-                TokensUsed = (snap?.Usage.LifetimeTokens ?? 0) + (snap?.Usage.TokensUsed ?? 0),
-                CostUsd = (snap?.Usage.LifetimeCostUsd ?? 0) + (snap?.Usage.CostUsd ?? 0),
+                TokensUsed = snap?.Usage.TokensUsed ?? 0,
+                CostUsd = snap?.Usage.CostUsd ?? 0,
                 CurrentTask = snap?.CurrentTask,
                 CachedInputTokens = snap?.Usage.CachedInputTokens ?? 0,
                 CreatedAt = snap?.CreatedAt,
@@ -1359,7 +1318,6 @@ public sealed partial class WorkspaceGrain(
             Status = S.Status,
             CreatedAt = S.CreatedAt,
             UpdatedAt = S.UpdatedAt,
-            CoordinatorAgentId = S.CoordinatorAgentId,
             Conversation = S.Conversation.ToList(),
             Triggers = S.Triggers.Values.Select(t => ToView(t, includeSecret: false)).ToList(),
             Agents = agents.ToList(),
@@ -1374,6 +1332,9 @@ public sealed partial class WorkspaceGrain(
             LlmCallsAvoided = S.LlmCallsAvoided,
             SafetyPolicy = S.SafetyPolicy,
             TemplateId = S.TemplateId,
+            Pipeline = S.Pipeline,
+            Runs = S.Runs.AsEnumerable().Reverse().Take(50).ToList(),
+            QueuedRuns = S.RunQueue.Count,
             Approvals = S.Approvals.Values
                 .OrderBy(a => a.Status == ApprovalStatus.Pending ? 0 : 1)
                 .ThenByDescending(a => a.RequestedAt)
@@ -1383,11 +1344,6 @@ public sealed partial class WorkspaceGrain(
     }
 
     // ---- Helpers ------------------------------------------------------------
-
-    private async Task<IReadOnlyList<AgentDirectoryEntry>> LiveAgentsAsync() =>
-        (await Registry.FindAsync(new FindAgentsQuery { RootAgentId = S.CoordinatorAgentId }))
-        .Where(a => !IsTerminal(a.Status))
-        .ToList();
 
     private static bool IsTerminal(AgentStatus status) =>
         status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut;
@@ -1462,7 +1418,6 @@ public sealed partial class WorkspaceGrain(
         TriggerId = t.TriggerId,
         Kind = t.Kind,
         Name = t.Name,
-        TargetAgentId = t.TargetAgentId,
         Instruction = t.Instruction,
         IntervalSeconds = t.IntervalSeconds,
         Cron = t.Cron,

@@ -10,14 +10,13 @@ using Xunit;
 namespace AgentRuntime.IntegrationTests;
 
 /// <summary>Compiled watches: recurring checks the runtime evaluates without the LLM, reporting
-/// only newly matching items.</summary>
+/// only newly matching items, or starting a run of the pipeline with just those items.</summary>
 public sealed class WatchTests : IAsyncLifetime
 {
     private InProcessTestCluster _cluster = null!;
     private readonly ConcurrentQueue<LlmCompletionRequest> _requests = new();
     private string _mode = "notify";
     private string _sourceTool = "crm__list_inventory";
-    private readonly ConcurrentQueue<string> _toolResults = new();
 
     public async Task InitializeAsync()
     {
@@ -44,44 +43,27 @@ public sealed class WatchTests : IAsyncLifetime
 
     private static LlmCompletionResponse Respond(params ToolCall[] calls) => new() { ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls };
 
+    /// <summary>The pipeline's one stage reports the run's input: in run mode, the watch's matches.</summary>
     private LlmCompletionResponse Script(LlmCompletionRequest r)
     {
         _requests.Enqueue(r);
-        var last = r.Messages[^1];
-        if (last.Role == ChatRole.Tool)
-        {
-            _toolResults.Enqueue(last.Content ?? string.Empty);
-            return Respond(Call("wait_for_events", new { summary = "Watching." }));
-        }
-
-        var input = last.Content ?? string.Empty;
-        if (input.Contains("[Message from the user") && input.Contains("watch stock"))
-        {
-            return Respond(Call("create_watch", new
-            {
-                name = "Low stock",
-                source_tool = _sourceTool,
-                items_path = "$.body.items[*]",
-                conditions = new[] { new { field = "qty", op = "<", value = "10" } },
-                key_field = "sku",
-                display_fields = new[] { "sku", "qty" },
-                every_minutes = 1.0 / 60,
-                mode = _mode,
-                urgency = "urgent",
-                message = "Low stock: {items}",
-                instruction = "Decide how much to reorder."
-            }));
-        }
-
-        if (input.Contains("[Watch 'Low stock'")) return Respond(Call("notify_user", new { text = "Agent saw: " + input.Split('\n').Last() }));
-        return Respond(Call("wait_for_events", new { summary = "Idle." }));
+        var input = r.Messages[^1].Content ?? string.Empty;
+        var matches = input.Split('\n').FirstOrDefault(l => l.Contains("sku=")) ?? "nothing";
+        return Respond(Call("complete_task", new { status = "completed", summary = "Agent saw: " + matches }));
     }
 
     private async Task<string> WorkspaceWithCrmAsync()
     {
         var id = WorkspaceIds.New();
-        await Workspace(id).Create(new WorkspaceCreationRequest { Name = "Shop", Goal = "Run my shop." });
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Status == "Waiting"));
+        await Workspace(id).Create(new WorkspaceCreationRequest
+        {
+            Name = "Shop",
+            Goal = "Run my shop.",
+            Pipeline = new Pipelines.PipelineDefinition
+            {
+                Stages = [new Pipelines.PipelineStage { StageId = "reorder", Name = "Reorder", Instructions = "Decide what to reorder.", Retries = 0 }]
+            }
+        });
         var c = await Workspace(id).AddConnection(new ConnectionRequest
         {
             PluginId = "fake-crm",
@@ -93,6 +75,26 @@ public sealed class WatchTests : IAsyncLifetime
         Assert.True(c.Success, c.Message);
         return id;
     }
+
+    /// <summary>The watch a person sets up on the Triggers tab: low stock, checked every second.</summary>
+    private Task<WorkspaceActionResult> AddWatchAsync(string id) => Workspace(id).AddTrigger(new TriggerSpec
+    {
+        Kind = TriggerKind.Watch,
+        Name = "Low stock",
+        SourceTool = _sourceTool,
+        Rule = new WatchRule
+        {
+            ItemsPath = "$.body.items[*]",
+            Conditions = [new WatchCondition { Field = "qty", Op = "<", Value = "10" }],
+            KeyField = "sku",
+            DisplayFields = ["sku", "qty"]
+        },
+        EveryMinutes = 1.0 / 60,
+        WatchMode = _mode,
+        Urgency = "urgent",
+        MessageTemplate = "Low stock: {items}",
+        Instruction = "Decide how much to reorder."
+    }, "user", string.Empty, revealSecret: false);
 
     private async Task<WorkspaceSnapshot> WaitForAsync(string id, Func<WorkspaceSnapshot, bool> condition, int timeoutSeconds = 30)
     {
@@ -117,11 +119,12 @@ public sealed class WatchTests : IAsyncLifetime
         FakeCrmPlugin.Inventory["TEE"] = 40;
         var id = await WorkspaceWithCrmAsync();
 
-        await Workspace(id).PostUserMessage("watch stock", null, null);
+        var created = await AddWatchAsync(id);
+        Assert.True(created.Success, created.Message);
         var s = await WaitForAsync(id, s => Count(s, "Low stock: sku=MUG, qty=3") == 1);
 
-        // The agent's dry run showed what the rule sees right now.
-        var dryRun = JsonDocument.Parse(_toolResults.First()).RootElement.GetProperty("dry_run");
+        // The dry run at creation showed what the rule sees right now.
+        var dryRun = JsonDocument.Parse(created.ResultJson!).RootElement.GetProperty("dry_run");
         Assert.Equal(2, dryRun.GetProperty("items_found").GetInt32());
         Assert.Equal(1, dryRun.GetProperty("matching_now").GetInt32());
 
@@ -138,6 +141,7 @@ public sealed class WatchTests : IAsyncLifetime
 
         Assert.Equal(1, Count(s, "sku=MUG"));
         Assert.Equal(llmCallsAfterSetup, _requests.Count); // every check ran without the LLM
+        Assert.Empty(s.Runs);
         var watch = s.Triggers.Single();
         Assert.Equal(TriggerKind.Watch, watch.Kind);
         Assert.Equal(2, watch.Alerts);
@@ -148,20 +152,23 @@ public sealed class WatchTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task WakeAgentMode_WakesTheAgentWithOnlyTheMatchingItems()
+    public async Task RunMode_StartsARunWithOnlyTheMatchingItems()
     {
-        _mode = "wake_agent";
+        _mode = "run";
         FakeCrmPlugin.Inventory["MUG"] = 3;
         FakeCrmPlugin.Inventory["TEE"] = 40;
         var id = await WorkspaceWithCrmAsync();
 
-        await Workspace(id).PostUserMessage("watch stock", null, null);
-        var s = await WaitForAsync(id, s => s.Conversation.Any(c => c.Text.StartsWith("Agent saw:")));
+        Assert.True((await AddWatchAsync(id)).Success);
+        var s = await WaitForAsync(id, s => s.Conversation.Any(c => c.Text.Contains("Agent saw:")));
 
-        var woke = _requests.Select(r => r.Messages[^1].Content ?? string.Empty).Single(c => c.Contains("[Watch 'Low stock'"));
-        Assert.Contains("sku=MUG, qty=3", woke);
-        Assert.DoesNotContain("TEE", woke);
-        Assert.Contains("Decide how much to reorder.", woke);
+        var run = Assert.Single(s.Runs);
+        Assert.Equal("watch", run.Source);
+        Assert.Equal("Low stock", run.TriggerName);
+        var input = _requests.Select(r => r.Messages[^1].Content ?? string.Empty).Single(c => c.Contains("[Watch 'Low stock'"));
+        Assert.Contains("sku=MUG, qty=3", input);
+        Assert.DoesNotContain("TEE", input);
+        Assert.Contains("Decide how much to reorder.", input);
     }
 
     [Fact]
@@ -170,10 +177,10 @@ public sealed class WatchTests : IAsyncLifetime
         _sourceTool = "crm__delete_customer";
         var id = await WorkspaceWithCrmAsync();
 
-        await Workspace(id).PostUserMessage("watch stock", null, null);
-        await WaitForAsync(id, _ => !_toolResults.IsEmpty);
+        var created = await AddWatchAsync(id);
 
-        Assert.Contains("read-only", JsonDocument.Parse(_toolResults.First()).RootElement.GetProperty("error").GetString());
+        Assert.False(created.Success);
+        Assert.Contains("read-only", created.Message);
         Assert.Empty((await Workspace(id).GetSnapshot())!.Triggers);
         Assert.DoesNotContain(FakeCrmPlugin.ToolCalls, c => c.Tool == "delete_customer");
     }

@@ -124,7 +124,7 @@ public sealed class TwilioSmsPlugin(IHttpClientFactory httpClientFactory) : IToo
             new()
             {
                 Name = "send_sms",
-                Description = "Send an SMS to a phone number (E.164, e.g. +15551234567). For alerting the workspace owner, use notify_user instead.",
+                Description = "Send an SMS to a phone number (E.164, e.g. +15551234567).",
                 SideEffects = ToolSideEffects.NonIdempotent,
                 JsonSchema = """{ "type": "object", "properties": { "to": { "type": "string" }, "body": { "type": "string" } }, "required": ["to", "body"] }"""
             }
@@ -255,7 +255,7 @@ public sealed class EmailSmtpPlugin : IToolProviderPlugin, INotificationChannelP
             new()
             {
                 Name = "send_email",
-                Description = "Send an email. For alerting the workspace owner, use notify_user instead.",
+                Description = "Send an email.",
                 SideEffects = ToolSideEffects.NonIdempotent,
                 JsonSchema = """
                 { "type": "object", "properties": { "to": { "type": "string" }, "subject": { "type": "string" }, "body": { "type": "string" } }, "required": ["to", "subject", "body"] }
@@ -373,7 +373,7 @@ public sealed class TelegramPlugin(IHttpClientFactory httpClientFactory) : ITool
             new()
             {
                 Name = "send_message",
-                Description = "Send a Telegram message to a chat id. For alerting the workspace owner, use notify_user instead.",
+                Description = "Send a Telegram message to a chat id.",
                 SideEffects = ToolSideEffects.NonIdempotent,
                 JsonSchema = """{ "type": "object", "properties": { "chat_id": { "type": "string" }, "text": { "type": "string" } }, "required": ["chat_id", "text"] }"""
             }

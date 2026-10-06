@@ -1,39 +1,40 @@
 # Flagship: incident response
 
 The **Incident response** workspace template brings together what makes Aktor different:
-- open-ended investigation by a team that forms per incident;
-- long-running monitoring that survives restarts;
+- an investigation pipeline that every alert runs, with parallel branches that merge;
+- each stage an agent that decides how to do its part, within runtime-enforced limits;
 - fixes that wait for a human, under a runtime-enforced policy;
 - a tamper-evident record of all of it, shared by everyone in the organization.
 
 ```mermaid
+flowchart LR
+    Alert((Monitoring alert)) -- "webhook" --> T[Triage]
+    T --> L[Logs investigator<br/>ops__query_logs]
+    T --> M[Metrics investigator<br/>ops__query_metrics]
+    T --> D[Deploy investigator<br/>ops__list_deploys]
+    L --> X[Diagnose<br/>writes incident-report.md]
+    M --> X
+    D --> X
+    X --> R[Remediate<br/>ops__rollback_deploy: needs approval]
+    R -- "urgent result" --> You((On-call))
+```
+
+```mermaid
 sequenceDiagram
     participant M as Monitoring
-    participant C as Coordinator
-    participant L as Logs Investigator
-    participant X as Metrics Investigator
-    participant D as Deploy Investigator
+    participant W as Workspace
+    participant Run as Run #1
+    participant I as Investigators (3)
     participant U as On-call (you)
-    M->>C: alert (webhook)
-    C->>C: plan_request: 3 parallel parts
-    par
-        C->>L: spawn
-        L->>L: ops__query_logs
-        L-->>C: findings
-    and
-        C->>X: spawn
-        X->>X: ops__query_metrics
-        X-->>C: findings
-    and
-        C->>D: spawn
-        D->>D: ops__list_deploys
-        D-->>C: findings
-    end
-    C->>C: write incident-report.md
-    C->>U: ops__rollback_deploy needs approval (A1)
-    U-->>C: approve A1 (dashboard, chat, SMS or Telegram)
-    C->>C: rollback runs once
-    C->>U: urgent summary + report
+    M->>W: alert (webhook)
+    W->>Run: start with the alert as input
+    Run->>I: Triage done: start logs, metrics, deploys in parallel
+    I-->>Run: findings
+    Run->>Run: Diagnose writes incident-report.md
+    Run->>U: Remediate: ops__rollback_deploy needs approval (A1)
+    U-->>Run: approve A1 (dashboard, chat, SMS or Telegram)
+    Run->>Run: rollback runs once
+    Run->>U: urgent result + report
 ```
 
 ## Trying it
@@ -47,39 +48,40 @@ sequenceDiagram
    curl -X POST "$AKTOR_URL/api/hooks/<workspace>/<trigger>/<secret>" -H 'Content-Type: application/json' \
      -d '{"alert":"HighErrorRate","service":"checkout-service","severity":"critical","value":"18.4%"}'
    ```
-3. Watch the team view:
-   - three investigators start, query the simulated system and report;
-   - `incident-report.md` appears under **Files**;
-   - a rollback approval (`A1`) appears in the chat and the **Safety** tab.
-4. **Approve** (or reply `approve A1`). The rollback runs once, and the coordinator posts an urgent
-   summary. **Reject** instead, and nothing changes in production; the summary says so.
+3. Watch the run on the canvas:
+   - Triage reads the alert, then the three investigators work at the same time;
+   - Diagnose writes `incident-report.md` (it appears under **Files**, in `run-1/`);
+   - Remediate's rollback approval (`A1`) appears in the chat and the **Safety** tab.
+4. **Approve** (or reply `approve A1`). The rollback runs once, and the run's urgent result is
+   posted (and forwarded to connected channels). **Reject** instead, and nothing changes in
+   production; the result says so.
 5. The **Safety → Audit** log shows every query, the approval, and the rollback, and the chain
    verifies.
 
-With `LLM_PROVIDER=Mock` the investigation follows a script (`MockIncidentBehavior`), so the demo
-runs with no API key. With a real model, the same template runs live: the coordinator follows the
-instructions in the workspace goal, and nothing about the flow is hard-coded.
+With `LLM_PROVIDER=Mock` each stage follows a script (`MockIncidentBehavior`), so the demo runs with
+no API key. With a real model, the same pipeline runs live: each stage's agent follows its
+instructions, and you can change any stage, or add one ("add a customer-impact estimate in
+parallel with the investigators"), like any pipeline.
 
 ## What the template sets up
 
 | | |
 |---|---|
-| **Goal** | Plain instructions for the coordinator: plan; start one investigator each for logs, metrics and deploys; write `incident-report.md`; propose a rollback only with evidence; notify the user urgently. Edit them like any workspace goal. |
+| **Pipeline** | Triage → Logs, Metrics and Deploy investigators (in parallel; each keeps going if one fails) → Diagnose → Remediate (no retries: a rollback isn't something to try twice). Runs may take 4 hours, so a person has time to approve; 2 at once; results are urgent. |
 | **Safety** | `SemiAutonomous`, so writes that can't be undone need approval. Rules: `*__rollback*` → ask; `shell_exec` → deny. Approvals expire after 4 hours. |
-| **Team shape** | At most 6 live agents; the coordinator may run 3 investigators at once; investigators can't spawn (`max_fan_out_by_depth: [3, 0]`, counting live agents only, since a workspace lives for months). |
-| **Webhook** | "Incoming alerts", targeting the coordinator. Its secret URL is returned once, when the workspace is created. |
+| **Webhook** | "Incoming alerts": each delivery starts a run with the alert as its input. Its secret URL is returned once, when the workspace is created. |
 | **Connection** | `ops` (plugin `demo-ops`): a simulated checkout-service incident. `query_logs`, `query_metrics` and `list_deploys` are read-only; `rollback_deploy` is non-idempotent. |
 | **Budget** | 2M tokens / $10 per day for the whole workspace. |
 
 ## Going to production
 
-Replace the demo connection with real ones, keeping the tool names or editing the goal:
+Replace the demo connection with real ones, keeping the tool names or editing the stages:
 - **Logs and metrics:** an HTTP API connection to Datadog, Grafana Loki or Prometheus, or an MCP
   server. Expose read-only `query_logs` and `query_metrics`.
 - **Deploys and rollbacks:** your CD system or GitHub deployments. Mark the rollback tool
   non-idempotent so the policy asks first.
 - **Alerts:** point PagerDuty, Alertmanager or Datadog webhooks at the template's webhook URL.
-- **On-call:** connect Slack, SMS or Telegram so the urgent summary and the approval reach you, and
+- **On-call:** connect Slack, SMS or Telegram so the urgent result and the approval reach you, and
   reply `approve A1` from your phone.
 
 ## API
@@ -93,7 +95,7 @@ Replace the demo connection with real ones, keeping the tool names or editing th
 ## Tests
 
 `IncidentResponseTests` (real API, Postgres container, Mock provider):
-- An alert on the real webhook starts the three investigators and writes the report. The rollback
-  waits for approval and runs nothing before it. Once approved, it runs exactly once, the user is
-  told, and the audit log has every step and verifies.
+- An alert on the real webhook starts one run: triage and the three investigators finish and the
+  report is written. The rollback waits for approval and runs nothing before it. Once approved, it
+  runs exactly once, the result reaches the user, and the audit log has every step and verifies.
 - A rejected rollback never runs, and simulate-alert works.

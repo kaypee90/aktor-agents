@@ -10,9 +10,10 @@ using Xunit;
 namespace AgentRuntime.IntegrationTests;
 
 /// <summary>
-/// Phase 3 end to end: plugins installed as workspace connections — tools reaching agents with
-/// secrets from the vault (and never the other way), per-tool enablement, notification routing
-/// with retries, and inbound commands from allowed senders only.
+/// Phase 3 end to end: plugins installed as workspace connections — tools reaching pipeline
+/// stages with secrets from the vault (and never the other way), per-tool enablement, routing of
+/// run results to channels with retries, and inbound messages (which start runs) from allowed
+/// senders only.
 /// </summary>
 public sealed class IntegrationTests : IAsyncLifetime
 {
@@ -48,40 +49,48 @@ public sealed class IntegrationTests : IAsyncLifetime
 
     private static LlmCompletionResponse Respond(params ToolCall[] calls) => new() { ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls };
 
-    /// <summary>The coordinator looks customers up with the CRM tool and reports urgently; other
-    /// commands get an info-level acknowledgement.</summary>
+    /// <summary>The pipeline's one stage looks customers up with the CRM tool; other inputs get an
+    /// acknowledgement. Its report is the run's result.</summary>
     private LlmCompletionResponse Script(LlmCompletionRequest r)
     {
         _requests.Enqueue(r);
         var last = r.Messages[^1];
         if (last.Role == ChatRole.Tool)
         {
-            return last.ToolName == "crm__lookup_customer"
-                ? Respond(Call("notify_user", new { text = "Found: " + last.Content, urgency = "urgent" }))
-                : Respond(Call("wait_for_events", new { summary = "Done." }));
+            return Respond(Call("complete_task", new { status = "completed", summary = last.ToolName == "crm__lookup_customer" ? "Found: " + last.Content : "Done." }));
         }
 
-        var input = last.Content ?? string.Empty;
-        if (!input.Contains("[Message from the user")) return Respond(Call("wait_for_events", new { summary = "Ready." }));
-
-        var text = input.Split('\n').Last();
+        // The run's input: the line after the "This run's input" heading.
+        var text = (last.Content ?? string.Empty).Split("## This run's input", 2).ElementAtOrDefault(1)?
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).FirstOrDefault() ?? string.Empty;
         if (text.Contains("customer 42"))
         {
-            return r.Tools.Any(t => t.Name == "crm__lookup_customer")
-                ? Respond(Call("crm__lookup_customer", new { id = "42" }))
-                : Respond(Call("crm__lookup_customer", new { id = "42" })); // try anyway: must be refused
+            // Called whether or not it's offered: a disabled tool must be refused.
+            return Respond(Call("crm__lookup_customer", new { id = "42" }));
         }
 
-        return Respond(Call("notify_user", new { text = "ack: " + text }));
+        return Respond(Call("complete_task", new { status = "completed", summary = "ack: " + text }));
     }
 
     private async Task<string> CreateWorkspaceAsync()
     {
         var id = WorkspaceIds.New();
-        await Workspace(id).Create(new WorkspaceCreationRequest { Name = "CRM", Goal = "Help me with my customers." });
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Status == "Waiting"));
+        await Workspace(id).Create(new WorkspaceCreationRequest
+        {
+            Name = "CRM",
+            Goal = "Help me with my customers.",
+            Pipeline = new Pipelines.PipelineDefinition
+            {
+                // Results go out urgently, so channels that forward only urgent messages get them.
+                ResultUrgency = "urgent",
+                Stages = [new Pipelines.PipelineStage { StageId = "assist", Name = "Assist", Instructions = "Help with the customer request.", Retries = 0 }]
+            }
+        });
         return id;
     }
+
+    private static bool Finished(WorkspaceSnapshot s, string text) =>
+        s.Conversation.Any(c => c.Text.Contains("finished") && c.Text.Contains(text));
 
     private async Task<ConnectionView> ConnectAsync(string id, NotifyLevel level = NotifyLevel.Urgent, List<string>? senders = null)
     {
@@ -123,12 +132,12 @@ public sealed class IntegrationTests : IAsyncLifetime
         Assert.DoesNotContain("api_key", connection.Settings.Keys); // a secret field sent as a setting is not kept
 
         await Workspace(id).PostUserMessage("look up customer 42", null, null);
-        var s = await WaitForAsync(id, s => s.Conversation.Any(c => c.Text.StartsWith("Found:")));
+        var s = await WaitForAsync(id, s => Finished(s, "Found:"));
 
         var call = Assert.Single(FakeCrmPlugin.ToolCalls);
         Assert.Equal("lookup_customer", call.Tool);
         Assert.Equal(Secret, call.ApiKey);
-        Assert.Contains("Ama Mensah", s.Conversation.Last(c => c.Text.StartsWith("Found:")).Text);
+        Assert.Contains("Ama Mensah", s.Conversation.Last(c => c.Text.Contains("Found:")).Text);
 
         // The agent's LLM saw the namespaced tool, but never the secret.
         Assert.Contains(_requests, r => r.Tools.Any(t => t.Name == "crm__lookup_customer"));
@@ -152,7 +161,7 @@ public sealed class IntegrationTests : IAsyncLifetime
         static bool IsRefusal(LlmCompletionRequest r) => r.Messages[^1] is { Role: ChatRole.Tool, ToolName: "crm__lookup_customer" };
         await WaitForAsync(id, _ => _requests.Skip(before).Any(IsRefusal));
 
-        var askedWith = _requests.Skip(before).First(r => r.Messages[^1].Content?.Contains("customer 42") == true);
+        var askedWith = _requests.Skip(before).First(r => r.Messages.Count == 2 && r.Messages[^1].Content?.Contains("customer 42") == true);
         Assert.DoesNotContain(askedWith.Tools, t => t.Name == "crm__lookup_customer");
         Assert.Contains(askedWith.Tools, t => t.Name == "crm__delete_customer");
         Assert.Empty(FakeCrmPlugin.ToolCalls);
@@ -167,17 +176,16 @@ public sealed class IntegrationTests : IAsyncLifetime
         await ConnectAsync(id, NotifyLevel.Urgent);
         FakeCrmPlugin.FailNextNotifications = 2;
 
-        await Workspace(id).PostUserMessage("say hi", null, null);            // info: chat only
-        await Workspace(id).PostUserMessage("look up customer 42", null, null); // urgent: forwarded
+        await Workspace(id).PostUserMessage("look up customer 42", null, null); // the result is urgent: forwarded
 
-        await WaitForAsync(id, s => s.Conversation.Any(c => c.Text.StartsWith("Found:")) && s.PendingNotifications == 0, 45);
+        await WaitForAsync(id, s => Finished(s, "Found:") && s.PendingNotifications == 0, 45);
         await Task.Delay(1000);
 
+        // Run notices (started) are info: chat only. The result was delivered once despite two failures.
         var delivered = Assert.Single(FakeCrmPlugin.Notifications);
-        Assert.StartsWith("Found:", delivered.Text);
+        Assert.Contains("Found:", delivered.Text);
         Assert.Equal("urgent", delivered.Urgency);
         Assert.Equal("CRM", delivered.WorkspaceName);
-        Assert.DoesNotContain(FakeCrmPlugin.Notifications, n => n.Text.StartsWith("ack:"));
     }
 
     [Fact]
@@ -195,14 +203,14 @@ public sealed class IntegrationTests : IAsyncLifetime
         await Workspace(id).HandleInbound(c.ConnectionId, token, Msg("+15557654321", "m2", "status please")); // provider redelivery
         Assert.Equal("ok", accepted.Body);
 
-        var s = await WaitForAsync(id, s => s.Conversation.Any(e => e.Text == "ack: status please"));
+        var s = await WaitForAsync(id, s => Finished(s, "ack: status please"));
         await Task.Delay(1000);
         s = (await Workspace(id).GetSnapshot())!;
 
         Assert.Single(s.Conversation, e => e.AuthorKind == ChatAuthorKind.User && e.Text == "status please");
         Assert.Equal("You (via crm)", s.Conversation.Single(e => e.Text == "status please").AuthorName);
         Assert.DoesNotContain(s.Conversation, e => e.Text.Contains("delete everything"));
-        Assert.Single(s.Conversation, e => e.Text == "ack: status please");
+        Assert.Single(s.Runs);
     }
 
     [Fact]
