@@ -8,7 +8,7 @@ import type { TriggerView, WorkspaceFile, WorkspaceSnapshot } from "@/lib/worksp
 import { STATUS_STYLES } from "@/lib/status";
 import { useLiveList } from "@/lib/useLiveList";
 import { BotIcon } from "../BotIcon";
-import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import { EventStream } from "../EventStream";
 import { FilesPanel } from "./FilesPanel";
 import { WorkspaceChat } from "./WorkspaceChat";
@@ -150,6 +150,7 @@ function readOnlyTools(workspace: WorkspaceSnapshot) {
 }
 
 function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
+  const mentionables = useWorkspaceMentionables(workspace);
   const [kind, setKind] = useState<"schedule" | "webhook" | "watch">("schedule");
   const [name, setName] = useState("");
   const [instruction, setInstruction] = useState("");
@@ -285,7 +286,7 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
           )
         )}
         {(kind !== "watch" || mode === "run") && (
-          <MentionTextarea value={instruction} onValueChange={setInstruction} rows={2} mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+          <MentionTextarea value={instruction} onValueChange={setInstruction} rows={2} mentionables={mentionables}
             placeholder={kind === "watch" ? "What the run should do with the matches" : "The run's input each time, e.g. Summarise yesterday's support tickets"} className={`${field} block`} />
         )}
         {kind !== "webhook" && (

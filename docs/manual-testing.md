@@ -428,6 +428,8 @@ Remove the fact checker
 - [ ] `Use @default-model for @<a stage>` (Mock LLM): the preview changes that stage's model.
 - [ ] In a stage's instructions, a run's input and the chat, `@` suggests the pipeline's stages.
 - [ ] In the task composer, `@` suggests models; picking one switches the model picker to it.
+- [ ] With a skill set up (Skills), `@` in a stage's instructions suggests it as `@skill:<name>`; once
+      saved, the stage on the canvas shows the skill's name. The task composer suggests skills too.
 - [ ] An email address such as `ops@example.com` opens no suggestions.
 
 ### W5. Triggers start runs

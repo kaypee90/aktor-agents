@@ -63,8 +63,8 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
       </div>
       <Field label="Instructions" hint="What the agent does with the run's input and earlier stages' results, for whom, to what standard.">
         <MentionTextarea className={cx(inputClass, "min-h-28 resize-y")} value={draft.instructions ?? ""} onValueChange={(v) => set("instructions", v)}
-          mentionables={mentionables.filter((m) => m.kind === "agent")}
-          placeholder="Review @backend's changes for security issues (auth, injection, secrets) and list what must be fixed before release. Type @ to mention a stage." />
+          mentionables={mentionables.filter((m) => m.kind === "agent" || m.kind === "skill")}
+          placeholder="Review @backend's changes for security issues (auth, injection, secrets) and list what must be fixed before release. Type @ to mention a stage or a skill: the agent loads a mentioned skill first." />
       </Field>
       {models.length > 1 && (
         <Field label="Model" hint="A stronger model for hard stages, a cheaper one for simple ones.">

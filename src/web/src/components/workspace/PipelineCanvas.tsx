@@ -27,6 +27,7 @@ import { cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 import type { PipelineDefinition, PipelineStage, StagePosition, StageRunStatus, StageRunView } from "@/lib/pipelineTypes";
 import { BotIcon } from "../BotIcon";
+import { mentionsIn } from "@/components/ui/MentionTextarea";
 
 const COLUMN = 290;
 const ROW = 150;
@@ -174,6 +175,9 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
         )}
         {!status && stage.max_helpers > 0 && <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{stage.max_helpers} helper{stage.max_helpers > 1 ? "s" : ""}</span>}
         {!status && stage.model_profile_id && <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" title="Runs on this model">@{stage.model_profile_id === "server" ? "default-model" : stage.model_profile_id}</span>}
+        {!status && mentionsIn(stage.instructions).filter((h) => h.startsWith("skill:")).map((h) => (
+          <span key={h} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" title="Loads and follows this skill">{h.slice(6)}</span>
+        ))}
         {!status && data.output && <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">output</span>}
       </div>
 

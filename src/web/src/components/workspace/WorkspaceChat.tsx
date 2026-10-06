@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, postWorkspaceMessage } from "@/lib/api";
 import type { ChatEntry, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { Icons } from "@/components/ui/icons";
-import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import { BotIcon } from "../BotIcon";
 import { ApprovalCard } from "./SafetyPanel";
 
@@ -97,6 +97,7 @@ export function WorkspaceChat({ workspace, onSent, onSelectRun }: {
   onSent: () => void;
   onSelectRun: (runId: string) => void;
 }) {
+  const mentionables = useWorkspaceMentionables(workspace);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,13 +144,13 @@ export function WorkspaceChat({ workspace, onSent, onSelectRun }: {
           <MentionTextarea
             value={text}
             onValueChange={setText}
-            mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+            mentionables={mentionables}
             above
             wrapperClassName="flex-1"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e); } }}
             rows={2}
             disabled={archived}
-            placeholder={archived ? "This workspace is archived." : "Send a task to run the pipeline on… (Enter to send, @ to mention a stage)"}
+            placeholder={archived ? "This workspace is archived." : "Send a task to run the pipeline on… (Enter to send, @ to mention a stage or skill)"}
             className="block w-full resize-none rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           />
           <button type="submit" disabled={sending || archived || !text.trim()} className="rounded bg-brand-500 px-4 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">

@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { getLlmSettings, modelChoices, type ModelChoice } from "@/lib/api";
+import { createPortal } from "react-dom";
+import { getLlmSettings, listSkills, modelChoices, type ModelChoice, type SkillSummary } from "@/lib/api";
 import { cx } from "./index";
 
 /**
  * Something you can @mention in a text box (docs/workspaces.md#mentions): an agent (a pipeline
- * stage, by its id), a model (an organization's profile, by its id) or a provider. The server
- * explains each mention to the model that reads the text, so "@claude-fast for @diagnose" means
- * exactly that, however capable the model is.
+ * stage, by its id), a model (an organization's profile, by its id), a provider, or a skill
+ * (`@skill:name`). The server explains each mention to the model that reads the text, so
+ * "@claude-fast for @diagnose" means exactly that, however capable the model is, and an agent
+ * whose instructions name a skill loads it first.
  */
-export type Mentionable = { kind: "agent" | "model" | "provider"; handle: string; label: string; detail?: string };
+export type Mentionable = { kind: "agent" | "model" | "provider" | "skill"; handle: string; label: string; detail?: string };
 
 /** The handle the server's own model goes by (Mentions.DefaultModelHandle). */
 export const DEFAULT_MODEL_HANDLE = "default-model";
@@ -19,6 +21,7 @@ const KIND_STYLE: Record<Mentionable["kind"], { label: string; className: string
   agent: { label: "Agent", className: "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300" },
   model: { label: "Model", className: "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" },
   provider: { label: "Provider", className: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300" },
+  skill: { label: "Skill", className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
 };
 
 // The organization's models change rarely: one request serves every text box for a minute.
@@ -58,9 +61,42 @@ export function useModelMentionables(): Mentionable[] {
   }, [models]);
 }
 
+// Skills, per scope (the organization's, or a workspace's own plus the organization's), for a minute.
+const skillsCache = new Map<string, { at: number; promise: Promise<SkillSummary[]> }>();
+function loadSkills(workspaceId: string | null): Promise<SkillSummary[]> {
+  const key = workspaceId ?? "";
+  const hit = skillsCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.promise;
+  const enabled = (list: SkillSummary[]) => list.filter((s) => s.enabled);
+  const promise = Promise.all([
+    listSkills().then(enabled).catch(() => []),
+    workspaceId ? listSkills(workspaceId).then(enabled).catch(() => []) : Promise.resolve([]),
+  ]).then(([org, own]) => [...own, ...org.filter((s) => !own.some((o) => o.name === s.name))]);
+  skillsCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+/** The skills agents here can use, as mentionables: a workspace's own and its organization's. */
+export function useSkillMentionables(workspaceId?: string | null): Mentionable[] {
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  useEffect(() => {
+    let live = true;
+    loadSkills(workspaceId ?? null).then((s) => { if (live) setSkills(s); });
+    return () => { live = false; };
+  }, [workspaceId]);
+  return useMemo(() => skills.map((s) => ({ kind: "skill" as const, handle: `skill:${s.name}`, label: s.name, detail: s.description })), [skills]);
+}
+
 /** Pipeline stages as mentionable agents. */
 export function stageMentionables(stages: { stage_id: string; name: string; role?: string }[]): Mentionable[] {
   return stages.map((s) => ({ kind: "agent", handle: s.stage_id, label: s.name, detail: s.role && s.role !== s.name ? s.role : undefined }));
+}
+
+/** What a workspace's text boxes can mention: its pipeline's stages and the skills its agents use. */
+export function useWorkspaceMentionables(workspace: { workspace_id: string; pipeline?: { stages: { stage_id: string; name: string; role?: string }[] } | null }): Mentionable[] {
+  const skills = useSkillMentionables(workspace.workspace_id);
+  const stages = workspace.pipeline?.stages;
+  return useMemo(() => [...stageMentionables(stages ?? []), ...skills], [stages, skills]);
 }
 
 /** The handles mentioned in a text (without the @). */
@@ -88,6 +124,9 @@ type Props = Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "
 export function MentionTextarea({ value, onValueChange, mentionables, singleLine, above, ref, wrapperClassName, onKeyDown, ...rest }: Props) {
   const box = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const [query, setQuery] = useState<{ text: string; start: number } | null>(null);
+  // Where the list goes on screen. It's drawn on the page itself, so a box inside a clipped
+  // container (a rounded card, a modal) can't cut it off.
+  const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number; width: number } | null>(null);
   const [active, setActive] = useState(0);
   // Where the caret goes once a picked mention is in the box (set as soon as React renders it,
   // so keys typed right after picking land after the mention).
@@ -103,6 +142,11 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
   const matches = useMemo(() => {
     if (!query) return [];
     const q = query.text.toLowerCase();
+    // Just "@": a few of each kind, so every kind shows up.
+    if (q === "") {
+      const kinds = ["agent", "skill", "model", "provider"] as const;
+      return kinds.flatMap((k) => mentionables.filter((m) => m.kind === k).slice(0, 4)).slice(0, 12);
+    }
     return mentionables
       .filter((m) => m.handle.toLowerCase().includes(q) || m.label.toLowerCase().includes(q))
       .sort((a, b) => Number(!a.handle.toLowerCase().startsWith(q)) - Number(!b.handle.toLowerCase().startsWith(q)))
@@ -110,10 +154,23 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
   }, [query, mentionables]);
   const open = matches.length > 0;
 
+  // The list is placed on the page, so it closes when anything scrolls or the window resizes.
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (!(e.target instanceof Node && document.querySelector("[data-mention-list]")?.contains(e.target))) setQuery(null); };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+  }, [open]);
+
   function detect(el: HTMLTextAreaElement | HTMLInputElement) {
     const caret = el.selectionStart ?? el.value.length;
     const m = /(^|[\s(,])@([\w.:/-]*)$/.exec(el.value.slice(0, caret));
     setQuery(m ? { text: m[2], start: caret - m[2].length - 1 } : null);
+    if (m) {
+      const r = el.getBoundingClientRect();
+      setAnchor({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
+    }
     setActive(0);
   }
 
@@ -172,10 +229,17 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
       {singleLine
         ? <input ref={setRef} {...(shared as unknown as React.InputHTMLAttributes<HTMLInputElement>)} />
         : <textarea ref={setRef} {...shared} />}
-      {open && (
-        <ul role="listbox"
-          className={cx("absolute left-0 z-50 max-h-64 w-[min(360px,100%)] min-w-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 text-xs shadow-xl dark:border-zinc-700 dark:bg-zinc-900",
-            above ? "bottom-full mb-1" : "top-full mt-1")}>
+      {open && anchor && createPortal(
+        <ul role="listbox" data-mention-list
+          style={{
+            left: Math.min(anchor.left, window.innerWidth - 376),
+            width: Math.max(256, Math.min(360, anchor.width)),
+            // Above when asked, or when there's no room below.
+            ...(above || anchor.bottom + 270 > window.innerHeight
+              ? { bottom: window.innerHeight - anchor.top + 4 }
+              : { top: anchor.bottom + 4 }),
+          }}
+          className="fixed z-[100] max-h-64 overflow-y-auto rounded-lg border border-zinc-200 bg-white py-1 text-xs shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
           {matches.map((m, i) => (
             <li key={`${m.kind}:${m.handle}`} role="option" aria-selected={i === active}
               onMouseDown={(e) => { e.preventDefault(); pick(m); }}
@@ -189,7 +253,8 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
             </li>
           ))}
           <li className="border-t border-zinc-100 px-2.5 pt-1 text-[10px] text-zinc-400 dark:border-zinc-800">↑↓ to move · Enter or Tab to pick · Esc to close</li>
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   );

@@ -206,4 +206,47 @@ public class MentionTests
         Assert.Contains("@remediate: the 'Remediate' stage", user);
         Assert.Contains("model_profile_id", request.Tools[0].JsonSchema);
     }
+
+    private static readonly List<(string Name, string Description)> Skills = [("incident-postmortems", "How we write postmortems.")];
+
+    [Fact]
+    public void Skills_are_mentioned_with_their_prefix_and_explained_when_they_exist()
+    {
+        Assert.Equal(["incident-postmortems"], Mentions.SkillsIn(["Write it up per @skill:Incident-Postmortems", "@diagnose", null]));
+        var lines = Mentions.Describe(["Use @skill:incident-postmortems and @skill:unknown"], Stages, Models, Skills);
+        Assert.Equal(["@skill:incident-postmortems"], lines.Select(l => l[..l.IndexOf(':', 7)]));
+        Assert.Contains("load_skill", lines[0]);
+    }
+
+    [Fact]
+    public void The_editor_is_told_the_skills()
+    {
+        var request = PipelineDesignPrompt.BuildRequest(new PipelineDefinition { Version = 1, Stages = Stages }, "Have @remediate follow @skill:incident-postmortems",
+            "Incidents", [], new PipelineOptions(), null, 1000, Models, Skills);
+        Assert.Contains("incident-postmortems: How we write postmortems.", request.Messages[0].Content);
+        Assert.Contains("write @skill:<name> in its instructions", request.Messages[0].Content);
+        Assert.Contains("@skill:incident-postmortems: the 'incident-postmortems' skill", request.Messages[1].Content);
+    }
+
+    [Fact]
+    public void An_agent_whose_goal_names_a_skill_is_told_to_load_it_first_even_past_the_listing_limit()
+    {
+        var section = new AgentRuntime.Skills.SkillsSection(Microsoft.Extensions.Options.Options.Create(new AgentRuntime.Skills.SkillOptions { MaxListedInPrompt = 1 }));
+        var skills = new[] { "a-skill", "b-skill", "postmortems" }
+            .Select(n => new AgentRuntime.Skills.SkillSummary(n, $"About {n}.", 1, true, DateTimeOffset.UtcNow, 0)).ToList();
+        var state = new AgentRuntime.Contracts.AgentState { AgentId = "a1", Name = "A", Role = "worker", Goal = "Write the postmortem with @skill:postmortems." };
+        var text = section.Render(new AgentRuntime.LLM.AgentPromptContext
+        {
+            State = state, AvailableTools = [], AutonomyLevel = AgentRuntime.Contracts.AutonomyLevel.Autonomous, EnvironmentSummary = "env", Skills = skills
+        });
+        Assert.Contains("- postmortems: About postmortems. [ASKED FOR]", text);
+        Assert.DoesNotContain("- a-skill", text);
+        Assert.Contains("@skill:postmortems: load that skill with load_skill before anything else", text);
+
+        state.Goal = "No skill named.";
+        Assert.DoesNotContain("ASKED FOR", section.Render(new AgentRuntime.LLM.AgentPromptContext
+        {
+            State = state, AvailableTools = [], AutonomyLevel = AgentRuntime.Contracts.AutonomyLevel.Autonomous, EnvironmentSummary = "env", Skills = skills
+        }));
+    }
 }

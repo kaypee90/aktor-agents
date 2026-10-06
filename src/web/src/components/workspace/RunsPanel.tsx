@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button, ErrorBanner, StatusBadge, ago, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import { apiErrorMessage, controlPipelineRun, startPipelineRun } from "@/lib/api";
 import { RUN_ACTIVE, type PipelineRunView, type WorkspaceRunSummary } from "@/lib/pipelineTypes";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
@@ -27,6 +27,7 @@ export function RunsPanel({ workspace, selectedRun, onSelectRun, onChanged }: {
   onSelectRun: (runId: string | null) => void;
   onChanged: () => void;
 }) {
+  const mentionables = useWorkspaceMentionables(workspace);
   const [input, setInput] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,12 +67,12 @@ export function RunsPanel({ workspace, selectedRun, onSelectRun, onChanged }: {
         <MentionTextarea
           value={input}
           onValueChange={setInput}
-          mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+          mentionables={mentionables}
           wrapperClassName="flex-1"
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(e); }}
           rows={2}
           disabled={archived}
-          placeholder={archived ? "This workspace is archived." : "What should the pipeline do this time? (⌘/Ctrl+Enter to run, @ to mention a stage)"}
+          placeholder={archived ? "This workspace is archived." : "What should the pipeline do this time? (⌘/Ctrl+Enter to run, @ to mention a stage or skill)"}
           className={cx(inputClass, "block min-h-[2.75rem] resize-y text-xs")}
         />
         <Button type="submit" variant="primary" icon={<Icons.Play className="h-3.5 w-3.5" />} disabled={!input.trim() || starting || archived}>

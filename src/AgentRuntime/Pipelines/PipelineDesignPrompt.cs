@@ -79,9 +79,10 @@ public static class PipelineDesignPrompt
     /// <param name="models">Models a stage can run on (the organization's profiles and the server's).</param>
     public static LlmCompletionRequest BuildRequest(PipelineDefinition? current, string request, string workspacePurpose,
         IReadOnlyList<string> connectionTools, PipelineOptions limits, string? model, int maxOutputTokens,
-        IReadOnlyCollection<MentionableModel>? models = null)
+        IReadOnlyCollection<MentionableModel>? models = null, IReadOnlyCollection<(string Name, string Description)>? skills = null)
     {
         models ??= [];
+        skills ??= [];
         var system = new StringBuilder();
         system.AppendLine(SystemMarker);
         system.AppendLine("""
@@ -102,6 +103,12 @@ public static class PipelineDesignPrompt
         system.AppendLine($"Limits: at most {limits.MaxStages} stages, {limits.MaxHelpersPerStage} helpers per stage, {limits.MaxRetries} retries.");
         system.AppendLine($"Capabilities (grant tools): {string.Join(", ", AgentToolCatalog.KnownCapabilities)}. Every stage can read and write the run's files.");
         if (connectionTools.Count > 0) system.AppendLine($"Connected services' tools a stage can use: {string.Join(", ", connectionTools.Take(60))}.");
+        if (skills.Count > 0)
+        {
+            system.AppendLine("Skills (written instructions agents can follow): " +
+                              string.Join("; ", skills.Take(40).Select(s => $"{s.Name}: {Clip(s.Description, 150)}")) + ". " +
+                              "To have a stage follow one, write @skill:<name> in its instructions.");
+        }
         if (models.Count > 1)
         {
             system.AppendLine("Models a stage can run on (set model_profile_id only when asked to; otherwise stages use the workspace's model): " +
@@ -131,7 +138,7 @@ public static class PipelineDesignPrompt
 
         user.AppendLine();
         user.AppendLine($"What the person wants: {request.Trim()}");
-        var mentions = Mentions.Describe([request], current?.Stages ?? [], models);
+        var mentions = Mentions.Describe([request], current?.Stages ?? [], models, skills);
         if (mentions.Count > 0)
         {
             user.AppendLine();

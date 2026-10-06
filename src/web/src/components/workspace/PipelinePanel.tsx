@@ -5,7 +5,7 @@ import { Button, ErrorBanner, Field, Modal, ago, cx, inputClass } from "@/compon
 import { Icons } from "@/components/ui/icons";
 import { apiErrorMessage, applyPipelineEdits, getPipelineHistory, proposePipelineChange, restorePipelineVersion, savePipeline, savePipelineLayout } from "@/lib/api";
 import type { PipelineDefinition, PipelineEditOp, PipelineProposal, PipelineRunView, StagePatch, StagePosition } from "@/lib/pipelineTypes";
-import { MentionTextarea, stageMentionables, useModelMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useModelMentionables, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { PipelineCanvas, type CanvasEditing } from "./PipelineCanvas";
 import { NEW_STAGE, StageEditor } from "./StageEditor";
@@ -44,7 +44,8 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   const editable = !archived && !proposal && !run;
   const shown = proposal?.preview ?? pipeline;
   const models = useModelMentionables();
-  const mentionables = useMemo(() => [...stageMentionables(pipeline.stages), ...models], [pipeline.stages, models]);
+  const workspaceMentions = useWorkspaceMentionables(workspace);
+  const mentionables = useMemo(() => [...workspaceMentions, ...models], [workspaceMentions, models]);
   const nameOf = (id: string) => pipeline.stages.find((s) => s.stage_id === id)?.name ?? id;
 
   /** Applies edits to the version on screen; a conflict means someone else changed it first. */
@@ -194,7 +195,7 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
                 onValueChange={setRequest}
                 mentionables={mentionables}
                 disabled={archived || busy === "propose"}
-                placeholder="Describe a change: add a security reviewer after @backend, use @default-model for @research… (@ to mention)"
+                placeholder="Describe a change: add a security reviewer after @backend, use @default-model for @research, have @write follow @skill:… (@ to mention)"
                 className={cx(inputClass, "py-1.5 pl-8 text-xs")}
               />
             </div>

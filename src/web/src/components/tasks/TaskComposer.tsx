@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiErrorMessage, createTask, getLlmSettings, previewTask, uploadFiles, type CreateTaskInput, type LlmSettingsView } from "@/lib/api";
 import { AttachButton, DropZone, PendingFiles, useAttachments } from "@/components/files/Attachments";
@@ -9,7 +9,7 @@ import type { TaskPreview } from "@/lib/types";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { Button, ErrorBanner, Field, Modal, Toggle, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import { DEFAULT_MODEL_HANDLE, MentionTextarea, mentionsIn, useModelMentionables } from "@/components/ui/MentionTextarea";
+import { DEFAULT_MODEL_HANDLE, MentionTextarea, mentionsIn, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
 
 const STARTER_KEY = "aktor:starterGoal";
 
@@ -124,6 +124,8 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
   const [estimate, setEstimate] = useState<{ preview: TaskPreview; mustConfirm: boolean } | null>(null);
 
   const modelMentions = useModelMentionables();
+  const skillMentions = useSkillMentionables();
+  const goalMentions = useMemo(() => [...modelMentions, ...skillMentions], [modelMentions, skillMentions]);
   // "@claude-fast" in the goal picks that model; "@anthropic" picks its first model if none is picked.
   function goalChanged(text: string) {
     setGoal(text);
@@ -201,7 +203,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
           ref={box}
           value={goal}
           onValueChange={goalChanged}
-          mentionables={modelMentions}
+          mentionables={goalMentions}
           onInput={(e) => {
             const el = e.currentTarget;
             el.style.height = "auto";
@@ -210,7 +212,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); run(); } }}
           onPaste={(e) => { const pasted = Array.from(e.clipboardData.files); if (pasted.length > 0) { e.preventDefault(); files.add(pasted); } }}
           rows={3}
-          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context, and type @ to pick a model."
+          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context, and type @ to pick a model or a skill."
           className="block max-h-80 w-full resize-none border-0 bg-transparent px-5 pt-4 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-600"
           disabled={busy !== null}
         />

@@ -74,7 +74,7 @@ Cancelling stops every agent of the run and skips its unfinished stages.
     edits its settings, including which model it runs on.
 - **Mentions:** in the text boxes (describe a change, stage instructions, a run's input, the chat,
   triggers, a new workspace's description, and the task composer), type `@` to pick an agent, a
-  model or a provider. See [Mentions](#mentions).
+  model, a provider or a skill. See [Mentions](#mentions).
 - **Versions:** every applied change is a new version; an edit based on an older version is
   refused as a conflict. **History** restores any kept version (as a new version).
 - **From a template:** see [templates.md](templates.md) for nine real-world pipelines to start from.
@@ -90,15 +90,19 @@ Typing `@` in a text box suggests what you can refer to; ↑/↓ and Enter or Ta
 | An agent (a pipeline stage), by its id | `@diagnose` | That stage |
 | A model, by its profile id | `@claude-fast`, `@default-model` (the server's own) | That model (Settings → Models) |
 | A provider | `@anthropic` | The organization's models from that provider |
+| A skill | `@skill:incident-postmortems` | That skill ([skills.md](skills.md)): the workspace's own, else the organization's |
 
 A mention means one thing to whichever model reads it: the runtime adds a short glossary to the
 text it passes on (`Mentions`), so a weaker model doesn't have to guess.
 - **Describe a change:** "use `@claude-fast` for `@triage`" runs that stage on that model. The
   editor is told every model a stage can run on, and a model that isn't set up is refused.
 - **A run's input, stage instructions, the chat and triggers:** each stage's agent is told which
-  stage a mention is.
+  stage a mention is. A stage whose instructions (or the run's input) name a skill is told to load
+  it before anything else, and the canvas shows the skill on the stage.
+- **Describe a change:** the editor is told the skills too, so "have `@write` follow
+  `@skill:report-style`" puts the skill in that stage's instructions.
 - **The task composer:** mentioning a model picks it for the task; mentioning a provider picks its
-  first model if none is picked yet.
+  first model if none is picked yet; mentioning a skill makes the task's first agent load it first.
 
 Unknown handles are left as they are, and an email address is never read as a mention.
 

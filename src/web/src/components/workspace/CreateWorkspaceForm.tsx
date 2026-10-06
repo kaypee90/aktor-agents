@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
 import Link from "next/link";
-import { MentionTextarea, useModelMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
 import { pipelineShape, type WorkspaceTemplate } from "@/lib/workspaceTypes";
 
 // Deliberately varied: workspaces are generic, and these only seed the form. Each describes a
@@ -57,7 +57,9 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
     }
   }
 
-  const models = useModelMentionables();
+  const modelMentions = useModelMentionables();
+  const skillMentions = useSkillMentionables();
+  const models = useMemo(() => [...modelMentions, ...skillMentions], [modelMentions, skillMentions]);
   const input = "w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
   return (
@@ -115,7 +117,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       <label className="block space-y-1 text-xs">
         <span className="text-zinc-500">What is this pipeline for?</span>
         <MentionTextarea value={goal} onValueChange={setGoal} rows={4} className={`${input} block`} mentionables={models}
-          placeholder="e.g. Turn each new support ticket into a drafted reply; use @default-model for the drafting. (@ to mention a model)" />
+          placeholder="e.g. Turn each new support ticket into a drafted reply; use @default-model for the drafting. (@ to mention a model or skill)" />
       </label>
       <div className="grid grid-cols-2 gap-3 text-xs">
         <label className="space-y-1">

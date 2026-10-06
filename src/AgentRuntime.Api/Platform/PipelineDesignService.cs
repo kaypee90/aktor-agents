@@ -32,6 +32,7 @@ public sealed class PipelineDesignService(
     ILLMProvider llm,
     ILlmSettingsResolver llmSettings,
     LlmSettingsService modelSettings,
+    Skills.ISkillStore skillStore,
     IGrainFactory grains,
     IOptions<PipelineOptions> options,
     ILogger<PipelineDesignService> logger)
@@ -52,7 +53,9 @@ public sealed class PipelineDesignService(
             : (await grains.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools()).Select(t => t.Name).ToList();
         var prices = await llmSettings.ResolveAsync(tenantId, null, ct);
         var models = await ModelsAsync(tenantId, ct);
-        var llmRequest = PipelineDesignPrompt.BuildRequest(current, request, purpose, connectionTools, options.Value, prices.Model, MaxOutputTokens, models) with
+        var skills = (await Skills.SkillStoreExtensions.ListForAgentAsync(skillStore, TenantIds.Normalize(tenantId), workspaceId, ct))
+            .Select(s => (s.Name, s.Description)).ToList();
+        var llmRequest = PipelineDesignPrompt.BuildRequest(current, request, purpose, connectionTools, options.Value, prices.Model, MaxOutputTokens, models, skills) with
         {
             TenantId = tenantId,
             ModelProfileId = prices.ProfileId ?? ModelProfiles.ServerId
