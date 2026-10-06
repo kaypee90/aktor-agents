@@ -82,11 +82,18 @@ When a call needs approval:
 1. The runtime records a request with a short code (`A3`). The request holds the tool, its full
    arguments, the agent's stated reason (its visible message, never hidden reasoning) and the rule
    that triggered it.
-2. The request is posted to the chat as a warning, so it also reaches your notification channels.
+2. You're told, wherever you are:
+   - the request is posted to the chat as **urgent**, so it reaches your notification channels;
+   - the dashboard's sidebar shows an **approvals bell** with the count (also in the browser tab's
+     title), and a toast pops up with Approve and Reject. Allow desktop notifications from the
+     bell's panel to be told while the tab is in the background;
+   - the workspace shows a banner across the top, and the waiting agent is marked **Needs
+     approval** on the live canvas.
 3. **The agent parks.** The call has no result yet, so the turn stays open. The agent's state is
    saved and it uses no LLM calls while it waits.
 4. You decide in one of three ways:
-   - **Safety tab or chat banner:** Approve or Reject, with an optional reason.
+   - **Bell, toast, workspace banner, Safety tab or chat card:** Approve or Reject, with an
+     optional reason.
    - **Chat, SMS or Telegram:** reply `approve A3`, `yes A3`, `reject A3 too expensive` or `no A3`.
      Channel replies count only from the connection's **allowed senders**, and decisions aren't
      forwarded to the agents as instructions.
@@ -143,6 +150,7 @@ This is **tamper-evident, not tamper-proof.**
 |---|---|---|
 | `GET` / `PUT` | `/api/workspaces/{id}/policy` | `{autonomy, rules: [{name, tool_pattern, applies, decision}], approval_timeout_hours, team?}` |
 | `GET` | `/api/workspaces/{id}/approvals?status=Pending` | Newest first |
+| `GET` | `/api/approvals/pending` | Pending requests across your workspaces, oldest first: `[{workspace_id, workspace_name, approval}]` |
 | `POST` | `/api/workspaces/{id}/approvals/{approvalId or code}/decision` | `{approve, reason?}` |
 | `GET` | `/api/workspaces/{id}/audit?actor=&action=tool.&q=&since=&before=&limit=` | Newest first; `before` pages by sequence number |
 | `GET` | `/api/workspaces/{id}/audit/verify` | `{valid, records, first_broken_seq, message}` |

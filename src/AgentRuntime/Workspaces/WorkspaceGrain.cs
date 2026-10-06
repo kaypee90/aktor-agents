@@ -1049,7 +1049,9 @@ public sealed partial class WorkspaceGrain(
         var ask = AppendChat(ChatAuthorKind.System, "system", "Workspace",
             $"Approval {approval.Code} needed: {agentName} wants to run {approval.ToolName} with {Truncate(approval.ArgumentsJson, 300)}" +
             (approval.AgentNote is null ? string.Empty : $" — \"{Truncate(approval.AgentNote, 200)}\"") +
-            $". Reply \"approve {approval.Code}\" or \"reject {approval.Code} <reason>\".", "warning");
+            $". Reply \"approve {approval.Code}\" or \"reject {approval.Code} <reason>\".",
+            // A person has to act, and the agent waits until they do: it reaches every channel.
+            "urgent");
         QueueNotifications(ask);
         await SaveAsync();
         await KickOutboxAsync();
@@ -1059,6 +1061,10 @@ public sealed partial class WorkspaceGrain(
         await ChangedAsync($"approval {approval.Code} requested");
         return Permission(approval);
     }
+
+    public Task<List<ApprovalRecord>> GetPendingApprovals() => Task.FromResult(Exists
+        ? S.Approvals.Values.Where(a => a.Status == ApprovalStatus.Pending && a.ExpiresAt > DateTimeOffset.UtcNow).OrderBy(a => a.RequestedAt).ToList()
+        : []);
 
     public async Task<WorkspaceActionResult> DecideApproval(string approvalIdOrCode, bool approve, string? reason, string decidedBy, string channel)
     {

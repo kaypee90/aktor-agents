@@ -66,6 +66,8 @@ export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentN
   const finished = ["Completed", "Failed", "TimedOut", "Terminated"].includes(agent.status);
   const failed = agent.status === "Failed" || agent.status === "TimedOut";
   const paused = finished ? null : pauseInfo(agent);
+  // Set by the runtime while a tool call waits for someone to approve it.
+  const approval = !finished && agent.current_task?.startsWith("Waiting for approval") === true;
 
   return (
     <div
@@ -73,10 +75,15 @@ export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentN
       className={`relative overflow-visible rounded-lg border bg-white px-2 py-1.5 shadow-sm dark:bg-zinc-900 ${
         selected ? "border-blue-500 ring-2 ring-brand-500/40"
           : failed ? "border-rose-300 dark:border-rose-800"
-          : paused ? "border-amber-400 dark:border-amber-700"
+          : paused || approval ? "border-amber-400 dark:border-amber-700"
           : "border-zinc-200 dark:border-zinc-700"
-      } ${finished && !failed ? "opacity-60" : ""}`}
+      } ${approval ? "ring-2 ring-amber-400/60" : ""} ${finished && !failed ? "opacity-60" : ""}`}
     >
+      {approval && (
+        <span className="absolute -right-2 -top-2.5 z-10 animate-pulse rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow">
+          Needs approval
+        </span>
+      )}
       <Handles />
       <SpeechBubble bubble={bubble} />
 

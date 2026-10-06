@@ -475,6 +475,10 @@ one-sentence body about the lavender-and-cedar candle.
 **Check:**
 - [ ] The stage's call **parks**, and an approval card (e.g. A1) appears in the chat, showing the
       tool, the arguments and the agent's stated reason. The stage shows as Working on the canvas.
+- [ ] Within a few seconds, from any page: the sidebar's bell shows **1 approval waiting**, the tab
+      title starts with `(1)`, and a toast offers Approve and Reject. The workspace shows the
+      approval banner, and the agent on the Live agents canvas is marked **Needs approval**.
+- [ ] Deciding from the toast or the banner clears all of them.
 - [ ] Typing `approve A1` in the chat runs the call **once**, and the run finishes.
 - [ ] The Safety tab's audit log lists the run, the request, the decision and the call, and
       **Verify integrity** reports the chain intact.

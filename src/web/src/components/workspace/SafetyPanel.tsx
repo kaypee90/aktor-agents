@@ -49,6 +49,9 @@ function prettyArgs(json: string) {
 }
 
 /** A pending approval with Approve / Reject; used in the Safety tab and above the chat. */
+/** Fired on the window when an approval is decided, so every view showing approvals refreshes. */
+export const APPROVALS_CHANGED = "aktor:approvals-changed";
+
 export function ApprovalCard({ workspaceId, approval, onDecided, compact = false }: {
   workspaceId: string;
   approval: ApprovalRecord;
@@ -64,6 +67,7 @@ export function ApprovalCard({ workspaceId, approval, onDecided, compact = false
     setError(null);
     try {
       await decideApproval(workspaceId, approval.approval_id, approve, reason.trim());
+      window.dispatchEvent(new Event(APPROVALS_CHANGED));
       onDecided();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -331,6 +335,33 @@ export function SafetyPanel({ workspace, onChanged }: { workspace: WorkspaceSnap
       <PolicyEditor key={JSON.stringify(policy)} workspaceId={workspace.workspace_id} policy={policy} onSaved={onChanged} />
 
       <AuditLog workspaceId={workspace.workspace_id} refreshKey={workspace.updated_at} />
+    </div>
+  );
+}
+
+/**
+ * Pending approvals across the top of a workspace, with Approve and Reject right there: the agent
+ * that asked is stopped until someone decides, so it shouldn't take a trip to the Safety tab.
+ */
+export function ApprovalBanner({ workspace, onDecided }: {
+  workspace: { workspace_id: string; approvals?: ApprovalRecord[] };
+  onDecided: () => void;
+}) {
+  const pending = workspace.approvals?.filter((a) => a.status === "Pending") ?? [];
+  if (pending.length === 0) return null;
+  return (
+    <div role="alert" className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 dark:border-amber-800 dark:bg-amber-500/10">
+      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-200">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+        {pending.length === 1 ? "An agent is waiting for your approval" : `${pending.length} agents are waiting for your approval`}
+      </div>
+      <div className="flex max-h-48 gap-2 overflow-x-auto pb-1">
+        {pending.map((a) => (
+          <div key={a.approval_id} className="w-80 shrink-0">
+            <ApprovalCard workspaceId={workspace.workspace_id} approval={a} onDecided={onDecided} compact />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

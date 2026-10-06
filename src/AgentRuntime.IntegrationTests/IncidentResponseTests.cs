@@ -130,8 +130,16 @@ public sealed class IncidentResponseTests(ApiTestHostFixture fixture, ITestOutpu
 
         var ws = await WaitForAsync(api, id, w => w.GetProperty("approvals").EnumerateArray().Any(a => a.GetProperty("status").GetString() == "Pending"), "the approval");
         var approval = ws.GetProperty("approvals").EnumerateArray().Single(a => a.GetProperty("status").GetString() == "Pending");
+
+        // The dashboard's approvals bell lists it across workspaces, and drops it once decided.
+        var pending = (await Json(await api.GetAsync("/api/approvals/pending"))).EnumerateArray().Single();
+        Assert.Equal(id, pending.GetProperty("workspace_id").GetString());
+        Assert.Equal("Prod incidents", pending.GetProperty("workspace_name").GetString());
+        Assert.Equal(approval.GetProperty("approval_id").GetString(), pending.GetProperty("approval").GetProperty("approval_id").GetString());
+
         await Json(await api.PostAsJsonAsync($"/api/workspaces/{id}/approvals/{approval.GetProperty("approval_id").GetString()}/decision",
             new { approve = false, reason = "fixing forward instead" }));
+        Assert.Empty((await Json(await api.GetAsync("/api/approvals/pending"))).EnumerateArray());
 
         ws = await WaitForAsync(api, id, w => RunResults(w).Any(t => t.Contains("did not run")), "the user to be told it didn't run");
         var connectionId = ws.GetProperty("connections").EnumerateArray().Single(c => c.GetProperty("name").GetString() == "ops").GetProperty("connection_id").GetString()!;

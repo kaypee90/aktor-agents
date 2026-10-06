@@ -153,6 +153,11 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     Task<Safety.ToolCallPermission> CheckToolCall(Safety.ToolCallPermissionRequest request);
 
     /// <summary>A human's decision, by approval id or its short code ("A7").</summary>
+    /// <summary>Approval requests waiting for a person, oldest first. Read-only, so it interleaves:
+    /// the dashboard asks every workspace for these often.</summary>
+    [AlwaysInterleave]
+    Task<List<Safety.ApprovalRecord>> GetPendingApprovals();
+
     Task<WorkspaceActionResult> DecideApproval(string approvalIdOrCode, bool approve, string? reason, string decidedBy, string channel);
 
     [AlwaysInterleave]

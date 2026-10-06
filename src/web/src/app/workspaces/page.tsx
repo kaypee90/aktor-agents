@@ -15,6 +15,7 @@ import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm"
 import { PipelinePanel } from "@/components/workspace/PipelinePanel";
 import { RunsPanel } from "@/components/workspace/RunsPanel";
 import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
+import { ApprovalBanner } from "@/components/workspace/SafetyPanel";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
 import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
@@ -279,6 +280,7 @@ function Workspaces() {
     main = (
       <div className="flex h-full min-w-0 flex-col">
         <WorkspaceHeader workspace={workspace} onChanged={refresh} />
+        <ApprovalBanner workspace={workspace} onDecided={refresh} />
         <Split className="min-h-0 flex-1" sized="second" initial={380} min={280} max={900} minOther={420} storageKey="workspace-side" label="Resize the side panel">
           <Split sized="second" initial={360} min={260} max={720} minOther={360} storageKey="workspace-agent" label="Resize the agent details">
             {center}

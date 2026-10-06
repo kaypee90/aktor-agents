@@ -505,6 +505,18 @@ export function updateSafetyPolicy(workspaceId: string, policy: import("./worksp
   return apiFetch<import("./workspaceTypes").SafetyPolicy>(`/api/workspaces/${workspaceId}/policy`, { method: "PUT", body: JSON.stringify(policy) });
 }
 
+/** An approval request waiting for a person, with its workspace. */
+export type PendingApproval = {
+  workspace_id: string;
+  workspace_name: string;
+  approval: import("./workspaceTypes").ApprovalRecord;
+};
+
+/** Approval requests waiting in any of the organization's workspaces, oldest first. */
+export function listPendingApprovals() {
+  return apiFetch<PendingApproval[]>("/api/approvals/pending");
+}
+
 export function decideApproval(workspaceId: string, approvalId: string, approve: boolean, reason?: string) {
   return apiFetch<{ message: string }>(`/api/workspaces/${workspaceId}/approvals/${approvalId}/decision`, {
     method: "POST",
