@@ -24,9 +24,14 @@ public sealed class AgentRegistryGrain(
     public Task<SpawnValidationResult> ValidateSpawnAsync(string? parentAgentId, string? role = null, string? tenantId = null, int tenantMaxActive = 0)
     {
         // Limits are per organization: one tenant filling up can't stop another from working.
+        // A pipeline run's own entry isn't an agent, and a finished run's agents are bounded by its
+        // stages, so neither counts: a scheduled pipeline mustn't use the organization's lifetime
+        // allowance up run by run.
         var tenant = Tenancy.TenantIds.Normalize(tenantId);
-        var tenantAgents = state.State.Agents.Values.Where(a => Tenancy.TenantIds.Normalize(a.TenantId) == tenant).ToList();
-        var totalAgents = tenantAgents.Count;
+        var tenantAgents = state.State.Agents.Values
+            .Where(a => Tenancy.TenantIds.Normalize(a.TenantId) == tenant && !Pipelines.PipelineIds.IsRun(a.AgentId))
+            .ToList();
+        var totalAgents = tenantAgents.Count(a => IsActive(a.Status) || !Pipelines.PipelineIds.IsRun(a.RootAgentId));
         var activeAgents = tenantAgents.Count(a => IsActive(a.Status));
 
         if (tenantMaxActive > 0 && activeAgents >= tenantMaxActive)
@@ -142,6 +147,18 @@ public sealed class AgentRegistryGrain(
             state.State.Agents[agentId] = entry with { Status = status };
             await state.WriteStateAsync();
         }
+    }
+
+    public Task ReportActivityAsync(string agentId, AgentStatus status)
+    {
+        // A late report never overwrites how an agent finished.
+        if (state.State.Agents.TryGetValue(agentId, out var entry) && entry.Status != status
+            && entry.Status is not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut))
+        {
+            state.State.Agents[agentId] = entry with { Status = status };
+        }
+
+        return Task.CompletedTask;
     }
 
     public async Task UnregisterAsync(string agentId)

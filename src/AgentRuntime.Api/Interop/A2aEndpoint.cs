@@ -250,7 +250,8 @@ public static class A2aEndpoint
 
         var meta = (message["metadata"] as JsonObject) ?? (p["metadata"] as JsonObject) ?? [];
         var aktor = meta["aktor"] as JsonObject ?? meta;
-        var budget = aktor["budget"] is JsonObject b ? b.Deserialize<McpBudget>(McpJson.Options)?.ToBudget(defaults.ToBudget()) : null;
+        var requested = aktor["budget"] is JsonObject b ? b.Deserialize<McpBudget>(McpJson.Options) : null;
+        var budget = requested?.ToBudget(defaults.ToBudget());
 
         // Follow-ups: a message naming a finished task starts a new one that builds on its result.
         var text = goal.ToString().Trim();
@@ -265,11 +266,13 @@ public static class A2aEndpoint
         {
             Goal = text,
             Budget = budget,
+            MaxChildrenRequested = requested?.MaxChildren is not null,
             WorkspaceId = aktor["workspace"]?.GetValue<string>(),
             // The A2A context is the correlation id: every task of one conversation shares it.
             CorrelationId = aktor["correlation_id"]?.GetValue<string>() ?? message["contextId"]?.GetValue<string>(),
             TeamPolicy = aktor["team_policy"] is JsonObject tp ? tp.Deserialize<Safety.TeamPolicy>(McpJson.Options) : null,
-            Source = "a2a"
+            Source = "a2a",
+            StartedBy = http.Caller().ActorId
         }, ct);
     }
 
@@ -387,7 +390,6 @@ public static class A2aEndpoint
                 foreach (var f in findings.EnumerateArray()) text.Append("- ").AppendLine(f.GetString());
             }
 
-            if (result?.Replies is { Count: > 0 } replies) text.Append("\n\n").AppendJoin("\n", replies);
             text.Append($"\n\nFull run: {view.DashboardUrl}");
 
             var parts = new JsonArray(v1 ? new JsonObject { ["text"] = text.ToString() } : Kind("text", new JsonObject { ["text"] = text.ToString() }));

@@ -84,7 +84,7 @@ export function StatusBadge({ status }: { status: string }) {
   const tone: Tone = s.includes("complet") ? "green"
     : s.includes("fail") || s.includes("timed") || s.includes("reject") ? "red"
     : s.includes("terminat") || s.includes("cancel") || s.includes("archiv") ? "neutral"
-    : s.includes("wait") || s.includes("pause") || s.includes("pending") ? "amber"
+    : s.includes("wait") || s.includes("pause") || s.includes("pending") || s.includes("queued") ? "amber"
     : "blue";
   return (
     <Badge tone={tone}>

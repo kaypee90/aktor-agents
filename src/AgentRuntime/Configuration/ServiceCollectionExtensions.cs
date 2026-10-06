@@ -32,6 +32,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
         services.Configure<Integrations.IntegrationsOptions>(configuration.GetSection(Integrations.IntegrationsOptions.SectionName));
         services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
+        services.Configure<Pipelines.PipelineOptions>(configuration.GetSection(Pipelines.PipelineOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
         services.Configure<Tenancy.BillingOptions>(configuration.GetSection(Tenancy.BillingOptions.SectionName));
 
@@ -70,7 +71,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IWorldArchive, NullWorldArchive>();
 
         // Workspaces: long-running environments with triggers and a user channel.
-        services.AddWorkspaceTools();
+        services.AddSingleton<ITool, Workspaces.PlanRequestTool>();
         services.TryAddSingleton<Workspaces.IWorkspaceArchive, Workspaces.NullWorkspaceArchive>();
 
         // Integrations: plugins (IAgentPlugin) are registered by the host — built-ins by the

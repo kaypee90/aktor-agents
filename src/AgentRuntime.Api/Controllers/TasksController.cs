@@ -77,6 +77,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
                     ? "Review the attached files and tell me what's important in them."
                     : request.Goal,
                 Budget = request.Budget?.Merge(defaultBudget.Value.ToBudget()),
+                MaxChildrenRequested = request.Budget?.MaxChildren is not null,
                 CallbackUrl = request.CallbackUrl,
                 CallbackSecret = request.CallbackSecret,
                 CorrelationId = request.CorrelationId ?? Request.Headers["X-Correlation-Id"].FirstOrDefault(),
@@ -86,6 +87,7 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
                 ModelProfileId = request.Model,
                 UploadIds = request.Attachments,
                 By = caller.Email ?? caller.UserId,
+                StartedBy = caller.ActorId,
                 Connections = request.Connections?.Select(c => new AgentRuntime.Integrations.ConnectionRequest
                 {
                     PluginId = c.PluginId ?? string.Empty,
@@ -144,8 +146,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         (long Tokens, decimal Cost) Branch(string agentId)
         {
             var own = snapshots[agentId].Usage;
-            long tokens = own.TokensUsed + own.LifetimeTokens;
-            var cost = own.CostUsd + own.LifetimeCostUsd;
+            long tokens = own.TokensUsed;
+            var cost = own.CostUsd;
             foreach (var child in children[agentId])
             {
                 var (t, c) = Branch(child.AgentId);
@@ -188,7 +190,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
 
         try
         {
-            var replay = await tasks.ReplayAsync(access.TenantId, id, mode, request?.ForkAfterStep, await journal.ListAsync(id, ct), ct, request?.Model);
+            var replay = await tasks.ReplayAsync(access.TenantId, id, mode, request?.ForkAfterStep, await journal.ListAsync(id, ct), ct, request?.Model,
+                HttpContext.Caller().ActorId);
             return CreatedAtAction(nameof(Get), new { id = replay.TaskId }, replay);
         }
         catch (TaskServiceException ex)
@@ -409,12 +412,17 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             task_id = task.TaskId,
             goal = task.Goal,
             status = rootSnapshot?.Status.ToString() ?? task.Status,
+            // Pausing a task pauses every agent of it, the root included.
+            paused = rootSnapshot is { Paused: true, Status: not (AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut) },
             root_agent_id = task.RootAgentId,
             created_at = task.CreatedAt,
             completed_at = task.CompletedAt,
             result_summary = task.ResultSummary,
             correlation_id = task.CorrelationId,
             source = task.Source,
+            // A run of a workspace's pipeline: it takes no follow-ups (a new run does).
+            kind = task.Source == "pipeline" ? "pipeline_run" : "task",
+            workspace_id = task.WorkspaceId,
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
             fork_after_step = task.ForkAfterStep,

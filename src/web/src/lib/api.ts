@@ -335,8 +335,65 @@ export function endWorld(worldId: string) {
 
 // ---- Workspaces (long-running agents with triggers) ----
 
+/** A workspace for `goal`; its pipeline is drafted from the goal by the pipeline editor. */
 export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number }) {
-  return apiFetch<{ workspace_id: string }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+  return apiFetch<{ workspace_id: string; draft: string | null }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+// ---- Pipelines and runs (docs/workspaces.md) ----
+
+export function getPipelineHistory(id: string) {
+  return apiFetch<import("./pipelineTypes").PipelineDefinition[]>(`/api/workspaces/${id}/pipeline/history`);
+}
+
+/** What the editor understood from a plain-language request; changes nothing until applied. */
+export function proposePipelineChange(id: string, request: string) {
+  return apiFetch<import("./pipelineTypes").PipelineProposal>(`/api/workspaces/${id}/pipeline/propose`, {
+    method: "POST",
+    body: JSON.stringify({ request }),
+  });
+}
+
+/** Applies edits to the pipeline at `baseVersion`; fails with a conflict if it changed since. */
+export function applyPipelineEdits(id: string, ops: import("./pipelineTypes").PipelineEditOp[], baseVersion: number, note?: string) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline/edits`, {
+    method: "POST",
+    body: JSON.stringify({ ops, base_version: baseVersion, note }),
+  });
+}
+
+export function savePipeline(id: string, pipeline: import("./pipelineTypes").PipelineDefinition, baseVersion: number, note?: string) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline`, {
+    method: "PUT",
+    body: JSON.stringify({ pipeline, base_version: baseVersion, note }),
+  });
+}
+
+/** Places stages on the canvas (no new version); an empty layout lays it out automatically. */
+export function savePipelineLayout(id: string, layout: Record<string, import("./pipelineTypes").StagePosition>) {
+  return apiFetch<import("./pipelineTypes").PipelineDefinition>(`/api/workspaces/${id}/pipeline/layout`, {
+    method: "PUT",
+    body: JSON.stringify({ layout }),
+  });
+}
+
+export function restorePipelineVersion(id: string, version: number) {
+  return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline/restore`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  });
+}
+
+export function startPipelineRun(id: string, input: string) {
+  return apiFetch<import("./pipelineTypes").RunStartResult>(`/api/workspaces/${id}/runs`, { method: "POST", body: JSON.stringify({ input }) });
+}
+
+export function getPipelineRun(id: string, runId: string) {
+  return apiFetch<import("./pipelineTypes").PipelineRunView>(`/api/workspaces/${id}/runs/${runId}`);
+}
+
+export function controlPipelineRun(id: string, runId: string, action: "pause" | "resume" | "cancel") {
+  return apiFetch<import("./pipelineTypes").PipelineRunView>(`/api/workspaces/${id}/runs/${runId}/${action}`, { method: "POST", body: "{}" });
 }
 
 export function listWorkspaceTemplates() {
@@ -346,13 +403,13 @@ export function listWorkspaceTemplates() {
 /** A workspace from a template: its instructions, safety policy, webhooks and (with the demo
  * system) simulated connections. Returns the webhook paths, which hold a secret. */
 export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true) {
-  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[] }>("/api/workspaces/from-template", {
+  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[]; sample_input: string | null }>("/api/workspaces/from-template", {
     method: "POST",
     body: JSON.stringify({ template, name, use_demo_system: useDemoSystem }),
   });
 }
 
-/** Sends the template's sample alert through the workspace's own webhook. */
+/** Sends the template's sample event through the workspace's own webhook (starting a run). */
 export function simulateWorkspaceAlert(id: string) {
   return apiFetch<{ delivered: boolean }>(`/api/workspaces/${id}/simulate-alert`, { method: "POST", body: "{}" });
 }
@@ -372,11 +429,27 @@ export function postWorkspaceMessage(id: string, text: string, clientMessageId: 
   });
 }
 
+/** A watch's rule: which items of a read-only tool's result to check, and when they match. */
+export interface WatchInput {
+  source_tool: string;
+  /** The tool's arguments each check, e.g. {"path": "/todos?userId=1"}. */
+  source_arguments?: Record<string, unknown>;
+  items_path?: string;
+  conditions: { field: string; op: string; value?: string }[];
+  key_field?: string;
+  display_fields?: string[];
+  /** "notify": alert in the chat (and channels) with no model call; "run": run the pipeline with the matches. */
+  mode: "notify" | "run";
+  message?: string;
+  urgency?: "info" | "warning" | "urgent";
+}
+
+/** Creates a trigger. A watch's response includes a dry run of its rule (items found, matching now). */
 export function addWorkspaceTrigger(
   id: string,
-  trigger: { kind: "schedule" | "webhook"; name: string; instruction?: string; target_agent_id?: string; every_minutes?: number; cron?: string },
+  trigger: { kind: "schedule" | "webhook" | "watch"; name: string; instruction?: string; every_minutes?: number; cron?: string } & Partial<WatchInput>,
 ) {
-  return apiFetch<import("./workspaceTypes").TriggerView>(`/api/workspaces/${id}/triggers`, {
+  return apiFetch<import("./workspaceTypes").TriggerView & { dry_run?: { items_found: number; matching_now: number } }>(`/api/workspaces/${id}/triggers`, {
     method: "POST",
     body: JSON.stringify(trigger),
   });
@@ -438,6 +511,31 @@ export function workspaceFilesZipUrl(id: string) {
 
 export function updateSafetyPolicy(workspaceId: string, policy: import("./workspaceTypes").SafetyPolicy) {
   return apiFetch<import("./workspaceTypes").SafetyPolicy>(`/api/workspaces/${workspaceId}/policy`, { method: "PUT", body: JSON.stringify(policy) });
+}
+
+export function getOrganizationPolicy() {
+  return apiFetch<import("./workspaceTypes").OrganizationSafetyPolicy>("/api/organization/policy");
+}
+
+export function updateOrganizationPolicy(policy: import("./workspaceTypes").OrganizationSafetyPolicy) {
+  return apiFetch<import("./workspaceTypes").OrganizationSafetyPolicy>("/api/organization/policy", { method: "PUT", body: JSON.stringify(policy) });
+}
+
+/** Changes to the organization's policy, newest first. */
+export function getOrganizationPolicyAudit() {
+  return apiFetch<import("./workspaceTypes").AuditEntry[]>("/api/organization/policy/audit");
+}
+
+/** An approval request waiting for a person, with its workspace. */
+export type PendingApproval = {
+  workspace_id: string;
+  workspace_name: string;
+  approval: import("./workspaceTypes").ApprovalRecord;
+};
+
+/** Approval requests waiting in any of the organization's workspaces, oldest first. */
+export function listPendingApprovals() {
+  return apiFetch<PendingApproval[]>("/api/approvals/pending");
 }
 
 export function decideApproval(workspaceId: string, approvalId: string, approve: boolean, reason?: string) {
@@ -522,7 +620,9 @@ export function apiErrorMessage(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err);
   const json = text.slice(text.indexOf("{"));
   try {
-    return (JSON.parse(json) as { error?: string }).error ?? text;
+    // Most errors are { error }; pipeline changes list every problem in { errors }.
+    const body = JSON.parse(json) as { error?: string; errors?: string[] };
+    return [body.error, ...(body.errors ?? [])].filter(Boolean).join(" ") || text;
   } catch {
     return text;
   }
@@ -868,6 +968,8 @@ export type AnalyticsFilter = {
   workspace?: string | null;
   /** A model profile id: only what ran on it. */
   model?: string | null;
+  /** Who started the runs: a user id, "key:<id>" for an API key, or "unknown" (tasks only). */
+  user?: string | null;
 };
 
 /** Spend and response time per model: which one is cheaper or faster for the same work. */
@@ -906,11 +1008,23 @@ export type WorkspaceAnalytics = {
     approvals_expired: number;
     tool_calls: number;
     tool_failures: number;
+    /** The pipelines' runs that started in the range. */
+    runs: number;
+    runs_completed: number;
+    runs_failed: number;
+    runs_running: number;
+    avg_run_cost_usd: number;
+    p50_run_duration_s: number | null;
+    p95_run_duration_s: number | null;
   };
-  previous: { calls: number; tokens: number; cost_usd: number };
-  series: { t: string; calls: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
-  by_workspace: { workspace_id: string; name: string; status: string; calls: number; tokens: number; cost_usd: number; triggers_fired: number; approvals_requested: number }[];
+  previous: { calls: number; tokens: number; cost_usd: number; runs: number };
+  series: { t: string; calls: number; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
+  by_workspace: { workspace_id: string; name: string; status: string; calls: number; tokens: number; cost_usd: number; triggers_fired: number; approvals_requested: number; runs: number; runs_failed: number }[];
   by_role: { role: string; calls: number; tokens: number; cost_usd: number; avg_tokens: number }[];
+  /** Who started the pipelines' runs (a member, an API key, or triggers). */
+  by_user: AnalyticsUserRow[];
+  top_runs_by_cost: AnalyticsTaskRow[];
+  slowest_runs: AnalyticsTaskRow[];
   by_model: AnalyticsModelRow[];
   by_tool: AnalyticsToolRow[];
 };
@@ -925,6 +1039,24 @@ export type AnalyticsTaskRow = {
   tokens: number;
   cost_usd: number;
   agents: number;
+  started_by: string;
+  started_by_name: string;
+  /** For a pipeline's run: its workspace. */
+  workspace_id?: string;
+  workspace_name?: string;
+};
+
+/** Usage by whoever started the runs: a member, an API key, or "unknown" for older runs. */
+export type AnalyticsUserRow = {
+  user: string;
+  name: string;
+  kind: "user" | "api_key" | "trigger" | "unknown";
+  runs: number;
+  tokens: number;
+  cost_usd: number;
+  avg_cost_usd: number;
+  failed: number;
+  last_run_at: string;
 };
 
 export type Analytics = {
@@ -951,6 +1083,7 @@ export type Analytics = {
   series: { t: string; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
   by_role: { role: string; agents: number; tokens: number; cost_usd: number; avg_tokens: number }[];
   by_source: { source: string; runs: number; tokens: number; cost_usd: number }[];
+  by_user: AnalyticsUserRow[];
   by_status: { status: string; runs: number }[];
   by_tool: { tool: string; calls: number; failures: number; avg_duration_ms: number | null; p95_duration_ms: number | null; total_duration_ms: number }[];
   duration_histogram: { label: string; runs: number }[];

@@ -48,13 +48,13 @@ public sealed class TeamPolicyIntegrationTests : IAsyncLifetime
 
     private static LlmCompletionResponse Respond(params ToolCall[] calls) => new() { ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls };
 
-    private async Task<string> CreateRootAsync(string goal, TeamPolicy? policy)
+    private async Task<string> CreateRootAsync(string goal, TeamPolicy? policy, string tenantId = "")
     {
         var agentId = $"root-{Guid.NewGuid():n}"[..14];
         await Registry.RegisterAsync(new AgentDirectoryEntry
         {
             AgentId = agentId, Role = "Root Agent", Goal = goal, Status = AgentStatus.Created,
-            Capabilities = ["orchestration"], Depth = 0, RootAgentId = agentId
+            Capabilities = ["orchestration"], Depth = 0, RootAgentId = agentId, TenantId = tenantId
         });
 
         var grain = _cluster.GrainFactory.GetGrain<IAgentGrain>(agentId);
@@ -66,7 +66,8 @@ public sealed class TeamPolicyIntegrationTests : IAsyncLifetime
             GrantedPermissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages,
             Budget = new ResourceBudget(),
             TaskId = Guid.NewGuid().ToString("n"),
-            TeamPolicy = policy
+            TeamPolicy = policy,
+            TenantId = tenantId
         });
         _ = grain.Start();
         return agentId;
@@ -162,5 +163,34 @@ public sealed class TeamPolicyIntegrationTests : IAsyncLifetime
 
         var team = await Registry.FindAsync(new FindAgentsQuery { RootAgentId = root });
         Assert.Equal(4, team.Count); // root, 2 children, 1 grandchild
+    }
+
+    [Fact]
+    public async Task The_organizations_team_limits_apply_to_every_team()
+    {
+        var tenant = "org-team-" + Guid.NewGuid().ToString("n")[..6];
+        await _cluster.GrainFactory.GetGrain<Tenancy.ITenantGrain>(tenant).SetSafetyPolicy(
+            new OrganizationSafetyPolicy { Team = new TeamPolicy { MaxAgents = 2 } }, "admin@example.com");
+        ScriptedLlmProviderRegistry.Current = r =>
+        {
+            _requests.Enqueue(r);
+            var role = RoleOf(r) ?? string.Empty;
+            if (!role.Contains("Root")) return new LlmCompletionResponse { Content = "Working.", FinishReason = LlmFinishReason.Stop };
+            var spawnResults = r.Messages.Count(m => m.Role == ChatRole.Tool && m.ToolName == "spawn_agent");
+            return spawnResults switch
+            {
+                0 => Respond(Spawn("Pricing Analyst", "Collect competitor pricing")),
+                1 => Respond(Spawn("Legal Reviewer", "Review the terms of service")),
+                _ => Respond(Call("complete_task", new { status = "completed", summary = "done" }))
+            };
+        };
+
+        // The task sets no team rules of its own; the organization's cap of two agents (root included) applies.
+        var root = await CreateRootAsync("Price and review our product", policy: null, tenantId: tenant);
+        await WaitUntilAsync(async () => SpawnResults("Root").Count() >= 2 || (await Registry.GetAsync(root))?.Status == AgentStatus.Completed);
+
+        var refused = SpawnResults("Root").First(e => e.TryGetProperty("error", out _));
+        Assert.Equal(TeamRules.MaxAgents, refused.GetProperty("details").GetProperty("rule").GetString());
+        Assert.Equal(2, (await Registry.FindAsync(new FindAgentsQuery { RootAgentId = root })).Count);
     }
 }

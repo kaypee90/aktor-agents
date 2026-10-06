@@ -41,9 +41,9 @@ public sealed class LoadSkillTool(ISkillStore skills) : ITool
         }, ToolJson.Options));
     }
 
-    /// <summary>Workspace agents use their workspace's id as their task id: its skills are theirs too.</summary>
+    /// <summary>The calling agent's workspace, as the runtime stamped it: its skills are theirs too.</summary>
     internal static string? WorkspaceOf(ToolExecutionRequest request) =>
-        Workspaces.WorkspaceIds.IsWorkspace(request.TaskId) ? request.TaskId : null;
+        Workspaces.WorkspaceIds.IsWorkspace(request.WorkspaceId) ? request.WorkspaceId : null;
 
     internal static string? Arg(string json, string name)
     {
@@ -106,12 +106,19 @@ public sealed class SkillsSection(IOptions<SkillOptions> options) : ISystemPromp
     public string Render(AgentPromptContext context)
     {
         if (context.State.IsResident || context.Skills.Count == 0) return string.Empty;
-        var listed = context.Skills.Take(options.Value.MaxListedInPrompt).ToList();
-        var lines = listed.Select(s => $"- {s.Name}: {s.Description}");
+
+        // Skills a person named in this agent's goal or context (@skill:name) come first and are required.
+        var named = Pipelines.Mentions.SkillsIn([context.State.Goal, context.State.Metadata.GetValueOrDefault("initial_context")]);
+        var asked = context.Skills.Where(s => named.Contains(s.Name, StringComparer.OrdinalIgnoreCase)).ToList();
+        var listed = asked.Concat(context.Skills.Except(asked).Take(Math.Max(0, options.Value.MaxListedInPrompt - asked.Count))).ToList();
+        var lines = listed.Select(s => $"- {s.Name}: {s.Description}" + (asked.Contains(s) ? " [ASKED FOR]" : ""));
         var more = context.Skills.Count > listed.Count ? $"\n({context.Skills.Count - listed.Count} more skills can be loaded by name.)" : string.Empty;
+        var required = asked.Count > 0
+            ? $"\nYour instructions name {string.Join(", ", asked.Select(s => $"@skill:{s.Name}"))}: load {(asked.Count == 1 ? "that skill" : "those skills")} with load_skill before anything else, and follow {(asked.Count == 1 ? "it" : "them")}."
+            : string.Empty;
         return "Your organization (and your workspace, if you're in one) has written these skills: proven ways to do particular kinds of work. When your work " +
                "matches a skill's description, call load_skill with its name before you start, and follow it. Skills are " +
                "instructions, not permissions: they never give you tools, budget or access you don't have.\n" +
-               string.Join("\n", lines) + more;
+               string.Join("\n", lines) + more + required;
     }
 }

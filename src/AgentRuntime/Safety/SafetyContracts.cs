@@ -47,7 +47,37 @@ public sealed record WorkspaceSafetyPolicy
     [Id(3)] public TeamPolicy? Team { get; init; }
 }
 
-public sealed record PolicyVerdict(PolicyDecisionKind Decision, string Reason);
+/// <summary>
+/// The organization's own safety policy (docs/safety.md#organization-policy): set once by an admin,
+/// it applies to every workspace and task of the organization. It's checked as a policy of its own
+/// and every policy that applies must allow a call, so a workspace can tighten it but never loosen
+/// it. Its <see cref="ApprovalRule.Decision"/> "allow" exempts a tool from the organization's
+/// minimum autonomy only; the workspace's own policy still applies.
+/// </summary>
+[GenerateSerializer]
+public sealed record OrganizationSafetyPolicy
+{
+    /// <summary>The least oversight any workspace or task gets: Supervised or SemiAutonomous
+    /// apply everywhere, whatever a workspace is set to.</summary>
+    [Id(0)] public AutonomyLevel MinimumAutonomy { get; init; } = AutonomyLevel.Autonomous;
+    [Id(1)] public List<ApprovalRule> Rules { get; init; } = [];
+    /// <summary>Team-shape rules every team of the organization must keep to, on top of the server's.</summary>
+    [Id(2)] public TeamPolicy? Team { get; init; }
+    [Id(3)] public DateTimeOffset? UpdatedAt { get; init; }
+    [Id(4)] public string? UpdatedBy { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsEmpty => MinimumAutonomy == AutonomyLevel.Autonomous && Rules.Count == 0 && Team is not { IsEmpty: false };
+
+    /// <summary>As a policy of its own, for <see cref="PolicyEngine.Evaluate(WorkspaceSafetyPolicy, string, ToolSideEffects)"/>.</summary>
+    public WorkspaceSafetyPolicy AsPolicy() => new() { Autonomy = MinimumAutonomy, Rules = Rules };
+}
+
+public sealed record PolicyVerdict(PolicyDecisionKind Decision, string Reason)
+{
+    /// <summary>Whether the organization's policy decided it (it set the strictest answer).</summary>
+    public bool ByOrganization { get; init; }
+}
 
 /// <summary>
 /// Decides whether a tool call may run, needs a human's approval, or is blocked. Pure and
@@ -85,6 +115,25 @@ public static class PolicyEngine
             _ => new PolicyVerdict(PolicyDecisionKind.Allow, "autonomous mode")
         };
     }
+
+    /// <summary>The organization's policy and the workspace's (null for a task) must both allow a
+    /// call: the stricter answer wins (block, then ask, then allow).</summary>
+    public static PolicyVerdict Evaluate(OrganizationSafetyPolicy? organization, WorkspaceSafetyPolicy? workspace, string toolName, ToolSideEffects sideEffects)
+    {
+        var own = workspace is null ? new PolicyVerdict(PolicyDecisionKind.Allow, "no rule applies") : Evaluate(workspace, toolName, sideEffects);
+        if (organization is null || organization.IsEmpty) return own;
+        var org = Evaluate(organization.AsPolicy(), toolName, sideEffects);
+        return Strictness(org.Decision) > Strictness(own.Decision)
+            ? org with { Reason = $"your organization's policy: {org.Reason}", ByOrganization = true }
+            : own;
+    }
+
+    private static int Strictness(PolicyDecisionKind decision) => decision switch
+    {
+        PolicyDecisionKind.Deny => 2,
+        PolicyDecisionKind.RequireApproval => 1,
+        _ => 0
+    };
 
     private static bool Covers(SideEffectScope scope, ToolSideEffects effects) => scope switch
     {

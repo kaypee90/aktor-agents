@@ -14,6 +14,11 @@ export const STATUS_STYLES: Record<AgentStatus, { bg: string; border: string; te
   TimedOut: { bg: "bg-orange-50 dark:bg-orange-500/10", border: "border-orange-300 dark:border-orange-500/30", text: "text-orange-700 dark:text-orange-300", dot: "bg-orange-500" },
 };
 
+/** Busy on a request right now: reasoning, running a tool or spawning a helper. */
+export function isWorking(status: AgentStatus): boolean {
+  return status === "Thinking" || status === "Executing" || status === "Spawning";
+}
+
 export function isTerminal(status: AgentStatus): boolean {
   return status === "Completed" || status === "Failed" || status === "Terminated" || status === "TimedOut";
 }

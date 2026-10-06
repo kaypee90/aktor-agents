@@ -2,6 +2,7 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { WorkspaceAgentView } from "@/lib/workspaceTypes";
+import { Icons } from "@/components/ui/icons";
 import { BotIcon } from "../BotIcon";
 import { accentFor } from "../world/worldUi";
 import { pauseInfo } from "./pauseInfo";
@@ -60,10 +61,13 @@ const STATUS_TEXT: Record<string, string> = {
 
 export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentNodeData }) {
   const { agent, bubble } = data;
-  const busy = agent.status === "Thinking" || agent.status === "Executing";
+  const run = agent.agent_id.startsWith("run-");
+  const busy = !run && (agent.status === "Thinking" || agent.status === "Executing" || agent.status === "Spawning");
   const finished = ["Completed", "Failed", "TimedOut", "Terminated"].includes(agent.status);
   const failed = agent.status === "Failed" || agent.status === "TimedOut";
   const paused = finished ? null : pauseInfo(agent);
+  // Set by the runtime while a tool call waits for someone to approve it.
+  const approval = !finished && agent.current_task?.startsWith("Waiting for approval") === true;
 
   return (
     <div
@@ -71,24 +75,26 @@ export function TeamAgentNode({ data, selected }: NodeProps & { data: TeamAgentN
       className={`relative overflow-visible rounded-lg border bg-white px-2 py-1.5 shadow-sm dark:bg-zinc-900 ${
         selected ? "border-blue-500 ring-2 ring-brand-500/40"
           : failed ? "border-rose-300 dark:border-rose-800"
-          : paused ? "border-amber-400 dark:border-amber-700"
+          : paused || approval ? "border-amber-400 dark:border-amber-700"
           : "border-zinc-200 dark:border-zinc-700"
-      } ${finished && !failed ? "opacity-60" : ""}`}
+      } ${approval ? "ring-2 ring-amber-400/60" : ""} ${finished && !failed ? "opacity-60" : ""}`}
     >
+      {approval && (
+        <span className="absolute -right-2 -top-2.5 z-10 animate-pulse rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow">
+          Needs approval
+        </span>
+      )}
       <Handles />
       <SpeechBubble bubble={bubble} />
 
       <div className="flex items-center gap-2">
         <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-current/30 ${accentFor(agent.agent_id)}`}>
-          <BotIcon className="h-5 w-5" />
+          {run ? <Icons.Play className="h-4 w-4" /> : <BotIcon className="h-5 w-5" />}
           {busy && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 animate-pulse rounded-full bg-indigo-500 ring-2 ring-white dark:ring-zinc-900" />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1">
             <span className="truncate text-sm font-semibold">{agent.role}</span>
-            {agent.standing && agent.role !== "Coordinator" && (
-              <span className="shrink-0 rounded bg-indigo-100 px-1 text-[9px] uppercase text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">standing</span>
-            )}
           </div>
           <div className={`truncate text-[11px] ${failed ? "text-rose-600" : paused ? "font-medium text-amber-600 dark:text-amber-400" : "text-zinc-500"}`}>
             {paused?.label ?? STATUS_TEXT[agent.status] ?? agent.status.toLowerCase()}

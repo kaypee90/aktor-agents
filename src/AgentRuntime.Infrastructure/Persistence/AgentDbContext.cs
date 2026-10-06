@@ -41,6 +41,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         {
             b.HasKey(t => t.TaskId);
             b.HasIndex(t => new { t.TenantId, t.CreatedAt });
+            b.HasIndex(t => new { t.TenantId, t.StartedBy });
+            b.HasIndex(t => t.WorkspaceId).HasFilter("\"WorkspaceId\" IS NOT NULL");
             b.Property(t => t.Source).HasDefaultValue("api");
             // The callback sweep looks for finished tasks whose webhook hasn't been delivered.
             b.HasIndex(t => t.CallbackDeliveredAt).HasFilter("\"CallbackUrl\" IS NOT NULL");

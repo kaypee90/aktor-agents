@@ -27,7 +27,6 @@ export interface TriggerView {
   trigger_id: string;
   kind: TriggerKind;
   name: string;
-  target_agent_id: string;
   instruction: string;
   interval_seconds: number | null;
   cron: string | null;
@@ -53,7 +52,6 @@ export interface WorkspaceAgentView {
   goal: string;
   status: string;
   parent_agent_id: string | null;
-  standing: boolean;
   tokens_used: number;
   cost_usd: number;
   current_task: string | null;
@@ -74,8 +72,11 @@ export interface WorkspaceSnapshot {
   status: WorkspaceStatus;
   created_at: string;
   updated_at: string;
-  coordinator_agent_id: string;
   conversation: ChatEntry[];
+  pipeline: import("./pipelineTypes").PipelineDefinition | null;
+  /** Recent runs, newest first. */
+  runs: import("./pipelineTypes").WorkspaceRunSummary[];
+  queued_runs: number;
   triggers: TriggerView[];
   agents: WorkspaceAgentView[];
   daily_token_limit: number;
@@ -186,6 +187,16 @@ export interface SafetyPolicy {
   team?: TeamPolicy | null;
 }
 
+/** The organization's safety policy: applies to every workspace and task, on top of their own. */
+export interface OrganizationSafetyPolicy {
+  /** The least oversight anywhere in the organization. */
+  minimum_autonomy: AutonomyLevel;
+  rules: ApprovalRule[];
+  team?: TeamPolicy | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
 export interface ApprovalRecord {
   approval_id: string;
   code: string;
@@ -229,9 +240,33 @@ export interface AuditVerification {
 export interface WorkspaceTemplate {
   id: string;
   name: string;
+  /** Operations, Support, Research, Engineering, Sales, Marketing, Legal & finance, People… */
+  category: string;
   description: string;
   goal: string;
   autonomy: string;
+  /** What to try it with first (a webhook template's sample payload). */
+  sample_input: string | null;
+  stages: { stage_id: string; name: string; inputs: string[] }[];
   connections: { plugin_id: string; name: string; demo_only: boolean }[];
   webhooks: { name: string; sample_payload: string }[];
+  schedules: { name: string; cron: string }[];
+}
+
+/** A pipeline's shape in one line: stages that run together joined by ∥, levels by →. */
+export function pipelineShape(stages: { stage_id: string; name: string; inputs: string[] }[]): string {
+  const byId = new Map(stages.map((s) => [s.stage_id, s]));
+  const depth = new Map<string, number>();
+  const depthOf = (id: string, seen = new Set<string>()): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const inputs = byId.get(id)?.inputs.filter((i) => byId.has(i)) ?? [];
+    const d = inputs.length === 0 ? 0 : Math.max(...inputs.map((i) => depthOf(i, seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const levels: string[][] = [];
+  for (const s of stages) (levels[depthOf(s.stage_id)] ??= []).push(s.name);
+  return levels.filter(Boolean).map((l) => l.join(" ∥ ")).join(" → ");
 }

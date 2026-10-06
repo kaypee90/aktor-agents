@@ -1,8 +1,8 @@
 # Safety and trust
 
 Agents that run for months, with access to real services, need controls that don't depend on the
-model behaving well. Each workspace has a **safety policy**, which the runtime enforces around
-every tool call. The runtime also keeps an **audit log**, which can prove afterwards what happened.
+model behaving well. Each workspace has a **safety policy**, and the organization can set one for
+all of them ([below](#organization-policy)); the runtime enforces both around every tool call. The runtime also keeps an **audit log**, which can prove afterwards what happened.
 
 ```mermaid
 flowchart LR
@@ -27,7 +27,7 @@ flowchart LR
 - **"External" means effects outside the platform.** That covers connection tools
   (`{connection}__{tool}`), `shell_exec`, `http_request` and `database_query`.
 - **Internal work never waits for a human.** This includes agents spawning and messaging each
-  other, memory, schedules, workspace files and `notify_user`.
+  other, memory, files and reporting (`complete_task`).
 - **Reads never wait for a human either.** Whether a call is a read, a repeatable write or an
   unrepeatable write comes from the side-effect class that each tool, or its plugin, declares (see
   [plugins.md](plugins.md)).
@@ -42,6 +42,40 @@ runs on its own except changes to billing.
 
 Only you can change the policy, through the UI or the API. Agents have no tool for it, and messages
 from agents or channels can't change it either.
+
+## Organization policy
+
+Rules an admin sets once, in **Settings → Safety policy**, that apply to **every workspace and every
+task** of the organization, including workspaces created later. No need to repeat them per
+workspace.
+
+| Part | What it does |
+|---|---|
+| **Minimum autonomy** | The least oversight anywhere: `SemiAutonomous` or `Supervised` applies to every workspace, whatever it's set to |
+| **Rules** | Same form as a workspace's (pattern, scope, block / ask / allow), e.g. `shell_exec any → block`, `*__*pay* writes → ask`. Suggestions for payments, deletes, messages to people and shell commands are one click away |
+| **Team shape** | Limits every team keeps to (team size, fan-out, who may spawn, no duplicates), on top of the server's and each workspace's or task's own |
+
+**How it combines with a workspace's policy.** The two are checked separately and the **stricter
+answer wins** (block, then ask, then allow), so a workspace can add rules or more oversight but can
+never loosen the organization's:
+- an organization `block` or `ask` applies even where the workspace's own rule says `allow`;
+- an organization `allow` only exempts a tool from the organization's *minimum*: it doesn't override
+  the workspace's own rules (useful for, say, "Supervised everywhere, except `notes__*`");
+- a call the organization's policy sends for approval parks and is decided like any other approval,
+  in that workspace. Its reason says it came from the organization's policy.
+
+**Tasks** have no policy of their own, but the organization's applies to them too. Nobody is there
+to approve a call in a task, so a call the organization says needs approval doesn't run: the agent
+gets an error saying it needs approval and that a workspace can ask for it. Simulations (Worlds)
+aren't affected.
+
+In a workspace, the **Safety** tab shows the organization's rules above the workspace's own, and
+autonomy levels below the organization's minimum are marked as overridden. Changes are read live,
+so they apply from the next tool call or spawn. Every change is recorded in the organization's audit
+log (`GET /api/organization/policy/audit`), with the policy before and after, and shown under
+**Changes** in Settings.
+
+Anyone in the organization can read the policy; only **Admins** (and Owners) can change it.
 
 ## Team shape
 
@@ -67,6 +101,15 @@ can tighten a wider one but never loosen it:
   and inherited by every agent it spawns.
 - **A workspace:** `team` in its safety policy (`PUT /api/workspaces/{id}/policy`). It's read live,
   so a change applies to the next spawn.
+- **The organization:** `team` in its policy (`PUT /api/organization/policy`), for every task and
+  workspace. Also read live.
+
+**Fan-out and the budget's `max_children`.** A task's budget also has `max_children`: the most
+children each agent may start, inherited down the tree, and the number of shares each agent's
+budget is split into for its children. When a task gives a fan-out per level and no
+`max_children` of its own, `max_children` is set to the fan-out's largest entry, so the two never
+disagree and only the fan-out needs setting (the dashboard shows only the fan-out). Given both,
+the stricter limit applies at each level.
 
 ## Approvals
 
@@ -75,11 +118,18 @@ When a call needs approval:
 1. The runtime records a request with a short code (`A3`). The request holds the tool, its full
    arguments, the agent's stated reason (its visible message, never hidden reasoning) and the rule
    that triggered it.
-2. The request is posted to the chat as a warning, so it also reaches your notification channels.
+2. You're told, wherever you are:
+   - the request is posted to the chat as **urgent**, so it reaches your notification channels;
+   - the dashboard's sidebar shows an **approvals bell** with the count (also in the browser tab's
+     title), and a toast pops up with Approve and Reject. Allow desktop notifications from the
+     bell's panel to be told while the tab is in the background;
+   - the workspace shows a banner across the top, and the waiting agent is marked **Needs
+     approval** on the live canvas.
 3. **The agent parks.** The call has no result yet, so the turn stays open. The agent's state is
    saved and it uses no LLM calls while it waits.
 4. You decide in one of three ways:
-   - **Safety tab or chat banner:** Approve or Reject, with an optional reason.
+   - **Bell, toast, workspace banner, Safety tab or chat card:** Approve or Reject, with an
+     optional reason.
    - **Chat, SMS or Telegram:** reply `approve A3`, `yes A3`, `reject A3 too expensive` or `no A3`.
      Channel replies count only from the connection's **allowed senders**, and decisions aren't
      forwarded to the agents as instructions.
@@ -104,7 +154,7 @@ When a call needs approval:
 Every action that matters is appended to the workspace's audit log:
 - **Every agent tool call**, with its outcome (`ok`, `failed`, or `unknown` for a call cut off by a
   crash), arguments, a truncated result and the agent's stated reason. Simulation moves and
-  `wait_for_events` / `end_turn` aren't recorded.
+  `end_turn` aren't recorded.
 - **Blocked calls**, and approvals requested, approved, rejected and expired.
 - **Your commands**, from the chat or channels.
 - **Configuration changes:** policy updates, connections added, changed or removed, triggers added
@@ -134,8 +184,11 @@ This is **tamper-evident, not tamper-proof.**
 
 | Method | Path | |
 |---|---|---|
+| `GET` / `PUT` | `/api/organization/policy` | Anyone / Admin. `{minimum_autonomy, rules: [{name, tool_pattern, applies, decision}], team?}`; the response adds `updated_at`, `updated_by` |
+| `GET` | `/api/organization/policy/audit?limit=` | Changes to it, newest first |
 | `GET` / `PUT` | `/api/workspaces/{id}/policy` | `{autonomy, rules: [{name, tool_pattern, applies, decision}], approval_timeout_hours, team?}` |
 | `GET` | `/api/workspaces/{id}/approvals?status=Pending` | Newest first |
+| `GET` | `/api/approvals/pending` | Pending requests across your workspaces, oldest first: `[{workspace_id, workspace_name, approval}]` |
 | `POST` | `/api/workspaces/{id}/approvals/{approvalId or code}/decision` | `{approve, reason?}` |
 | `GET` | `/api/workspaces/{id}/audit?actor=&action=tool.&q=&since=&before=&limit=` | Newest first; `before` pages by sequence number |
 | `GET` | `/api/workspaces/{id}/audit/verify` | `{valid, records, first_broken_seq, message}` |
@@ -143,7 +196,9 @@ This is **tamper-evident, not tamper-proof.**
 ## Tests
 
 - **Unit:**
-  - `PolicyEngineTests`: autonomy levels, internal tools, rule order and scopes, glob matching.
+  - `PolicyEngineTests`: autonomy levels, internal tools, rule order and scopes, glob matching,
+    and the organization's policy on top of a workspace's (the stricter wins; its `allow` only
+    exempts from its own minimum; an empty one changes nothing).
   - `AuditLogTests`: chaining, idempotent keys, tamper detection including a re-hashed forgery,
     unambiguous field boundaries.
 - **Integration (`SafetyTests`):**
@@ -153,9 +208,15 @@ This is **tamper-evident, not tamper-proof.**
   - `approve a1` typed in the chat decides without reaching the agent;
   - deny rules block without asking, and reads run even when `Supervised`;
   - a parked agent can be stopped, and approving afterwards runs nothing;
-  - a pending approval survives a crash, and approving afterwards runs the call once.
+  - a pending approval survives a crash, and approving afterwards runs the call once;
+  - the organization's rules apply on top of a workspace that allows everything: a block blocks,
+    an ask parks for approval, and reads stay free under an organization-wide `Supervised`;
+  - a task's agent is held to the organization's rules too.
+- **Organization policy over the API (`OrganizationPolicyApiTests`):** admins set it, members read
+  but can't change it, changes are audited, and another organization never sees it.
 - **Team shape:**
   - `TeamPolicyTests` (unit): each rule, goal-type classification, role equivalence, and every
     policy having to allow a spawn;
   - `TeamPolicyIntegrationTests`: a duplicate-role spawn is refused with a structured error naming
-    the existing agent, and a task's fan-out limit is inherited by its children.
+    the existing agent, a task's fan-out limit is inherited by its children, and the
+    organization's team size limit refuses a spawn in a task that sets none.

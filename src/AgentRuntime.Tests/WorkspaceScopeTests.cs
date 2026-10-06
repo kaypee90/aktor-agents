@@ -18,11 +18,14 @@ public sealed class WorkspaceScopeTests
     private const string Ws = "ws-0000000001";
     private const string OtherWs = "ws-0000000002";
 
-    private static ToolExecutionRequest Request(string tool, string taskId, object args) => new()
+    /// <param name="where">A workspace id (its agents run under a pipeline run's id, and the runtime
+    /// stamps their workspace on each call), or a task id.</param>
+    private static ToolExecutionRequest Request(string tool, string where, object args) => new()
     {
         ToolName = tool,
         AgentId = "agent-1",
-        TaskId = taskId,
+        TaskId = where.StartsWith("ws-") ? "run-" + where[3..] : where,
+        WorkspaceId = where.StartsWith("ws-") ? where : null,
         TenantId = Tenant,
         ArgumentsJson = JsonSerializer.Serialize(args)
     };

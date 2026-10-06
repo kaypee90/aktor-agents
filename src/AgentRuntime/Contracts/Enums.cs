@@ -134,5 +134,16 @@ public enum RuntimeEventType
     /// <summary>The task's owner sent a follow-up instruction (Data["text"]).</summary>
     TaskFollowUp,
     /// <summary>A finished task's root agent took up a follow-up: the task is running again.</summary>
-    TaskReopened
+    TaskReopened,
+
+    // Pipelines (docs/workspaces.md). Stage events are published with TaskId = run id; changes
+    // to the pipeline and run progress also with TaskId = workspace id, for the workspace screen.
+    /// <summary>A new version of a workspace's pipeline was applied (Data["version"], ["note"]).</summary>
+    PipelineChanged,
+    /// <summary>A run was queued, started, or finished (Data["run_id"], ["status"]).</summary>
+    PipelineRunUpdated,
+    /// <summary>A stage's agent started (Data["stage_id"], ["attempt"]).</summary>
+    PipelineStageStarted,
+    /// <summary>A stage finished, failed, or was skipped (Data["stage_id"], ["status"]).</summary>
+    PipelineStageFinished
 }

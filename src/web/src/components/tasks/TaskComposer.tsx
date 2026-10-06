@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiErrorMessage, createTask, getLlmSettings, previewTask, uploadFiles, type CreateTaskInput, type LlmSettingsView } from "@/lib/api";
 import { AttachButton, DropZone, PendingFiles, useAttachments } from "@/components/files/Attachments";
@@ -9,6 +9,7 @@ import type { TaskPreview } from "@/lib/types";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { Button, ErrorBanner, Field, Modal, Toggle, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { DEFAULT_MODEL_HANDLE, MentionTextarea, mentionsIn, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
 
 const STARTER_KEY = "aktor:starterGoal";
 
@@ -39,14 +40,14 @@ const EXAMPLES: { title: string; prompt: string; icon: keyof typeof Icons }[] = 
 type McpServer = { name: string; url: string; token: string };
 
 type Options = {
-  maxCost: string; maxTokens: string; minutes: string; maxChildren: string;
+  maxCost: string; maxTokens: string; minutes: string;
   maxAgents: string; fanOut: string; spawners: string; noDuplicates: boolean; goalType: string;
   callbackUrl: string; callbackSecret: string; correlationId: string;
   mcp: McpServer[];
 };
 
 const EMPTY: Options = {
-  maxCost: "", maxTokens: "", minutes: "", maxChildren: "",
+  maxCost: "", maxTokens: "", minutes: "",
   maxAgents: "", fanOut: "", spawners: "", noDuplicates: true, goalType: "",
   callbackUrl: "", callbackSecret: "", correlationId: "",
   mcp: [],
@@ -60,7 +61,6 @@ function toInput(goal: string, o: Options, previewId?: string): CreateTaskInput 
     max_cost_usd: num(o.maxCost),
     max_tokens: num(o.maxTokens),
     max_duration_seconds: num(o.minutes) !== undefined ? num(o.minutes)! * 60 : undefined,
-    max_children: num(o.maxChildren),
   };
   const fanOut = o.fanOut.split(/[,\s]+/).map(Number).filter((n) => !Number.isNaN(n) && n >= 0 && o.fanOut.trim() !== "");
   const spawners = o.spawners.split(",").map((s) => s.trim()).filter(Boolean);
@@ -122,6 +122,20 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
   const [busy, setBusy] = useState<"estimating" | "starting" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<{ preview: TaskPreview; mustConfirm: boolean } | null>(null);
+
+  const modelMentions = useModelMentionables();
+  const skillMentions = useSkillMentionables();
+  const goalMentions = useMemo(() => [...modelMentions, ...skillMentions], [modelMentions, skillMentions]);
+  // "@claude-fast" in the goal picks that model; "@anthropic" picks its first model if none is picked.
+  function goalChanged(text: string) {
+    setGoal(text);
+    const handles = mentionsIn(text).map((h) => h.toLowerCase());
+    const profiles = models ? [{ id: "server", provider: models.server.provider }, ...models.profiles] : [];
+    const named = profiles.find((p) => handles.includes(p.id === "server" ? DEFAULT_MODEL_HANDLE : p.id.toLowerCase()));
+    const byProvider = !model ? profiles.find((p) => handles.includes(p.provider.toLowerCase())) : undefined;
+    const pick = named ?? byProvider;
+    if (pick && pick.id !== model) { setModel(pick.id); setEstimate(null); }
+  }
 
   const upload = useCallback(async (file: File) => (await uploadFiles([file]))[0].upload_id, []);
   const files = useAttachments(upload);
@@ -185,18 +199,20 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
       <div className="overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-sm transition focus-within:border-zinc-300 focus-within:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-zinc-700">
       <form onSubmit={run}>
         {files.pending.length > 0 && <div className="px-4 pt-3"><PendingFiles pending={files.pending} onRemove={files.remove} /></div>}
-        <textarea
+        <MentionTextarea
           ref={box}
           value={goal}
-          onChange={(e) => {
-            setGoal(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 320)}px`;
+          onValueChange={goalChanged}
+          mentionables={goalMentions}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
           }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); run(); } }}
           onPaste={(e) => { const pasted = Array.from(e.clipboardData.files); if (pasted.length > 0) { e.preventDefault(); files.add(pasted); } }}
           rows={3}
-          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context."
+          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context, and type @ to pick a model or a skill."
           className="block max-h-80 w-full resize-none border-0 bg-transparent px-5 pt-4 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-600"
           disabled={busy !== null}
         />
@@ -271,14 +287,9 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
               <Field label="Max tokens">
                 <input className={inputClass} inputMode="numeric" value={options.maxTokens} onChange={(e) => set("maxTokens", e.target.value)} placeholder="Server default" />
               </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Time limit (min)">
-                  <input className={inputClass} inputMode="numeric" value={options.minutes} onChange={(e) => set("minutes", e.target.value)} placeholder="15" />
-                </Field>
-                <Field label="Direct sub-agents">
-                  <input className={inputClass} inputMode="numeric" value={options.maxChildren} onChange={(e) => set("maxChildren", e.target.value)} placeholder="5" />
-                </Field>
-              </div>
+              <Field label="Max time (minutes)" hint="Wall-clock limit for the whole team.">
+                <input className={inputClass} inputMode="numeric" value={options.minutes} onChange={(e) => set("minutes", e.target.value)} placeholder="15" />
+              </Field>
             </fieldset>
 
             <fieldset className="space-y-3">
@@ -287,7 +298,7 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
                 <Field label="Max agents">
                   <input className={inputClass} inputMode="numeric" value={options.maxAgents} onChange={(e) => set("maxAgents", e.target.value)} placeholder="No limit" />
                 </Field>
-                <Field label="Fan-out per level" hint="e.g. 3, 2, 0">
+                <Field label="Fan-out per level" hint="Sub-agents each agent may start, root first. e.g. 3, 0">
                   <input className={inputClass} value={options.fanOut} onChange={(e) => set("fanOut", e.target.value)} placeholder="Any" />
                 </Field>
               </div>

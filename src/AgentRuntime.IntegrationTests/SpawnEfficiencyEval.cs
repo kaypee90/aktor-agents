@@ -12,8 +12,8 @@ using Xunit.Abstractions;
 namespace AgentRuntime.IntegrationTests;
 
 /// <summary>
-/// Measures how many agents a real model spawns for requests of different sizes, and whether
-/// the work finishes. Unlike the scripted tests this judges the model's decisions, so it only
+/// Measures how many helpers a real model starts in a pipeline stage for requests of different
+/// sizes, and whether the run finishes. Unlike the scripted tests this judges the model's decisions, so it only
 /// runs when pointed at a model, and never in CI:
 /// <code>
 ///   EVAL_LLM_PROVIDER=Ollama EVAL_LLM_MODEL=qwen3:8b \
@@ -36,7 +36,6 @@ public sealed class SpawnEfficiencyEval(ITestOutputHelper output) : IAsyncLifeti
         new("simple", "Suggest three names for a new line of scented candles.", 0),
         new("simple", "Explain in two sentences what a webhook is.", 0),
         new("simple", "Write a short thank-you note to a customer who left a five-star review.", 0),
-        new("ongoing", "Every morning at 8 UTC, remind me to check which products are low on stock.", 1),
         new("complex", "Write a launch plan for a new candle line with three separate parts: a pricing analysis, " +
                        "a social media calendar for four weeks, and an email announcement sequence. Save each part as a file.", 3)
     ];
@@ -124,51 +123,53 @@ public sealed class SpawnEfficiencyEval(ITestOutputHelper output) : IAsyncLifeti
 
     private sealed record CaseResult(List<string> Agents, long Tokens, double Seconds, string Outcome);
 
-    /// <summary>Gives one request to a fresh workspace and waits until everything has settled:
-    /// the coordinator is waiting, it has answered the request, and every other agent has either
-    /// finished or (standing agents) is waiting for its next event.</summary>
+    /// <summary>Runs one request through a fresh workspace's one-stage pipeline (the stage may start
+    /// up to three helpers) and reports the helpers it started.</summary>
     private async Task<CaseResult> RunCaseAsync(EvalCase c, TimeSpan timeout)
     {
         var id = WorkspaceIds.New();
         var ws = _cluster!.Client.GetGrain<IWorkspaceGrain>(id);
-        await ws.Create(new WorkspaceCreationRequest { Name = "Candle shop", Goal = "Help me run my small online candle shop." });
-
-        // Let the coordinator handle the setup goal first, so the case measures only the request.
-        var ready = await WaitSettledAsync(ws, afterSeq: null, timeout);
-        if (ready is null) return new([], 0, 0, "setup never settled");
-        var baselineAgents = ready.Agents.Select(a => a.AgentId).ToHashSet();
-        var baselineTokens = ready.TotalTokens;
+        await ws.Create(new WorkspaceCreationRequest
+        {
+            Name = "Candle shop",
+            Goal = "Help me run my small online candle shop.",
+            Pipeline = new Pipelines.PipelineDefinition
+            {
+                Stages =
+                [
+                    new Pipelines.PipelineStage
+                    {
+                        StageId = "assistant",
+                        Name = "Assistant",
+                        Instructions = "Do what the run's input asks, for the candle shop.",
+                        Capabilities = ["research", "filesystem"],
+                        MaxHelpers = 3
+                    }
+                ]
+            }
+        });
 
         var clock = Stopwatch.StartNew();
-        var posted = await ws.PostUserMessage(c.Request, null, null);
-        var done = await WaitSettledAsync(ws, posted.Seq, timeout);
-        var final = done ?? await ws.GetSnapshot();
-
-        var spawned = final!.Agents.Where(a => !baselineAgents.Contains(a.AgentId)).ToList();
-        var outcome = done is null ? "timed out"
-            : spawned.Any(a => a.Status is "Failed" or "TimedOut") ? "an agent failed"
-            : "finished";
-        return new(spawned.Select(a => $"{a.Role} ({a.Status})").ToList(), final.TotalTokens - baselineTokens, clock.Elapsed.TotalSeconds, outcome);
-    }
-
-    /// <param name="afterSeq">When set, an agent must also have replied after this message.</param>
-    private static async Task<WorkspaceSnapshot?> WaitSettledAsync(IWorkspaceGrain ws, long? afterSeq, TimeSpan timeout)
-    {
+        var started = await ws.StartRun(c.Request, "eval");
+        var run = _cluster.Client.GetGrain<Pipelines.IPipelineRunGrain>(started.RunId!);
+        Pipelines.PipelineRunView? view = null;
         var deadline = DateTime.UtcNow + timeout;
-        var settledPolls = 0;
         while (DateTime.UtcNow < deadline)
         {
-            var s = await ws.GetSnapshot();
-            var settled = s is not null
-                && (afterSeq is null || s.Conversation.Any(e => e.Seq > afterSeq && e.AuthorKind == ChatAuthorKind.Agent))
-                && s.Agents.Any(a => a.Role == "Coordinator")
-                && s.Agents.All(a => a.Status is "Completed" or "Failed" or "Terminated" or "TimedOut" || (a.Status == "Waiting" && (a.Standing || a.Role == "Coordinator")));
-            // Settled for a few polls in a row: a child's report may still be on its way to the coordinator.
-            settledPolls = settled ? settledPolls + 1 : 0;
-            if (settledPolls >= 3) return s;
+            view = await run.GetView();
+            if (view?.Status is not (null or Pipelines.PipelineRunStatus.Queued or Pipelines.PipelineRunStatus.Running)) break;
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
 
-        return null;
+        var team = await _cluster.Client.GetGrain<Agents.IAgentRegistryGrain>(0).FindAsync(new Contracts.FindAgentsQuery { RootAgentId = started.RunId });
+        var helpers = team.Where(a => a.Depth >= 2).ToList();
+        var snapshot = await ws.GetSnapshot();
+        var outcome = view?.Status switch
+        {
+            Pipelines.PipelineRunStatus.Completed => "finished",
+            null or Pipelines.PipelineRunStatus.Queued or Pipelines.PipelineRunStatus.Running => "timed out",
+            var other => other.ToString()!.ToLowerInvariant()
+        };
+        return new(helpers.Select(a => $"{a.Role} ({a.Status})").ToList(), snapshot?.TotalTokens ?? 0, clock.Elapsed.TotalSeconds, outcome);
     }
 }

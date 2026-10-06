@@ -5,16 +5,16 @@ A **plugin** adds an integration to the platform. A user installs one into a wor
 
 - **Tools.** The workspace's agents see the connection's tools, named `{connection}__{tool}`
   (e.g. `shop__get`, `crm__lookup_customer`).
-- **Notifications.** Agents' `notify_user` messages are forwarded through the connection (SMS,
-  Slack, email, Telegram) at the urgency level the user chose.
-- **Inbound.** Messages the user sends back (an SMS reply, a Telegram message) become commands to
-  the workspace, from allowed senders only.
+- **Notifications.** Run results, watch alerts, approvals and budget notices are forwarded
+  through the connection (SMS, Slack, email, Telegram) at the urgency level the user chose.
+- **Inbound.** Messages the user sends back (an SMS reply, a Telegram message) start a run of the
+  workspace's pipeline, or decide an approval ("approve A1"), from allowed senders only.
 
 ```mermaid
 flowchart LR
     subgraph Workspace
-      A[Agents] -- "shop__get / crm__lookup" --> R[Runtime]
-      A -- notify_user --> O[Notification outbox]
+      A[Stage agents] -- "shop__get / crm__lookup" --> R[Runtime]
+      Run[Run results, alerts] --> O[Notification outbox]
     end
     R -- "settings + decrypted secrets<br/>(only for this call)" --> P[Plugin]
     V[(Encrypted vault)] --> R
@@ -39,29 +39,31 @@ instructions plus the services you connect. Two examples:
 
 ### Example: support triage (webhook, no polling)
 
-1. Create a workspace: "For every new support ticket, classify its urgency, draft a reply, and
-   alert me immediately about urgent ones."
-2. The coordinator creates a webhook and posts its secret URL in the chat. Point your helpdesk's
-   "new ticket" webhook at it.
-3. Connect **Slack** (notifications: everything) and **SMS** (notifications: urgent only).
-4. Each ticket wakes a standing triage agent with the ticket as untrusted data. It classifies the
-   ticket and posts to Slack; urgent tickets also reach your phone.
+1. Create a workspace: "For each support ticket: classify its urgency, find the relevant help-centre
+   answer, and draft a reply." A pipeline is drafted (e.g. Classify → Research → Draft).
+2. **Triggers → Webhook**: its secret URL is shown once. Point your helpdesk's "new ticket" webhook
+   at it.
+3. Connect **Slack** (notifications: everything) and **SMS** (notifications: urgent only), and set
+   the pipeline's result urgency (Run settings).
+4. Each ticket starts a run with the ticket as untrusted input; the result goes to Slack, and to
+   your phone when urgent.
 
 ### Example: a store inventory monitor
 
-1. Create a workspace: "Check my Shopify inventory every hour and alert me when anything drops
-   below 10 units."
+1. Create a workspace: "Work out reorder quantities for low-stock products, with a draft purchase
+   order."
 2. **Integrations → Add connection → HTTP API**:
    - name `shop`
    - base URL `https://{store}.myshopify.com/admin/api/2025-07`
    - auth header `X-Shopify-Access-Token` with a custom app's Admin API token
    - writes left off
 3. **Add connection → SMS (Twilio)** with the notification level set to "urgent only".
-4. The coordinator sets up a standing monitor with an hourly schedule. The monitor reads stock
-   with `shop__get` and calls `notify_user` with `urgency: "urgent"` when something is low, and
-   that alert reaches your phone.
-5. Reply to the SMS ("also watch the mugs"). If your number is an allowed sender, the reply
-   reaches the coordinator as a new instruction.
+4. **Triggers → Watch**: call `shop__get` every hour, alert when `inventory_quantity < 10`
+   (urgent). The check runs in code, with no model call; the alert reaches your phone. Set the
+   watch to **Run the pipeline** instead, and each newly low product starts a run that drafts the
+   reorder.
+5. Reply to the SMS ("draft a reorder for the mugs"). If your number is an allowed sender, the
+   reply starts a run with it as the input.
 
 Alternatively, connect a Shopify MCP server with the `mcp` plugin.
 
@@ -99,9 +101,9 @@ Alternatively, connect a Shopify MCP server with the `mcp` plugin.
     connection.
   - Descriptions are capped at `MaxToolDescriptionChars`, and results are truncated to
     `MaxToolResultChars` before they enter an agent's context.
-- **Alerts route through `notify_user`.** Agents are told to alert the user this way, which routes
-  by urgency to the user's channels, instead of calling SMS tools directly. Messaging tools are
-  for contacting other people.
+- **Alerts route through the workspace.** Run results and watch alerts reach the user's channels
+  by urgency; agents don't call SMS tools to reach the user. Messaging tools are for contacting
+  other people.
 
 ## Writing a plugin
 
@@ -116,6 +118,17 @@ Reference **`AgentRuntime.Plugins.Sdk`** (the `AktorAgents.Plugins.Sdk` package)
 
 Declare settings in the manifest (`Secret = true` for anything sensitive), give every tool an
 honest `SideEffects`, and pass `request.IdempotencyKey` to APIs that support idempotency.
+
+`ExecuteToolAsync` gets a `ToolExecutionRequest` stamped by the runtime, never by the agent:
+
+| Field | |
+|---|---|
+| `ToolName`, `ArgumentsJson` | The call (arguments come from the model: validate them) |
+| `AgentId`, `TaskId` | The calling agent and its task (a workspace run's id is `run-…`) |
+| `TenantId` | The agent's organization: scope anything you keep by it |
+| `WorkspaceId` | The agent's workspace, or null for a task agent: scope per-workspace data by it, not by `TaskId` |
+| `IdempotencyKey` | Stable across retries of the same call |
+| `GrantedPermissions` | What the runtime granted the agent |
 Constructor parameters are resolved from dependency injection (`IHttpClientFactory`, logging and
 so on).
 

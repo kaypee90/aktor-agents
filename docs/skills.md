@@ -24,6 +24,11 @@ agent of the organization, in tasks and workspaces alike.
   that workspace's agents list and load it, on top of the organization's skills. Where both have a
   skill with the same name, the workspace's version wins for its agents (turn it off and they fall
   back to the organization's). Tasks and other workspaces never see it.
+- **Asking for a skill by name.** Write `@skill:<name>` in a task, a run's input or a stage's
+  instructions (the text boxes suggest skills as you type `@`). An agent whose goal or context names
+  a skill sees it first in its SKILLS list, marked as asked for, and is told to load it before
+  anything else, even when the library is longer than the prompt lists.
+  See [workspaces.md](workspaces.md#mentions).
 - A replay serves `load_skill` results from the recorded run, so it sees the skill as it was then.
 
 ## The format

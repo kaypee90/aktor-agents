@@ -8,8 +8,8 @@ namespace AgentRuntime.Api.Controllers;
 /// <summary>
 /// Where an organization's tokens and money go and what takes long (docs/analytics.md): totals
 /// against the previous period, a trend, spend by agent role and source, tool timings, run
-/// durations, and the runs behind the numbers. Filters: a preset range or from/to, source,
-/// status and a goal search. Runs count in the period they started in.
+/// durations, usage by user, and the runs behind the numbers. Filters: a preset range or from/to,
+/// source, status, who started the run and a goal search. Runs count in the period they started in.
 /// </summary>
 [ApiController]
 [Route("api/analytics")]
@@ -18,6 +18,10 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     private static readonly string[] FailedStatuses = ["Failed", "TimedOut", "Rejected"];
     private const int MaxRuns = 20_000;
     private const int MaxToolSamples = 100_000;
+    /// <summary>The <c>user</c> filter value for runs with no recorded starter (from before it was recorded).</summary>
+    private const string UnknownUser = "unknown";
+    /// <summary>The source of a workspace pipeline's runs: shown in the Workspaces view, not Tasks.</summary>
+    private const string PipelineSource = "pipeline";
 
     private static readonly (string Label, double UpTo)[] DurationBuckets =
     [
@@ -36,6 +40,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         [FromQuery] string? scope,
         [FromQuery] string? workspace,
         [FromQuery] string? model,
+        [FromQuery] string? user,
         CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
@@ -61,11 +66,11 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         if (scope == "workspaces") return Ok(await WorkspacesAsync(start, end, workspace, model, offset, ct));
 
         var tenant = access.TenantId;
-        var runs = Filtered(tenant, start, end, source, status, q, model);
+        var runs = Filtered(tenant, start, end, source, status, q, model, user);
         var tasks = await runs
             .OrderByDescending(t => t.CreatedAt)
             .Take(MaxRuns)
-            .Select(t => new { t.TaskId, t.Goal, t.Status, t.Source, t.CreatedAt, t.CompletedAt })
+            .Select(t => new { t.TaskId, t.Goal, t.Status, t.Source, t.CreatedAt, t.CompletedAt, t.StartedBy })
             .ToListAsync(ct);
         var ids = runs.Select(t => t.TaskId);
 
@@ -110,11 +115,26 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         {
             perTask.TryGetValue(t.TaskId, out var usage);
             return new Row(t.TaskId, t.Goal, t.Status, t.Source, t.CreatedAt, t.CompletedAt is { } done ? (done - t.CreatedAt).TotalSeconds : null,
-                usage?.Tokens ?? 0, usage?.Cost ?? 0, usage?.Agents ?? 0);
+                usage?.Tokens ?? 0, usage?.Cost ?? 0, usage?.Agents ?? 0, t.StartedBy ?? UnknownUser);
         }).ToList();
         var finished = rows.Where(r => r.DurationS is not null).Select(r => r.DurationS!.Value).ToList();
 
-        var previous = await PreviousAsync(tenant, start - (end - start), start, source, status, q, model, ct);
+        var previous = await PreviousAsync(tenant, start - (end - start), start, source, status, q, model, user, ct);
+        var people = await PeopleAsync(tenant, rows.Select(r => r.StartedBy), ct);
+        object View(Row r) => new
+        {
+            task_id = r.TaskId,
+            goal = r.Goal,
+            status = r.DurationS is null ? "Running" : r.Status,
+            source = r.Source,
+            created_at = r.CreatedAt,
+            duration_s = r.DurationS,
+            tokens = r.Tokens,
+            cost_usd = r.Cost,
+            agents = r.Agents,
+            started_by = r.StartedBy,
+            started_by_name = people[r.StartedBy].Name
+        };
         var byModel = await ByModelAsync(db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId)), ct);
         var hourly = end - start <= TimeSpan.FromDays(2);
 
@@ -153,6 +173,20 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             }),
             by_source = rows.GroupBy(r => r.Source).Select(g => new { source = g.Key, runs = g.Count(), tokens = g.Sum(r => r.Tokens), cost_usd = g.Sum(r => r.Cost) })
                 .OrderByDescending(x => x.cost_usd),
+            by_user = rows.GroupBy(r => r.StartedBy).Select(g => new
+                {
+                    user = g.Key,
+                    name = people[g.Key].Name,
+                    kind = people[g.Key].Kind,
+                    runs = g.Count(),
+                    tokens = g.Sum(r => r.Tokens),
+                    cost_usd = g.Sum(r => r.Cost),
+                    avg_cost_usd = g.Average(r => r.Cost),
+                    failed = g.Count(r => r.DurationS is not null && FailedStatuses.Contains(r.Status)),
+                    last_run_at = g.Max(r => r.CreatedAt)
+                })
+                .OrderByDescending(x => x.cost_usd).ThenByDescending(x => x.runs)
+                .Take(50),
             by_status = rows.GroupBy(r => r.DurationS is null ? "Running" : r.Status).Select(g => new { status = g.Key, runs = g.Count() }),
             by_tool = byTool.Select(t => new
             {
@@ -173,25 +207,50 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         });
     }
 
-    private sealed record Row(string TaskId, string Goal, string Status, string Source, DateTimeOffset CreatedAt, double? DurationS, long Tokens, decimal Cost, int Agents);
+    private sealed record Row(string TaskId, string Goal, string Status, string Source, DateTimeOffset CreatedAt, double? DurationS, long Tokens, decimal Cost, int Agents,
+        string StartedBy);
 
-    private static object View(Row r) => new
-    {
-        task_id = r.TaskId,
-        goal = r.Goal,
-        status = r.DurationS is null ? "Running" : r.Status,
-        source = r.Source,
-        created_at = r.CreatedAt,
-        duration_s = r.DurationS,
-        tokens = r.Tokens,
-        cost_usd = r.Cost,
-        agents = r.Agents
-    };
+    private sealed record Person(string Name, string Kind);
 
-    private IQueryable<TaskRecord> Filtered(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model)
+    /// <summary>
+    /// Display names for the starters of runs: a member's name or email, an API key's name, "Local"
+    /// when sign-in is off, "Triggers" for pipeline runs a trigger started, and "Not recorded" for
+    /// runs from before starters were recorded. A user
+    /// or key that has since been deleted keeps a recognisable short id.
+    /// </summary>
+    private async Task<Dictionary<string, Person>> PeopleAsync(string tenant, IEnumerable<string> starters, CancellationToken ct)
     {
-        var runs = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.CreatedAt >= start && t.CreatedAt < end);
+        var ids = starters.Distinct().ToList();
+        var userIds = ids.Where(id => id is not (UnknownUser or "local" or "trigger") && !id.StartsWith("key:", StringComparison.Ordinal)).ToList();
+        var keyIds = ids.Where(id => id.StartsWith("key:", StringComparison.Ordinal)).Select(id => id[4..]).ToList();
+        var users = await db.Users.AsNoTracking().Where(u => userIds.Contains(u.UserId))
+            .Select(u => new { u.UserId, u.Name, u.Email }).ToDictionaryAsync(u => u.UserId, ct);
+        var keys = await db.ApiKeys.AsNoTracking().Where(k => k.TenantId == tenant && keyIds.Contains(k.KeyId))
+            .Select(k => new { k.KeyId, k.Name }).ToDictionaryAsync(k => k.KeyId, k => k.Name, ct);
+
+        return ids.ToDictionary(id => id, id => id switch
+        {
+            UnknownUser => new Person("Not recorded", "unknown"),
+            "local" => new Person("Local (sign-in off)", "user"),
+            "trigger" => new Person("Triggers (automatic runs)", "trigger"),
+            _ when id.StartsWith("key:", StringComparison.Ordinal) =>
+                new Person(keys.TryGetValue(id[4..], out var key) ? $"API key · {key}" : $"API key · {Short(id[4..])} (deleted)", "api_key"),
+            _ => users.TryGetValue(id, out var u)
+                ? new Person(string.IsNullOrWhiteSpace(u.Name) ? u.Email : $"{u.Name} ({u.Email})", "user")
+                : new Person($"Former member · {Short(id)}", "user")
+        });
+
+        static string Short(string id) => id.Length <= 8 ? id : id[..8];
+    }
+
+    private IQueryable<TaskRecord> Filtered(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model,
+        string? user)
+    {
+        // Workspace pipelines' runs are tasks too, but they're reported with their workspaces.
+        var runs = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.CreatedAt >= start && t.CreatedAt < end && t.Source != PipelineSource);
         if (!string.IsNullOrWhiteSpace(source)) runs = runs.Where(t => t.Source == source);
+        if (user == UnknownUser) runs = runs.Where(t => t.StartedBy == null);
+        else if (!string.IsNullOrWhiteSpace(user)) runs = runs.Where(t => t.StartedBy == user);
         runs = status switch
         {
             "running" => runs.Where(t => t.CompletedAt == null),
@@ -215,9 +274,10 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     }
 
     /// <summary>The same filters over the period just before, for the "vs previous" figures.</summary>
-    private async Task<object> PreviousAsync(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model, CancellationToken ct)
+    private async Task<object> PreviousAsync(string tenant, DateTimeOffset start, DateTimeOffset end, string? source, string? status, string? q, string? model,
+        string? user, CancellationToken ct)
     {
-        var runs = Filtered(tenant, start, end, source, status, q, model);
+        var runs = Filtered(tenant, start, end, source, status, q, model, user);
         var ids = runs.Select(t => t.TaskId);
         var count = await runs.CountAsync(ct);
         var agents = db.Agents.AsNoTracking().Where(a => a.TenantId == tenant && ids.Contains(a.TaskId));
@@ -307,9 +367,10 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     }
 
     /// <summary>
-    /// Workspaces: their model calls (tokens, spend, time), tools, triggers that fired and approvals,
-    /// per workspace, role and model, within the range. Workspaces have no runs, so everything is
-    /// counted when it happened. Model calls are recorded from this release on.
+    /// Workspaces: their model calls (tokens, spend, time), tools, triggers that fired, approvals, and
+    /// their pipelines' runs (how many, how they ended, how long they took, who started them), per
+    /// workspace, role and model, within the range. Activity counts when it happened; a run counts
+    /// in the period it started in. Model calls are recorded from this release on.
     /// </summary>
     private async Task<object> WorkspacesAsync(DateTimeOffset start, DateTimeOffset end, string? workspaceFilter, string? modelFilter, TimeSpan offset, CancellationToken ct)
     {
@@ -331,8 +392,12 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             .ToListAsync(ct);
         var durations = rows.Select(r => (double)r.DurationMs).ToList();
 
+        // A pipeline's tools are called by its runs' agents, whose task is the run.
+        var scopes = ids.Concat(await db.Tasks.AsNoTracking()
+            .Where(t => t.TenantId == tenant && t.WorkspaceId != null && ids.Contains(t.WorkspaceId))
+            .Select(t => t.TaskId).ToListAsync(ct)).ToList();
         var tools = await db.ToolCalls.AsNoTracking()
-            .Where(c => c.TenantId == tenant && ids.Contains(c.TaskId) && c.Timestamp >= start && c.Timestamp < end)
+            .Where(c => c.TenantId == tenant && scopes.Contains(c.TaskId) && c.Timestamp >= start && c.Timestamp < end)
             .GroupBy(c => c.ToolName)
             .Select(g => new { Tool = g.Key, Calls = g.Count(), Failures = g.Count(c => !c.Success), Avg = g.Average(c => (double?)c.DurationMs), Total = g.Sum(c => (long?)c.DurationMs) ?? 0 })
             .OrderByDescending(x => x.Total)
@@ -358,6 +423,47 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             .Select(g => new { Calls = g.Count(), Tokens = g.Sum(c => (long)c.InputTokens + c.OutputTokens), Cost = g.Sum(c => c.CostUsd) })
             .FirstOrDefaultAsync(ct);
 
+        // The pipelines' runs that started in the range: how many, how they ended, what they cost and how long they took.
+        var runQuery = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.Source == PipelineSource && t.WorkspaceId != null
+                                                          && ids.Contains(t.WorkspaceId) && t.CreatedAt >= start && t.CreatedAt < end);
+        if (!string.IsNullOrEmpty(modelFilter)) runQuery = runQuery.Where(t => db.LlmCalls.Any(c => c.TaskId == t.TaskId && c.ProfileId == modelFilter));
+        var runList = await runQuery.OrderByDescending(t => t.CreatedAt).Take(MaxRuns)
+            .Select(t => new { t.TaskId, WorkspaceId = t.WorkspaceId!, t.Goal, t.Status, t.CreatedAt, t.CompletedAt, t.StartedBy })
+            .ToListAsync(ct);
+        var runIds = runList.Select(r => r.TaskId).ToList();
+        var runSpend = (await db.Agents.AsNoTracking().Where(a => a.TenantId == tenant && runIds.Contains(a.TaskId))
+                .GroupBy(a => a.TaskId)
+                .Select(g => new { TaskId = g.Key, Tokens = g.Sum(a => (long)a.TokensUsed), Cost = g.Sum(a => a.CostUsd), Agents = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.TaskId);
+        var runRows = runList.Select(r =>
+        {
+            runSpend.TryGetValue(r.TaskId, out var spend);
+            return new Row(r.TaskId, r.Goal, r.Status, r.WorkspaceId, r.CreatedAt, r.CompletedAt is { } done ? (done - r.CreatedAt).TotalSeconds : null,
+                spend?.Tokens ?? 0, spend?.Cost ?? 0, spend?.Agents ?? 0, r.StartedBy ?? UnknownUser);
+        }).ToList();
+        var runDurations = runRows.Where(r => r.DurationS is not null).Select(r => r.DurationS!.Value).ToList();
+        var previousRuns = await db.Tasks.AsNoTracking().CountAsync(t => t.TenantId == tenant && t.Source == PipelineSource && t.WorkspaceId != null
+                                                                        && ids.Contains(t.WorkspaceId) && t.CreatedAt >= start - (end - start) && t.CreatedAt < start, ct);
+        var people = await PeopleAsync(tenant, runRows.Select(r => r.StartedBy), ct);
+        // Row.Source holds the run's workspace here.
+        object RunView(Row r) => new
+        {
+            task_id = r.TaskId,
+            goal = r.Goal,
+            status = r.DurationS is null ? "Running" : r.Status,
+            source = "pipeline",
+            workspace_id = r.Source,
+            workspace_name = workspaces.FirstOrDefault(w => w.WorkspaceId == r.Source)?.Name ?? r.Source,
+            created_at = r.CreatedAt,
+            duration_s = r.DurationS,
+            tokens = r.Tokens,
+            cost_usd = r.Cost,
+            agents = r.Agents,
+            started_by = r.StartedBy,
+            started_by_name = people[r.StartedBy].Name
+        };
+
         var hourly = end - start <= TimeSpan.FromDays(2);
         var step = hourly ? TimeSpan.FromHours(1) : TimeSpan.FromDays(1);
         DateTimeOffset Bucket(DateTimeOffset t)
@@ -369,6 +475,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         }
 
         var buckets = rows.GroupBy(r => Bucket(r.Timestamp)).ToDictionary(g => g.Key);
+        var runBuckets = runRows.GroupBy(r => Bucket(r.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
         var series = new List<object>();
         for (var t = Bucket(start); t < end; t += step)
         {
@@ -377,6 +484,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             {
                 t,
                 calls = g?.Count() ?? 0,
+                runs = runBuckets.GetValueOrDefault(t),
                 tokens = g?.Sum(r => r.Tokens) ?? 0,
                 cost_usd = g?.Sum(r => r.CostUsd) ?? 0,
                 avg_duration_s = g is null || !g.Any() ? (double?)null : g.Average(r => r.DurationMs) / 1000.0
@@ -406,9 +514,16 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 approvals_rejected = Approvals("approval.rejected"),
                 approvals_expired = Approvals("approval.expired"),
                 tool_calls = tools.Sum(t => t.Calls),
-                tool_failures = tools.Sum(t => t.Failures)
+                tool_failures = tools.Sum(t => t.Failures),
+                runs = runRows.Count,
+                runs_completed = runRows.Count(r => r.DurationS is not null && !FailedStatuses.Contains(r.Status)),
+                runs_failed = runRows.Count(r => r.DurationS is not null && FailedStatuses.Contains(r.Status)),
+                runs_running = runRows.Count(r => r.DurationS is null),
+                avg_run_cost_usd = runRows.Count == 0 ? 0 : runRows.Average(r => r.Cost),
+                p50_run_duration_s = runDurations.Count == 0 ? (double?)null : Percentile(runDurations, 0.5),
+                p95_run_duration_s = runDurations.Count == 0 ? (double?)null : Percentile(runDurations, 0.95)
             },
-            previous = new { calls = previous?.Calls ?? 0, tokens = previous?.Tokens ?? 0, cost_usd = previous?.Cost ?? 0 },
+            previous = new { calls = previous?.Calls ?? 0, tokens = previous?.Tokens ?? 0, cost_usd = previous?.Cost ?? 0, runs = previousRuns },
             series,
             by_workspace = ids.Select(id =>
             {
@@ -422,7 +537,9 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                     tokens = g?.Sum(r => r.Tokens) ?? 0,
                     cost_usd = g?.Sum(r => r.CostUsd) ?? 0,
                     triggers_fired = triggers.GetValueOrDefault(id),
-                    approvals_requested = Approvals("approval.requested", id)
+                    approvals_requested = Approvals("approval.requested", id),
+                    runs = runRows.Count(r => r.Source == id),
+                    runs_failed = runRows.Count(r => r.Source == id && r.DurationS is not null && FailedStatuses.Contains(r.Status))
                 };
             }).OrderByDescending(w => w.cost_usd).ThenByDescending(w => w.triggers_fired).ToList(),
             by_role = rows.GroupBy(r => r.Role).Select(g => new
@@ -433,6 +550,21 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 cost_usd = g.Sum(r => r.CostUsd),
                 avg_tokens = g.Average(r => (double)r.Tokens)
             }).OrderByDescending(x => x.tokens).Take(25).ToList(),
+            by_user = runRows.GroupBy(r => r.StartedBy).Select(g => new
+                {
+                    user = g.Key,
+                    name = people[g.Key].Name,
+                    kind = people[g.Key].Kind,
+                    runs = g.Count(),
+                    tokens = g.Sum(r => r.Tokens),
+                    cost_usd = g.Sum(r => r.Cost),
+                    avg_cost_usd = g.Average(r => r.Cost),
+                    failed = g.Count(r => r.DurationS is not null && FailedStatuses.Contains(r.Status)),
+                    last_run_at = g.Max(r => r.CreatedAt)
+                })
+                .OrderByDescending(x => x.cost_usd).ThenByDescending(x => x.runs).Take(50).ToList(),
+            top_runs_by_cost = runRows.OrderByDescending(r => r.Cost).ThenByDescending(r => r.Tokens).Take(10).Select(RunView).ToList(),
+            slowest_runs = runRows.Where(r => r.DurationS is not null).OrderByDescending(r => r.DurationS).Take(10).Select(RunView).ToList(),
             by_model = await ByModelAsync(calls, ct),
             by_tool = tools.Select(t => new
             {

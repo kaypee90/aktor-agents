@@ -27,22 +27,22 @@ public static class WorkPlanner
         {
             var workers = Math.Min(parallel.Count, maxWorkers);
             var grouping = parallel.Count > workers
-                ? $" That's more parts than the {workers} workers one request can have, so group them: each worker takes several parts."
+                ? $" That's more parts than the {workers} helpers you may start, so group them: each helper takes several parts."
                 : string.Empty;
             return new WorkPlan("split", workers, parallel.Select(p => p.Title).ToList(), yours,
-                $"Split: start {workers} worker{(workers == 1 ? "" : "s")} (spawn_agent, standing=false), one per part: " +
+                $"Split: start {workers} helper{(workers == 1 ? "" : "s")} (spawn_agent), one per part: " +
                 $"{string.Join("; ", parallel.Select(p => p.Title))}.{grouping} Give each a goal naming exactly its part and the file to " +
-                "save it to, then call wait_for_events. " +
+                "save it to. " +
                 (yours.Count > 0 ? $"Do the rest yourself: {string.Join("; ", yours)}. " : string.Empty) +
-                "When they have all reported, combine their results into one deliverable, save it, and tell the user.");
+                "You're told when each reports; then combine their results and finish with complete_task.");
         }
 
         if (parallel.Count == 1 && parallel[0].Size.Equals("large", StringComparison.OrdinalIgnoreCase) && maxWorkers > 0)
         {
             return new WorkPlan("delegate", 1, [parallel[0].Title], yours,
-                $"Delegate the large part to one worker ({parallel[0].Title}), so you stay free to answer the user while it runs. " +
-                (yours.Count > 0 ? $"Do the rest yourself: {string.Join("; ", yours)}. " : string.Empty) +
-                "Tell the user what's under way, then call wait_for_events.");
+                $"Delegate the large part to one helper ({parallel[0].Title}). " +
+                (yours.Count > 0 ? $"Do the rest yourself while it works: {string.Join("; ", yours)}. " : string.Empty) +
+                "You're told when it reports; then finish with complete_task.");
         }
 
         return new WorkPlan("self", 0, [], parts.Select(p => p.Title).ToList(),

@@ -89,21 +89,9 @@ public sealed class AgentState
     /// <summary>The workspace this agent belongs to, if any (its task id is the same id).</summary>
     [Id(38)] public string? WorkspaceId { get; set; }
 
-    /// <summary>A standing agent never "finishes": it waits for messages, schedules and webhooks
-    /// indefinitely. It sees only a sliding window of recent history and its budget renews.</summary>
-    [Id(39)] public bool Standing { get; set; }
-
-    /// <summary>Recent transcript entries sent to the LLM; 0 means the whole conversation.</summary>
-    [Id(40)] public int ContextWindow { get; set; }
-
-    /// <summary>Start of the current budget period, for budgets that renew (ResourceBudget.PeriodHours).</summary>
-    [Id(41)] public DateTimeOffset? BudgetPeriodStartedAt { get; set; }
+    // Ids 39–41 held standing agents' settings (workspaces before pipelines); don't reuse them.
 
     public bool InWorkspace => WorkspaceId is not null;
-
-    /// <summary>The workspace's coordinator: the user's way in, capped only by the workspace's daily
-    /// budget, so the workspace never goes silent while that budget has room.</summary>
-    public bool IsWorkspaceCoordinator => InWorkspace && ParentAgentId is null && Role == "Coordinator";
 
     /// <summary>Summary of older history that was compacted out of the transcript (see
     /// ContextCompactor). Shown to the LLM so long-lived agents keep continuity cheaply.</summary>
@@ -168,12 +156,12 @@ public sealed class AgentState
     /// <summary>Replaying and still on the recording.</summary>
     public bool IsReplaying => Replay is not null && !ReplayDiverged;
 
-    /// <summary>Task agents with a budget for their whole life (not standing agents, whose budget
-    /// renews, nor simulation residents): these wrap up instead of failing when it runs out.</summary>
-    public bool HasLifetimeBudget => !IsResident && !Standing && Budget.PeriodHours <= 0;
+    /// <summary>Agents with a budget for their whole life (all but simulation residents): these
+    /// wrap up instead of failing when it runs out.</summary>
+    public bool HasLifetimeBudget => !IsResident;
 
-    /// <summary>Routine event handling that can use the fast model tier.</summary>
-    public bool UsesFastTier => IsResident || (Standing && Role != "Coordinator");
+    /// <summary>Routine event handling (simulation residents) that can use the fast model tier.</summary>
+    public bool UsesFastTier => IsResident;
 
     public bool IsTerminal => Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut;
 

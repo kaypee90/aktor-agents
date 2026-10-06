@@ -165,4 +165,10 @@ public interface ITenantGrain : IGrainWithStringKey
 
     /// <summary>Applies what the billing provider (or an operator) says the organization is on.</summary>
     Task SetBilling(TenantBillingState billing);
+
+    /// <summary>The organization's safety policy, applied to all its workspaces and tasks.</summary>
+    [AlwaysInterleave]
+    Task<Safety.OrganizationSafetyPolicy> GetSafetyPolicy();
+
+    Task<Safety.OrganizationSafetyPolicy> SetSafetyPolicy(Safety.OrganizationSafetyPolicy policy, string changedBy);
 }

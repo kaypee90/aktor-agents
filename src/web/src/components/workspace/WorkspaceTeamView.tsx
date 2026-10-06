@@ -6,7 +6,6 @@ import "@xyflow/react/dist/style.css";
 import type { RuntimeEvent } from "@/lib/types";
 import type { WorkspaceAgentView, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { TEAM_NODE_HEIGHT, TEAM_NODE_WIDTH, TeamAgentNode, TeamUserNode, USER_NODE_HEIGHT, USER_NODE_WIDTH, type Bubble } from "./TeamNode";
-import { CHAT_WIDGET_WIDTH } from "./WorkspaceChatWidget";
 
 const nodeTypes = { agent: TeamAgentNode, user: TeamUserNode };
 
@@ -19,9 +18,28 @@ const H_GAP = 36;
 // Headroom above each node for its speech bubble.
 const V_GAP = 72;
 const TERMINAL = new Set(["Completed", "Failed", "TimedOut", "Terminated"]);
-/** Below this much free width beside the open chat, fitting the team into it would shrink it to
- * nothing: the chat overlays the canvas instead, and minimising it shows the team. */
-const MIN_TEAM_WIDTH = 280;
+const isRun = (id: string | null | undefined) => !!id?.startsWith("run-");
+
+/** Which runs the viewer chose to see: remembered per workspace, in this browser only. */
+type RunFilter = { runningOnly: boolean; hidden: string[] };
+const filterKey = (workspaceId: string) => `aktor:teamFilter:${workspaceId}`;
+
+function readFilter(workspaceId: string): RunFilter {
+  try {
+    const raw = JSON.parse(localStorage.getItem(filterKey(workspaceId)) ?? "null") as Partial<RunFilter> | null;
+    return { runningOnly: raw?.runningOnly === true, hidden: Array.isArray(raw?.hidden) ? raw.hidden.filter((h) => typeof h === "string") : [] };
+  } catch {
+    return { runningOnly: false, hidden: [] };
+  }
+}
+
+function writeFilter(workspaceId: string, filter: RunFilter) {
+  try {
+    localStorage.setItem(filterKey(workspaceId), JSON.stringify(filter));
+  } catch {
+    // Storage unavailable: the choice lasts until the page is reloaded.
+  }
+}
 
 type Link = { from: string; to: string; label: string; color: string };
 
@@ -36,11 +54,11 @@ const MESSAGE_KINDS: Record<string, { label: string; color: string }> = {
   StatusUpdate: { label: "update", color: "#64748b" },
 };
 const SPAWN = { label: "started", color: "#0d9488" };
-const TO_YOU = { label: "to you", color: "#2563eb" };
-const FROM_YOU = { label: "you", color: "#2563eb" };
+const TO_YOU = { label: "result", color: "#059669" };
+const FROM_YOU = { label: "run", color: "#2563eb" };
 
-/** Tool calls worth a bubble; talking and waiting already show as arrows or status. */
-const QUIET_TOOLS = new Set(["send_message", "spawn_agent", "notify_user", "wait_for_events", "complete_task", "find_agents"]);
+/** Tool calls worth a bubble; talking and reporting already show as arrows or status. */
+const QUIET_TOOLS = new Set(["send_message", "spawn_agent", "complete_task", "find_agents", "get_agent_status"]);
 
 function excerpt(text: string, max = 90) {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -57,12 +75,12 @@ function toolBubble(tool: string, argumentsJson: string | undefined): string {
   if (tool === "plan_request") return "🧭 planning the work";
   if (tool === "filesystem_write") return `📄 saving ${String(args.path ?? "a file")}`;
   if (tool === "web_search") return `🔎 ${String(args.query ?? "searching")}`;
-  if (tool.startsWith("create_")) return `⏰ ${tool.replace("create_", "setting up a ")}`;
   return `🔧 ${tool}`;
 }
 
-/** Recent communication, as arrows between agents and speech bubbles on them. */
-function recentActivity(events: RuntimeEvent[], now: number, coordinatorId: string, visible: Set<string>) {
+/** Recent communication, as arrows between agents and speech bubbles on them: messages, helpers
+ * started, runs started by you and their results coming back. */
+function recentActivity(events: RuntimeEvent[], now: number, visible: Set<string>) {
   const links = new Map<string, Link>();
   const bubbles = new Map<string, Bubble>();
   const on = (id: string | null | undefined): id is string => !!id && visible.has(id);
@@ -82,11 +100,13 @@ function recentActivity(events: RuntimeEvent[], now: number, coordinatorId: stri
         break;
       case "WorkspaceMessage":
         if (e.data.author_kind === "User") {
-          links.set(`${USER_ID}>${coordinatorId}`, { from: USER_ID, to: coordinatorId, ...FROM_YOU });
           bubbles.set(USER_ID, { text: excerpt(e.data.text ?? ""), tone: "user" });
-        } else if (e.data.author_kind === "Agent" && on(e.data.author_id)) {
-          links.set(`${e.data.author_id}>${USER_ID}`, { from: e.data.author_id, to: USER_ID, ...TO_YOU });
-          bubbles.set(e.data.author_id, { text: excerpt(e.data.text ?? ""), tone: "message" });
+        } else if (isRun(e.data.author_id) && on(e.data.author_id)) {
+          // A run's notices: started (from you), or finished (its result, back to you).
+          const finished = (e.data.text ?? "").includes("\n");
+          links.set(finished ? `${e.data.author_id}>${USER_ID}` : `${USER_ID}>${e.data.author_id}`,
+            finished ? { from: e.data.author_id, to: USER_ID, ...TO_YOU } : { from: USER_ID, to: e.data.author_id, ...FROM_YOU });
+          if (finished) bubbles.set(e.data.author_id, { text: excerpt((e.data.text ?? "").split("\n").slice(1).join(" ")), tone: "message" });
         }
         break;
       case "AgentToolCalled":
@@ -125,16 +145,30 @@ function layout(rootId: string, childrenOf: Map<string, string[]>) {
   return positions;
 }
 
-export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, chatOpen }: {
+/**
+ * The workspace's agents at work, live: you at the top, each recent run below you, its stage
+ * agents below the run and their helpers below them. Arrows and speech bubbles show what just
+ * happened (messages, helpers started, tools used, results coming back) and fade after a while.
+ */
+export function WorkspaceTeamView({ workspace, events, selectedId, onSelect }: {
   workspace: WorkspaceSnapshot;
   events: RuntimeEvent[];
   selectedId: string | null;
   onSelect: (agentId: string) => void;
-  /** The chat widget floats over the canvas's right side; the team is fitted beside it. */
-  chatOpen: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [showAllFinished, setShowAllFinished] = useState(false);
+  const [filter, setFilterState] = useState<RunFilter>(() => readFilter(workspace.workspace_id));
+  const setFilter = (next: RunFilter) => {
+    setFilterState(next);
+    writeFilter(workspace.workspace_id, next);
+  };
+  // Another workspace opened in the same view: its own remembered filter.
+  const [filterFor, setFilterFor] = useState(workspace.workspace_id);
+  if (filterFor !== workspace.workspace_id) {
+    setFilterFor(workspace.workspace_id);
+    setFilterState(readFilter(workspace.workspace_id));
+  }
   const container = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(0);
 
@@ -147,12 +181,10 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
     return () => observer.disconnect();
   }, []);
 
-  const chatGap = CHAT_WIDGET_WIDTH + 32;
-  const besideChat = chatOpen && canvasWidth - chatGap >= MIN_TEAM_WIDTH;
   const fitViewOptions = useMemo<FitViewOptions>(() => ({
     maxZoom: 1.1,
-    padding: { top: "56px", left: "24px", bottom: "24px", right: besideChat ? `${chatGap}px` : "24px" },
-  }), [besideChat, chatGap]);
+    padding: { top: "56px", left: "24px", bottom: "24px", right: "24px" },
+  }), []);
 
   // Arrows and bubbles age out on their own, without waiting for the next event.
   useEffect(() => {
@@ -160,35 +192,62 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
     return () => clearInterval(timer);
   }, []);
 
-  const coordinatorId = workspace.coordinator_agent_id;
+  // The runs on the canvas, newest first, and the run each agent belongs to.
+  const runs = useMemo(() => {
+    const numbers = new Map(workspace.runs.map((r) => [r.run_id, r.number]));
+    return workspace.agents.filter((a) => isRun(a.agent_id))
+      .map((a) => ({ id: a.agent_id, number: numbers.get(a.agent_id) ?? 0, finished: TERMINAL.has(a.status), status: a.status }))
+      .sort((a, b) => b.number - a.number);
+  }, [workspace.agents, workspace.runs]);
+  const runOf = useMemo(() => {
+    const parent = new Map(workspace.agents.map((a) => [a.agent_id, a.parent_agent_id]));
+    const root = (id: string): string | null => {
+      for (let cur: string | null | undefined = id, hops = 0; cur && hops < 20; cur = parent.get(cur), hops++) {
+        if (isRun(cur)) return cur;
+      }
+      return null;
+    };
+    return new Map(workspace.agents.map((a) => [a.agent_id, root(a.agent_id)]));
+  }, [workspace.agents]);
+  const hiddenRuns = useMemo(() => new Set([
+    ...filter.hidden,
+    ...(filter.runningOnly ? runs.filter((r) => r.finished).map((r) => r.id) : []),
+  ]), [filter, runs]);
 
   const { visibleAgents, hiddenFinished } = useMemo(() => {
     const recentlyFinished = (a: WorkspaceAgentView) =>
       !a.completed_at || now - Date.parse(a.completed_at) < FINISHED_VISIBLE_MS;
-    const shown = workspace.agents.filter((a) =>
-      a.agent_id === coordinatorId || !TERMINAL.has(a.status) || showAllFinished || recentlyFinished(a));
-    return { visibleAgents: shown, hiddenFinished: workspace.agents.length - shown.length };
-  }, [workspace.agents, coordinatorId, showAllFinished, now]);
+    const inShownRun = workspace.agents.filter((a) => !hiddenRuns.has(runOf.get(a.agent_id) ?? ""));
+    const shown = inShownRun.filter((a) => !TERMINAL.has(a.status) || showAllFinished || recentlyFinished(a));
+    return { visibleAgents: shown, hiddenFinished: inShownRun.length - shown.length };
+  }, [workspace.agents, showAllFinished, now, hiddenRuns, runOf]);
+
+  const toggleRun = (runId: string) => {
+    const hidden = new Set(filter.hidden);
+    if (hidden.has(runId)) hidden.delete(runId); else hidden.add(runId);
+    // Only runs still on the canvas are remembered, so the list doesn't grow forever.
+    setFilter({ ...filter, hidden: [...hidden].filter((h) => runs.some((r) => r.id === h)) });
+  };
 
   const visibleIds = useMemo(() => new Set([USER_ID, ...visibleAgents.map((a) => a.agent_id)]), [visibleAgents]);
 
   const { nodes, edges } = useMemo(() => {
-    // The user sits above the coordinator; an agent whose parent is hidden hangs off the coordinator.
-    const childrenOf = new Map<string, string[]>([[USER_ID, [coordinatorId]]]);
+    // You sit above the runs; an agent whose parent is hidden hangs off you.
+    const childrenOf = new Map<string, string[]>([[USER_ID, []]]);
     for (const a of visibleAgents) {
-      if (a.agent_id === coordinatorId) continue;
-      const parent = a.parent_agent_id && visibleIds.has(a.parent_agent_id) ? a.parent_agent_id : coordinatorId;
+      const parent = a.parent_agent_id && visibleIds.has(a.parent_agent_id) ? a.parent_agent_id : USER_ID;
       childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), a.agent_id]);
     }
 
     const positions = layout(USER_ID, childrenOf);
-    const { links, bubbles } = recentActivity(events, now, coordinatorId, visibleIds);
+    const { links, bubbles } = recentActivity(events, now, visibleIds);
+    const runNumbers = new Map(workspace.runs.map((r) => [r.run_id, r.number]));
 
     const nodes: Node[] = [
       {
         id: USER_ID,
         type: "user",
-        // Centre the pill over the coordinator: it's narrower than an agent node.
+        // Centre the pill over what's below it: it's narrower than an agent node.
         position: { x: positions.get(USER_ID)!.x + (TEAM_NODE_WIDTH - USER_NODE_WIDTH) / 2, y: positions.get(USER_ID)!.y + 28 },
         measured: { width: USER_NODE_WIDTH, height: USER_NODE_HEIGHT },
         data: { bubble: bubbles.get(USER_ID) ?? null },
@@ -201,7 +260,11 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
         position: positions.get(a.agent_id)!,
         // Already measured (the size is fixed), so rebuilding the node never hides it.
         measured: { width: TEAM_NODE_WIDTH, height: TEAM_NODE_HEIGHT },
-        data: { agent: a, bubble: bubbles.get(a.agent_id) ?? null },
+        // A run is labelled with its number and input.
+        data: {
+          agent: isRun(a.agent_id) ? { ...a, role: `Run #${runNumbers.get(a.agent_id) ?? "?"}`, current_task: a.current_task ?? a.goal } : a,
+          bubble: bubbles.get(a.agent_id) ?? null,
+        },
         selected: a.agent_id === selectedId,
         draggable: false,
       })),
@@ -230,18 +293,18 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
     }
 
     return { nodes, edges };
-  }, [visibleAgents, visibleIds, coordinatorId, events, now, selectedId]);
+  }, [visibleAgents, visibleIds, events, now, selectedId, workspace.runs]);
 
   return (
     <div ref={container} className="relative h-full">
-      {/* Re-fit when the team changes shape, the chat opens or closes, or the canvas is resized;
-          not on every activity tick. */}
+      {/* Re-fit when the team changes shape or the canvas is resized (or shown); not on every
+          activity tick. */}
       <ReactFlow
-        key={`${[...visibleIds].join(",")}|${besideChat}|${Math.round(canvasWidth / 50)}`}
+        key={`${[...visibleIds].join(",")}|${Math.round(canvasWidth / 50)}`}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        onNodeClick={(_, node) => node.type === "agent" && onSelect(node.id)}
+        onNodeClick={(_, node) => node.type === "agent" && !isRun(node.id) && onSelect(node.id)}
         nodesDraggable={false}
         nodesConnectable={false}
         fitView
@@ -254,28 +317,59 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect, cha
       </ReactFlow>
 
       <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/85 px-2 py-1 text-[10px] text-zinc-500 shadow-sm dark:bg-zinc-900/85">
-        <span><span className="text-blue-600">━</span> task / chat</span>
+        <span><span className="text-blue-600">━</span> task / run</span>
         <span><span className="text-emerald-600">━</span> done</span>
         <span><span className="text-violet-600">━</span> question / answer</span>
         <span><span className="text-teal-600">━</span> started</span>
         <span><span className="text-slate-400">┅</span> team</span>
       </div>
 
-      {hiddenFinished > 0 && (
-        <button
-          onClick={() => setShowAllFinished(true)}
-          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-        >
-          Show {hiddenFinished} earlier finished agent{hiddenFinished === 1 ? "" : "s"}
-        </button>
+      {/* Which runs to show: running only, and any run on or off. */}
+      {(runs.length > 0 || hiddenFinished > 0 || showAllFinished) && (
+        <div className="absolute right-3 top-3 flex max-w-[60%] flex-wrap items-center justify-end gap-1.5 rounded-md bg-white/90 px-2 py-1.5 text-[11px] shadow-sm dark:bg-zinc-900/90">
+          {runs.length > 0 && (
+            <label className="flex cursor-pointer items-center gap-1.5 pr-1 font-medium text-zinc-700 dark:text-zinc-300" title="Hide runs that have finished">
+              <input type="checkbox" className="h-3 w-3 accent-brand-500" checked={filter.runningOnly}
+                onChange={(e) => setFilter({ ...filter, runningOnly: e.target.checked })} />
+              Running only
+            </label>
+          )}
+          {runs.map((r) => {
+            const shown = !hiddenRuns.has(r.id);
+            const lockedByFilter = filter.runningOnly && r.finished;
+            return (
+              <button key={r.id} onClick={() => !lockedByFilter && toggleRun(r.id)} disabled={lockedByFilter}
+                aria-pressed={shown}
+                title={lockedByFilter ? "Finished: hidden by Running only" : shown ? `Hide run #${r.number}` : `Show run #${r.number}`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 tabular-nums transition ${
+                  shown ? "border-zinc-300 bg-white text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                    : "border-dashed border-zinc-300 text-zinc-400 line-through dark:border-zinc-700"
+                } ${lockedByFilter ? "cursor-not-allowed opacity-50" : "hover:border-brand-400"}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${
+                  r.status === "Completed" ? "bg-emerald-500" : r.finished ? "bg-rose-500" : "animate-pulse bg-sky-500"}`} />
+                #{r.number}
+              </button>
+            );
+          })}
+          {hiddenFinished > 0 && (
+            <button onClick={() => setShowAllFinished(true)} className="rounded-full px-1.5 text-zinc-500 underline-offset-2 hover:underline">
+              +{hiddenFinished} earlier finished agent{hiddenFinished === 1 ? "" : "s"}
+            </button>
+          )}
+          {showAllFinished && (
+            <button onClick={() => setShowAllFinished(false)} className="rounded-full px-1.5 text-zinc-500 underline-offset-2 hover:underline">
+              Hide earlier finished agents
+            </button>
+          )}
+        </div>
       )}
-      {showAllFinished && (
-        <button
-          onClick={() => setShowAllFinished(false)}
-          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-        >
-          Hide earlier finished agents
-        </button>
+
+      {visibleAgents.length === 0 && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
+          {runs.length > 0
+            ? "Every run is hidden. Turn off Running only, or click a run above to show it."
+            : "No run in the last 30 minutes. Run the pipeline and its agents appear here as they work."}
+        </div>
       )}
     </div>
   );

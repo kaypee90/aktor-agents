@@ -7,6 +7,7 @@ import { signOut, switchOrganization } from "@/lib/api";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { Icons } from "@/components/ui/icons";
 import { cx } from "@/components/ui";
+import { ApprovalToasts, ApprovalsBell, useApprovals } from "./ApprovalsCenter";
 import { useTheme, type ThemeChoice } from "./theme";
 
 type NavItem = { href: string; label: string; icon: (p: { className?: string }) => React.ReactNode; match?: string[] };
@@ -60,6 +61,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const approvals = useApprovals();
 
   if (PUBLIC.includes(pathname)) return <>{children}</>;
 
@@ -122,6 +124,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <div className="space-y-1 border-t border-zinc-200 p-2 dark:border-zinc-800/80">
+        <ApprovalsBell state={approvals} collapsed={collapsed} />
         <Link
           href="/settings"
           onClick={() => setMobileOpen(false)}
@@ -163,14 +166,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex h-12 items-center gap-2 border-b border-zinc-200 px-3 lg:hidden dark:border-zinc-800">
-          <button onClick={() => setMobileOpen(true)} className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900" aria-label="Open the menu">
+          <button onClick={() => setMobileOpen(true)} className="relative rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900" aria-label="Open the menu">
             <Icons.Menu className="h-5 w-5" />
+            {approvals.pending.length > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white">
+                {approvals.pending.length}
+              </span>
+            )}
           </button>
           <Icons.Logo className="h-6 w-6" />
           <span className="text-sm font-semibold">Aktor</span>
         </div>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+      <ApprovalToasts state={approvals} />
     </div>
   );
 }

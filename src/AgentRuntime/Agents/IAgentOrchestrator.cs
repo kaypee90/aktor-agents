@@ -53,9 +53,9 @@ public interface IAgentOrchestrator
     Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Creates (idempotently) a workspace's standing coordinator and starts its first turn.</summary>
-    Task<string> CreateWorkspaceCoordinatorAsync(string workspaceId, string workspaceName, string goal,
-        Workspaces.WorkspacePolicy policy, string? tenantId = null, CancellationToken cancellationToken = default);
+    /// <summary>Creates (idempotently) a pipeline stage's agent under its run and starts it. The
+    /// stage's tools come from its capabilities; it may spawn only if it has helpers.</summary>
+    Task<SpawnAgentResult> CreateStageAgentAsync(Pipelines.StageAgentLaunch launch, CancellationToken cancellationToken = default);
 
     Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default);
 

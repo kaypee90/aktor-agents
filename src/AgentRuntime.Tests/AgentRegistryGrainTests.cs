@@ -166,6 +166,42 @@ public class AgentRegistryGrainTests
         Assert.True(result.Allowed);
     }
 
+    [Fact]
+    public async Task ReportActivityAsync_ShowsTheAgentBusy_ButNeverOverwritesHowItFinished()
+    {
+        var grain = CreateGrain(new RuntimeLimitsOptions());
+        await grain.RegisterAsync(Entry("root", depth: 0, parent: null, status: AgentStatus.Waiting));
+
+        await grain.ReportActivityAsync("root", AgentStatus.Thinking);
+        Assert.Equal(AgentStatus.Thinking, (await grain.GetAsync("root"))!.Status);
+        Assert.Single(await grain.FindAsync(new FindAgentsQuery { Status = AgentStatus.Thinking }));
+
+        await grain.ReportActivityAsync("root", AgentStatus.Executing);
+        Assert.Equal(AgentStatus.Executing, (await grain.GetAsync("root"))!.Status);
+
+        await grain.UpdateStatusAsync("root", AgentStatus.Completed);
+        await grain.ReportActivityAsync("root", AgentStatus.Thinking);
+        Assert.Equal(AgentStatus.Completed, (await grain.GetAsync("root"))!.Status);
+    }
+
+    [Fact]
+    public async Task PipelineRuns_DontCountAsAgents_AndFinishedRunsAgentsDontUseUpTheTotal()
+    {
+        var grain = CreateGrain(new RuntimeLimitsOptions { MaxTotalAgents = 2, MaxActiveAgents = 1 });
+        await grain.RegisterAsync(Entry("run-1", depth: 0, parent: null, status: AgentStatus.Executing));
+        // The run's entry is neither an active agent nor part of the total.
+        Assert.True((await grain.ValidateSpawnAsync("run-1")).Allowed);
+
+        await grain.RegisterAsync(Entry("stg-a", depth: 1, parent: "run-1", status: AgentStatus.Completed) with { RootAgentId = "run-1" });
+        await grain.RegisterAsync(Entry("stg-b", depth: 1, parent: "run-1", status: AgentStatus.Completed) with { RootAgentId = "run-1" });
+        Assert.True((await grain.ValidateSpawnAsync(null)).Allowed, "finished run agents don't count toward the total");
+
+        // A task's finished agents still do.
+        await grain.RegisterAsync(Entry("root", depth: 0, parent: null, status: AgentStatus.Completed));
+        await grain.RegisterAsync(Entry("child", depth: 1, parent: "root", status: AgentStatus.Completed));
+        Assert.False((await grain.ValidateSpawnAsync(null)).Allowed);
+    }
+
     private static AgentDirectoryEntry Entry(
         string id, int depth, string? parent, AgentStatus status = AgentStatus.Idle, List<string>? capabilities = null) => new()
     {

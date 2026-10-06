@@ -6,6 +6,7 @@ using AgentRuntime.Events;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tasks;
 using AgentRuntime.Integrations;
+using AgentRuntime.Pipelines;
 using AgentRuntime.Tenancy;
 using AgentRuntime.Workspaces;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +29,8 @@ public sealed record StartTaskRequest
     public string Source { get; init; } = "api";
     /// <summary>Team-shape rules for this task, on top of the server's (they can only tighten them).</summary>
     public Safety.TeamPolicy? TeamPolicy { get; init; }
+    /// <summary>The caller set the budget's max_children itself; otherwise a fan-out per level sets it.</summary>
+    public bool MaxChildrenRequested { get; init; }
     /// <summary>The preview this task was started from; its estimate is kept for estimate vs actual.</summary>
     public string? PreviewId { get; init; }
     /// <summary>Replay a past run from its step journal instead of starting fresh (roadmap P6).</summary>
@@ -39,15 +42,17 @@ public sealed record StartTaskRequest
     public IReadOnlyList<string>? UploadIds { get; init; }
     /// <summary>Who started it (email or user id), recorded on its attachments.</summary>
     public string? By { get; init; }
+    /// <summary>Who is starting it, for usage by user in analytics (see <see cref="AgentRuntime.Infrastructure.Identity.Caller.ActorId"/>).</summary>
+    public string? StartedBy { get; init; }
     /// <summary>Tool connections (MCP servers, APIs) the task's agents can use from their first step.</summary>
     public IReadOnlyList<Integrations.ConnectionRequest>? Connections { get; init; }
 }
 
-/// <summary>A task (or a request to a workspace) as every protocol reports it.</summary>
+/// <summary>A task (or a workspace pipeline's run) as every protocol reports it.</summary>
 public sealed record TaskView
 {
     public required string TaskId { get; init; }
-    /// <summary>"task", or "workspace_request" for a goal handed to a workspace.</summary>
+    /// <summary>"task", or "pipeline_run" for a run of a workspace's pipeline.</summary>
     public string Kind { get; init; } = "task";
     public required string Goal { get; init; }
     /// <summary>working, completed, failed or canceled.</summary>
@@ -73,10 +78,8 @@ public sealed record TaskResultView
 {
     public required TaskView Task { get; init; }
     public bool Ready { get; init; }
-    /// <summary>The aggregated TaskResult (tasks), when ready.</summary>
+    /// <summary>The aggregated TaskResult, when ready.</summary>
     public JsonElement? Result { get; init; }
-    /// <summary>Workspace requests: what the workspace's agents told the user since the request.</summary>
-    public List<string> Replies { get; init; } = [];
 }
 
 public sealed record TaskAgentView(string AgentId, string Role, string Status, string? ParentAgentId, int Depth, string Goal);
@@ -126,8 +129,16 @@ public sealed class TaskService(
     /// <summary>Who an attachment is recorded as created by.</summary>
     public const string UserAuthor = "user";
 
-    /// <summary>Separates a workspace id from the chat sequence number in a workspace request's id.</summary>
-    private const char RequestSeparator = ':';
+
+    /// <summary>
+    /// With a fan-out per level and no max_children of the caller's own, the budget's child limit
+    /// follows the fan-out (its largest entry), so the two can't disagree: the fan-out limits each
+    /// level, and each agent's budget is split among the children it may actually start.
+    /// </summary>
+    private static ResourceBudget WithFanOut(ResourceBudget budget, StartTaskRequest request) =>
+        request.TeamPolicy?.MaxFanOutByDepth is { Count: > 0 } fanOut && !request.MaxChildrenRequested
+            ? budget with { MaxChildren = Math.Max(0, fanOut.Max()) }
+            : budget;
 
     public static string NewCorrelationId() => "corr-" + Guid.NewGuid().ToString("n")[..16];
 
@@ -165,7 +176,7 @@ public sealed class TaskService(
                 throw new TaskServiceException($"Couldn't connect '{connection.Name}': {added.Message}");
             }
         }
-        var budget = ceiling.Value.Clamp(request.Budget ?? defaultBudget.Value.ToBudget());
+        var budget = ceiling.Value.Clamp(WithFanOut(request.Budget ?? defaultBudget.Value.ToBudget(), request));
 
         // The row exists before the root agent does, so a caller can poll the id it gets back at once.
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
@@ -193,7 +204,8 @@ public sealed class TaskService(
                 BudgetJson = JsonSerializer.Serialize(budget),
                 CallbackUrl = request.CallbackUrl,
                 PreviewId = estimateJson is null ? null : request.PreviewId,
-                EstimateJson = estimateJson
+                EstimateJson = estimateJson,
+                StartedBy = request.StartedBy
             });
             await db.SaveChangesAsync(ct);
         }
@@ -269,7 +281,7 @@ public sealed class TaskService(
     /// </summary>
     /// <param name="modelProfileId">For a fork, the model the live part runs on: the original's when null.</param>
     public async Task<TaskView> ReplayAsync(string tenantId, string sourceTaskId, Durability.ReplayMode mode, long? forkAfterStep,
-        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null)
+        IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null, string? startedBy = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var source = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == sourceTaskId && t.TenantId == tenantId, ct)
@@ -284,7 +296,8 @@ public sealed class TaskService(
             Source = "replay",
             CorrelationId = Clip($"replay-of-{source.CorrelationId ?? sourceTaskId}", 128),
             Replay = new Durability.ReplaySpec { SourceTaskId = sourceTaskId, Mode = mode, ForkAfterSeq = forkAfterStep },
-            ModelProfileId = modelProfileId ?? source.ModelProfileId
+            ModelProfileId = modelProfileId ?? source.ModelProfileId,
+            StartedBy = startedBy
         }, ct);
     }
 
@@ -351,9 +364,9 @@ public sealed class TaskService(
         if (string.IsNullOrWhiteSpace(text) && attachmentIds.Count > 0) text = "Take the attached files into account.";
         if (string.IsNullOrWhiteSpace(text)) throw new TaskServiceException("text is required");
         if (text.Length > 20_000) throw new TaskServiceException("text is too long (20,000 characters at most)");
-        if (TryParseWorkspaceRequest(taskId, out _, out _))
+        if (PipelineIds.IsRun(taskId))
         {
-            throw new TaskServiceException("This is a request to a workspace; follow up in the workspace's chat.", StatusCodes.Status409Conflict);
+            throw new TaskServiceException("This is a pipeline run; start a new run with the new input instead.", StatusCodes.Status409Conflict);
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -469,9 +482,9 @@ public sealed class TaskService(
                 StatusCodes.Status413PayloadTooLarge);
         }
 
-        if (TryParseWorkspaceRequest(taskId, out _, out _))
+        if (PipelineIds.IsRun(taskId))
         {
-            throw new TaskServiceException("This is a request to a workspace; attach files in the workspace instead.", StatusCodes.Status409Conflict);
+            throw new TaskServiceException("This is a pipeline run; files go with the run's input or a new run.", StatusCodes.Status409Conflict);
         }
 
         await using (var check = await dbFactory.CreateDbContextAsync(ct))
@@ -707,8 +720,8 @@ public sealed class TaskService(
         return chat;
     }
 
-    /// <summary>Hands the goal to a workspace's coordinator. The handle is "workspace:chat-seq":
-    /// the request is done when everything it set off has settled.</summary>
+    /// <summary>Starts a run of the workspace's pipeline with the goal as its input. The run is a
+    /// task (its id is the task id), so callers watch it like any other.</summary>
     private async Task<TaskView> StartInWorkspaceAsync(string tenantId, StartTaskRequest request, string correlationId)
     {
         var workspaceId = request.WorkspaceId!;
@@ -720,36 +733,23 @@ public sealed class TaskService(
 
         if (request.CallbackUrl is not null)
         {
-            throw new TaskServiceException("callback_url isn't supported for workspace requests; poll get_task_status instead.");
+            throw new TaskServiceException("callback_url isn't supported for workspace runs; poll get_task_status instead.");
         }
 
-        ChatEntry entry;
-        try
-        {
-            entry = await workspace.PostUserMessage(request.Goal, null, $"{request.Source}-{correlationId}");
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
-        {
-            throw new TaskServiceException(ex.Message, StatusCodes.Status409Conflict);
-        }
+        var started = await workspace.StartRun(request.Goal, request.StartedBy ?? request.Source);
+        if (!started.Success || started.RunId is null) throw new TaskServiceException(started.Message, StatusCodes.Status409Conflict);
 
-        var id = $"{workspaceId}{RequestSeparator}{entry.Seq}";
-        logger.LogInformation("Goal handed to workspace {WorkspaceId} via {Source} (request {RequestId}, correlation {CorrelationId})",
-            workspaceId, request.Source, id, correlationId);
-        return await GetAsync(tenantId, id) ?? throw new TaskServiceException("The workspace request disappeared.", 500);
+        logger.LogInformation("Run {RunId} of workspace {WorkspaceId} {Outcome} via {Source} (correlation {CorrelationId})",
+            started.RunId, workspaceId, started.Message, request.Source, correlationId);
+        return await GetAsync(tenantId, started.RunId) ?? throw new TaskServiceException("The run disappeared.", 500);
     }
 
     /// <summary>The task as the caller's organization sees it, or null (also for another organization's).</summary>
     public async Task<TaskView?> GetAsync(string tenantId, string taskId, CancellationToken ct = default)
     {
-        if (TryParseWorkspaceRequest(taskId, out var workspaceId, out var seq))
-        {
-            return (await GetWorkspaceRequestAsync(tenantId, taskId, workspaceId, seq)).View;
-        }
-
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
-        if (task is null) return null;
+        if (task is null) return PipelineIds.IsRun(taskId) ? await GetUnsavedRunAsync(tenantId, taskId) : null;
 
         var agents = await db.Agents.AsNoTracking().Where(a => a.TaskId == taskId)
             .Select(a => new { a.Status, a.TokensUsed, a.CostUsd }).ToListAsync(ct);
@@ -763,6 +763,8 @@ public sealed class TaskService(
         return new TaskView
         {
             TaskId = task.TaskId,
+            Kind = task.Source == "pipeline" ? "pipeline_run" : "task",
+            WorkspaceId = task.WorkspaceId,
             Goal = task.Goal,
             State = StateOf(task),
             Status = root?.Status.ToString() ?? task.Status,
@@ -782,12 +784,6 @@ public sealed class TaskService(
 
     public async Task<TaskResultView?> GetResultAsync(string tenantId, string taskId, CancellationToken ct = default)
     {
-        if (TryParseWorkspaceRequest(taskId, out var workspaceId, out var seq))
-        {
-            var (view, replies) = await GetWorkspaceRequestAsync(tenantId, taskId, workspaceId, seq);
-            return view is null ? null : new TaskResultView { Task = view, Ready = view.Done, Replies = replies };
-        }
-
         var task = await GetAsync(tenantId, taskId, ct);
         if (task is null) return null;
 
@@ -808,13 +804,6 @@ public sealed class TaskService(
         var task = await GetAsync(tenantId, taskId, ct);
         if (task is null) return null;
 
-        if (task.WorkspaceId is { } workspaceId)
-        {
-            var coordinator = WorkspaceIds.CoordinatorId(workspaceId);
-            var live = await orchestrator.FindAgentsAsync(new FindAgentsQuery { RootAgentId = coordinator, TenantId = tenantId }, ct);
-            return live.Select(a => new TaskAgentView(a.AgentId, a.Role, a.Status.ToString(), a.ParentAgentId, a.Depth, a.Goal)).ToList();
-        }
-
         if (task.RootAgentId is { } root)
         {
             var live = await orchestrator.FindAgentsAsync(new FindAgentsQuery { RootAgentId = root, TenantId = tenantId }, ct);
@@ -830,25 +819,23 @@ public sealed class TaskService(
             .Select(a => new TaskAgentView(a.AgentId, a.Role, a.Status, a.ParentAgentId, a.Depth, a.Goal)).ToListAsync(ct);
     }
 
-    /// <summary>Stops every agent of the task. Workspace requests can't be cancelled one by one:
-    /// pause the workspace instead.</summary>
+    /// <summary>Stops every agent of the task. A pipeline run is stopped by the run itself, which
+    /// stops its agents and skips its unfinished stages.</summary>
     public async Task<TaskView?> CancelAsync(string tenantId, string taskId, CancellationToken ct = default)
     {
         var task = await GetAsync(tenantId, taskId, ct);
         if (task is null) return null;
-        if (task.Kind == "workspace_request")
-        {
-            throw new TaskServiceException("A request to a workspace can't be cancelled on its own; pause the workspace instead.", StatusCodes.Status409Conflict);
-        }
-
-        await ForEachAgentAsync(tenantId, taskId, orchestrator.StopAsync, ct);
+        if (task.Kind == "pipeline_run") await orchestrator.StopAsync(taskId, ct);
+        else await ForEachAgentAsync(tenantId, taskId, orchestrator.StopAsync, ct);
         return await GetAsync(tenantId, taskId, ct);
     }
 
     public async Task<bool> PauseAsync(string tenantId, string taskId, bool pause, CancellationToken ct = default)
     {
-        if (await GetAsync(tenantId, taskId, ct) is not { Kind: "task" }) return false;
-        await ForEachAgentAsync(tenantId, taskId, pause ? orchestrator.PauseAsync : orchestrator.ResumeAsync, ct);
+        var task = await GetAsync(tenantId, taskId, ct);
+        if (task is null) return false;
+        if (task.Kind == "pipeline_run") await (pause ? orchestrator.PauseAsync(taskId, ct) : orchestrator.ResumeAsync(taskId, ct));
+        else await ForEachAgentAsync(tenantId, taskId, pause ? orchestrator.PauseAsync : orchestrator.ResumeAsync, ct);
         return true;
     }
 
@@ -890,7 +877,7 @@ public sealed class TaskService(
             while (!deadline.IsCancellationRequested)
             {
                 // Register before re-reading so a completion in between isn't missed.
-                var signalled = current.Kind == "task" ? completions.WhenSignalled(taskId) : Task.Delay(TimeSpan.FromSeconds(2), deadline.Token);
+                var signalled = completions.WhenSignalled(taskId);
                 current = await GetAsync(tenantId, taskId, ct);
                 if (current is null || current.Done) return current;
 
@@ -913,7 +900,7 @@ public sealed class TaskService(
 
     private async Task ReportProgressAsync(string tenantId, TaskView task, Func<TaskProgress, ValueTask> onProgress, CancellationToken ct)
     {
-        var scope = task.WorkspaceId ?? task.TaskId;
+        var scope = task.TaskId;
         var started = Math.Max(1, task.AgentsTotal);
         var finished = task.AgentsTotal - task.AgentsActive;
         await onProgress(new TaskProgress(finished, started, $"{task.AgentsActive} agent(s) working"));
@@ -944,54 +931,26 @@ public sealed class TaskService(
         }
     }
 
-    private async Task<(TaskView? View, List<string> Replies)> GetWorkspaceRequestAsync(string tenantId, string id, string workspaceId, long seq)
+    /// <summary>A run whose task row isn't written yet (it's written from the run's first event, a
+    /// moment after it starts): reported from the run itself, if it belongs to the organization.</summary>
+    private async Task<TaskView?> GetUnsavedRunAsync(string tenantId, string runId)
     {
-        var workspace = grains.GetGrain<IWorkspaceGrain>(workspaceId);
-        if (!TenantIds.Same(await workspace.GetTenantId() ?? "\0", tenantId)) return (null, []);
-        var snapshot = await workspace.GetSnapshot();
-        if (snapshot is null) return (null, []);
-
-        var request = snapshot.Conversation.FirstOrDefault(c => c.Seq == seq && c.AuthorKind == ChatAuthorKind.User);
-        if (request is null) return (null, []);
-
-        var replies = snapshot.Conversation.Where(c => c.Seq > seq && c.AuthorKind == ChatAuthorKind.Agent).ToList();
-        var agents = await orchestrator.FindAgentsAsync(new FindAgentsQuery { RootAgentId = WorkspaceIds.CoordinatorId(workspaceId), TenantId = tenantId });
-        // Settled: nobody is mid-step, and every one-shot worker has finished. Standing agents
-        // waiting for their next event don't hold a request open.
-        var busy = agents.Count(a => a.Status is AgentStatus.Created or AgentStatus.Initializing or AgentStatus.Thinking or AgentStatus.Executing or AgentStatus.Spawning);
-        var snapshotsByAgent = snapshot.Agents.ToDictionary(a => a.AgentId);
-        var workersOpen = agents.Count(a => !IsTerminal(a.Status.ToString()) && snapshotsByAgent.TryGetValue(a.AgentId, out var view) && !view.Standing);
-        var state = snapshot.Status == WorkspaceStatus.Archived ? "canceled"
-            : replies.Count > 0 && busy == 0 && workersOpen == 0 ? "completed"
-            : "working";
-
-        var view = new TaskView
+        var run = await grains.GetGrain<IPipelineRunGrain>(runId).GetView();
+        if (run is null || !TenantIds.Same(await grains.GetGrain<IWorkspaceGrain>(run.WorkspaceId).GetTenantId() ?? "\0", tenantId)) return null;
+        return new TaskView
         {
-            TaskId = id,
-            Kind = "workspace_request",
-            Goal = request.Text,
-            State = state,
-            Status = snapshot.Status.ToString(),
-            RootAgentId = WorkspaceIds.CoordinatorId(workspaceId),
-            WorkspaceId = workspaceId,
-            CreatedAt = request.At,
-            CompletedAt = state == "completed" ? replies[^1].At : null,
-            DashboardUrl = links.Value.WorkspaceUrl(workspaceId),
-            AgentsTotal = agents.Count,
-            AgentsActive = busy,
-            Summary = replies.Count > 0 ? replies[^1].Text : null
+            TaskId = runId,
+            Kind = "pipeline_run",
+            WorkspaceId = run.WorkspaceId,
+            Goal = run.Input,
+            State = "working",
+            Status = run.Status.ToString(),
+            RootAgentId = runId,
+            CreatedAt = run.CreatedAt,
+            DashboardUrl = links.Value.TaskUrl(runId),
+            AgentsTotal = run.Stages.Count(st => st.AgentId is not null),
+            AgentsActive = run.Stages.Count(st => st.Status == StageRunStatus.Running)
         };
-        return (view, replies.Select(r => $"{r.AuthorName}: {r.Text}").ToList());
-    }
-
-    private static bool TryParseWorkspaceRequest(string id, out string workspaceId, out long seq)
-    {
-        workspaceId = string.Empty;
-        seq = 0;
-        var i = id.LastIndexOf(RequestSeparator);
-        if (i <= 0 || !WorkspaceIds.IsWorkspace(id) || !long.TryParse(id.AsSpan(i + 1), out seq)) return false;
-        workspaceId = id[..i];
-        return true;
     }
 
     /// <summary>working until the result is saved; then completed, failed or canceled.</summary>

@@ -89,20 +89,6 @@ public sealed class AgentGrain(
 
         _turnReminderRegistered = await this.GetReminder(TurnReminder) is not null;
 
-        // Upgrade: workspace agents created before connections existed get the permission to use
-        // their workspace's connections (a runtime decision about the runtime's own grants).
-        // Likewise, workspace tools added in later versions (e.g. create_watch) are granted.
-        if (S.InWorkspace && S.GrantedPermissions.HasFlag(ToolPermission.WorkspaceActions))
-        {
-            var missing = WorkspaceToolCatalog.ToolNames.Except(S.AllowedTools, StringComparer.OrdinalIgnoreCase).ToList();
-            if (missing.Count > 0 || !S.GrantedPermissions.HasFlag(ToolPermission.Integrations))
-            {
-                S.AllowedTools = [.. S.AllowedTools, .. missing];
-                S.GrantedPermissions |= ToolPermission.Integrations;
-                await state.WriteStateAsync();
-            }
-        }
-
         // Interrupted work from a previous activation (a crash, or this silo being replaced):
         // pick it up now rather than waiting for the reminder's next tick.
         if (S.Outbox.Count > 0 || S.ResumeRequested || (S.TurnInProgress && !S.IsTerminal))
@@ -157,14 +143,11 @@ public sealed class AgentGrain(
         s.TenantId = Tenancy.TenantIds.Normalize(request.TenantId);
         s.WorldId = request.WorldId;
         s.WorkspaceId = request.WorkspaceId;
-        s.Standing = request.Standing;
-        s.ContextWindow = request.ContextWindow;
         s.TeamPolicy = request.TeamPolicy;
         s.JournalPath = string.IsNullOrEmpty(request.JournalPath) ? "r" : request.JournalPath;
         s.Replay = request.Replay;
         s.ModelProfileId = request.ModelProfileId;
         s.CreatedAt = DateTimeOffset.UtcNow;
-        if (s.Budget.PeriodHours > 0) s.BudgetPeriodStartedAt = s.CreatedAt;
         foreach (var (key, value) in request.Metadata)
         {
             s.Metadata[key] = value;
@@ -305,6 +288,22 @@ public sealed class AgentGrain(
     public Task<AgentSnapshot> GetSnapshot() => Task.FromResult(ToSnapshot(S));
 
     public Task<AgentStatus> GetStatus() => Task.FromResult(S.Status);
+
+    public Task<Pipelines.AgentOutcome> GetOutcome()
+    {
+        var s = S;
+        return Task.FromResult(new Pipelines.AgentOutcome
+        {
+            Status = s.Status,
+            CompletionStatus = s.Metadata.GetValueOrDefault("completion_status"),
+            Summary = s.Status == AgentStatus.Completed ? s.CompletedWork.LastOrDefault() : null,
+            Artifacts = s.Metadata.GetValueOrDefault("completion_artifacts") is { Length: > 0 } artifacts
+                ? artifacts.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+                : [],
+            RemainingWork = s.PendingWork,
+            FailureReason = s.FailureReason ?? s.Metadata.GetValueOrDefault("terminated_reason")
+        });
+    }
 
     private readonly record struct DrainResult(bool NewInput, bool Stopped);
 
@@ -557,40 +556,23 @@ public sealed class AgentGrain(
 
             if (s.TurnIteration >= maxIterations)
             {
-                await EndTurnAsync($"Agent '{s.Name}' reached its per-turn reasoning limit and is waiting for new input.");
+                await StopOrWaitAsync("reached its per-turn reasoning limit");
                 return;
             }
 
-            RollBudgetPeriodIfDue();
             if (s.HasLifetimeBudget)
             {
                 if (await ApplyBudgetGuardAsync()) return;
             }
             else
             {
-                // The coordinator has no cap of its own: capped separately, it would stop answering the
-                // user while the workspace's budget (checked below) still had room.
-                if (!s.IsWorkspaceCoordinator && BudgetExhausted(out var budgetReason))
+                if (BudgetExhausted(out var budgetReason))
                 {
-                    if (s.Budget.PeriodHours > 0)
-                    {
-                        // A renewing budget pauses the agent until the next period instead of killing it.
-                        var resumesAt = (s.BudgetPeriodStartedAt ?? DateTimeOffset.UtcNow).AddHours(s.Budget.PeriodHours);
-                        s.PauseReason = $"its own daily {budgetReason} is used up";
-                        s.PausedUntil = resumesAt;
-                        await EndTurnAsync($"Agent '{s.Name}' used its {s.Budget.PeriodHours}h {budgetReason} and will continue in the next period.");
-                        if (s.WorkspaceId is { } pausedIn)
-                        {
-                            await GrainFactory.GetGrain<IWorkspaceGrain>(pausedIn).PostAgentPausedNotice(AgentId, s.Role, budgetReason, resumesAt);
-                        }
-                        return;
-                    }
-
                     await FailAsync($"Budget exhausted: {budgetReason}");
                     return;
                 }
 
-                if (!s.Standing && DurationExceeded())
+                if (DurationExceeded())
                 {
                     await TimeOutAsync();
                     return;
@@ -649,6 +631,7 @@ public sealed class AgentGrain(
             s.TurnIteration++;
             s.TransitionTo(AgentStatus.Thinking);
             await state.WriteStateAsync();
+            await ReportActivityAsync(AgentStatus.Thinking);
             await PublishAsync(RuntimeEventType.AgentThinking, $"Agent '{s.Name}' is reasoning about its next step.");
 
             var replayed = recorded is not null;
@@ -707,7 +690,7 @@ public sealed class AgentGrain(
             {
                 if (s.TurnNudged)
                 {
-                    await EndTurnAsync($"Agent '{s.Name}' is waiting for new input.");
+                    await StopOrWaitAsync("stopped without reporting its result (complete_task)");
                     return;
                 }
 
@@ -717,8 +700,6 @@ public sealed class AgentGrain(
                     Role = "user",
                     Content = s.IsResident
                         ? "Reminder: you act only through your tools (say, talk_to, move_to, ...). If you are done for now, call end_turn with a one-line plan."
-                        : s.InWorkspace && s.AllowedTools.Contains("wait_for_events")
-                        ? "Reminder: act through your tools (notify_user to tell the user something). If there's nothing more to do right now, call wait_for_events."
                         : "Reminder: act through your tools. If your goal is satisfied, call complete_task; if you can't " +
                           "get further, call complete_task with status \"partial\" and list what's left in remaining_work."
                 });
@@ -730,6 +711,7 @@ public sealed class AgentGrain(
             s.TurnNudged = false;
             s.TransitionTo(AgentStatus.Executing);
             await state.WriteStateAsync();
+            await ReportActivityAsync(AgentStatus.Executing);
         }
     }
 
@@ -892,6 +874,24 @@ public sealed class AgentGrain(
                     continue;
                 }
             }
+            else if (!s.IsResident)
+            {
+                // A task has no workspace policy, but its organization's applies. Nobody is there to
+                // approve a call in a task, so one the organization says needs approval doesn't run.
+                var orgPolicy = await Tenant.GetSafetyPolicy();
+                var verdict = PolicyEngine.Evaluate(orgPolicy, null, call.Name, sideEffects);
+                if (verdict.Decision != PolicyDecisionKind.Allow)
+                {
+                    await PublishAsync(RuntimeEventType.AgentToolCompleted, $"Agent '{s.Name}' was blocked from '{call.Name}' by {verdict.Reason}.",
+                        new Dictionary<string, string> { ["tool"] = call.Name, ["success"] = "false", ["blocked_by"] = "organization_policy" });
+                    AppendToolResult(call, ToolExecutionResult.Fail(verdict.Decision == PolicyDecisionKind.Deny
+                        ? $"Blocked by {verdict.Reason}. Don't retry; tell the user if it matters."
+                        : $"Not run: {verdict.Reason} requires a person's approval, and tasks can't wait for one. Don't retry; tell the user it needs approval (a workspace can ask for it).",
+                        "organization_policy"));
+                    await state.WriteStateAsync();
+                    continue;
+                }
+            }
 
             var fingerprint = call.Name + "|" + call.ArgumentsJson;
             s.TurnFingerprints.Add(fingerprint);
@@ -932,6 +932,7 @@ public sealed class AgentGrain(
                 AgentId = AgentId,
                 TaskId = s.TaskId,
                 TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
+                WorkspaceId = s.WorkspaceId,
                 ArgumentsJson = call.ArgumentsJson,
                 IdempotencyKey = $"{AgentId}:{call.Id}",
                 GrantedPermissions = s.GrantedPermissions
@@ -987,21 +988,21 @@ public sealed class AgentGrain(
 
             // Keep executing the rest of this response: every tool call needs its result recorded,
             // or the next LLM call would carry an unanswered tool_use.
-            if (call.Name is "end_turn" or "wait_for_events" && result.Success)
+            if (call.Name is "end_turn" && result.Success)
             {
                 endTurn = true;
-                if (call.Name == "wait_for_events") s.CurrentTask = ExtractSummary(call.ArgumentsJson);
             }
 
             if (call.Name == "spawn_agent" && result.Success)
             {
                 RecordSpawnedChild(result.ResultJson);
-                if (!ReadBool(call.ArgumentsJson, "standing")) s.PlannedWorkersLeft = Math.Max(0, s.PlannedWorkersLeft - 1);
+                s.PlannedWorkersLeft = Math.Max(0, s.PlannedWorkersLeft - 1);
             }
 
             if (call.Name == PlanRequestTool.Name && result.Success)
             {
-                s.PlannedWorkersLeft = ReadInt(result.ResultJson, "workers");
+                // Never more than the agent's own child budget allows (a pipeline stage's helpers).
+                s.PlannedWorkersLeft = Math.Min(ReadInt(result.ResultJson, "workers"), Math.Max(0, s.Budget.MaxChildren - s.Usage.ChildrenSpawned));
             }
 
             // Journal the result (and any bookkeeping above) before the next call runs.
@@ -1084,7 +1085,7 @@ public sealed class AgentGrain(
     private async Task AuditToolCallAsync(TranscriptToolCall call, ToolSideEffects sideEffects, ToolExecutionResult result, string outcome)
     {
         var s = S;
-        if (s.IsResident || call.Name is "wait_for_events" or "end_turn") return; // simulation moves and turn ends aren't actions
+        if (s.IsResident || call.Name is "end_turn") return; // simulation moves and turn ends aren't actions
 
         try
         {
@@ -1189,19 +1190,6 @@ public sealed class AgentGrain(
         if (s.Replay is not null) s.ReplayDiverged = true;
     }
 
-    private static bool ReadBool(string json, string name)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
     private static int ReadInt(string json, string name)
     {
         try
@@ -1226,29 +1214,6 @@ public sealed class AgentGrain(
         {
             return null;
         }
-    }
-
-    /// <summary>Renewing budgets (standing agents): when a period ends, its usage moves to the
-    /// lifetime totals and the per-period counters start again.</summary>
-    private void RollBudgetPeriodIfDue()
-    {
-        var s = S;
-        if (s.Budget.PeriodHours <= 0) return;
-
-        var now = DateTimeOffset.UtcNow;
-        s.BudgetPeriodStartedAt ??= now;
-        if (now - s.BudgetPeriodStartedAt.Value < TimeSpan.FromHours(s.Budget.PeriodHours)) return;
-
-        s.Usage = s.Usage with
-        {
-            LifetimeTokens = s.Usage.LifetimeTokens + s.Usage.TokensUsed,
-            LifetimeToolCalls = s.Usage.LifetimeToolCalls + s.Usage.ToolCallsUsed,
-            LifetimeCostUsd = s.Usage.LifetimeCostUsd + s.Usage.CostUsd,
-            TokensUsed = 0,
-            ToolCallsUsed = 0,
-            CostUsd = 0
-        };
-        s.BudgetPeriodStartedAt = now;
     }
 
     /// <summary>Applied here, not via a grain call back to ourselves: this agent IS the parent, and
@@ -1405,6 +1370,19 @@ public sealed class AgentGrain(
         await ReleaseDeadlineReminderAsync();
     }
 
+    /// <summary>
+    /// The agent stopped without reporting. Usually it waits for new input. An agent of a pipeline
+    /// run gets none once its own helpers are done (only they would write to it), so waiting would
+    /// stall the run: it fails instead, and the run retries the stage or applies its failure policy.
+    /// </summary>
+    private Task StopOrWaitAsync(string what)
+    {
+        var s = S;
+        return Pipelines.PipelineIds.IsRun(s.TaskId) && s.Children.Count == 0
+            ? FailAsync($"It {what}.")
+            : EndTurnAsync($"Agent '{s.Name}' {what} and is waiting for new input.");
+    }
+
     /// <summary>The agent ran out of budget without reporting: the runtime reports what it has on
     /// its behalf, so its parent gets its notes and the remaining work rather than a failure.</summary>
     private Task CompleteWithPartialResultAsync(string reason)
@@ -1495,7 +1473,7 @@ public sealed class AgentGrain(
     private async Task RegisterDeadlineReminderAsync()
     {
         var s = S;
-        // Standing agents have no deadline; very long budgets aren't worth a reminder.
+        // Residents have no deadline; very long budgets aren't worth a reminder.
         if (!s.HasLifetimeBudget || s.Budget.MaxDurationSeconds > TimeSpan.FromDays(30).TotalSeconds) return;
 
         var started = s.StartedExecutionAt ?? DateTimeOffset.UtcNow;
@@ -1783,8 +1761,7 @@ public sealed class AgentGrain(
 
     /// <summary>
     /// Folds older history into <see cref="AgentState.ContextSummary"/> so it isn't resent on every
-    /// call. Standing agents compact once their history outgrows their window (keeping the most
-    /// recent half); task agents once it passes a token size. Only runs at a safe point.
+    /// call, once it passes a token size. Only runs at a safe point.
     /// </summary>
     private async Task<bool> CompactIfNeededAsync()
     {
@@ -1794,18 +1771,8 @@ public sealed class AgentGrain(
         // would need a live model call.
         if (s.IsResident || s.IsReplaying || PendingToolCalls().Count > 0) return false;
 
-        int start;
-        if (s.ContextWindow > 0)
-        {
-            if (t.Count <= s.ContextWindow) return false;
-            start = SafeCompactionStart(t, Math.Max(4, s.ContextWindow / 2));
-        }
-        else
-        {
-            if (ContextCompactor.EstimateTokens(t) <= _llmOptions.CompactAboveTokens) return false;
-            start = SafeCompactionStart(t, _llmOptions.CompactKeepRecentEntries);
-        }
-
+        if (ContextCompactor.EstimateTokens(t) <= _llmOptions.CompactAboveTokens) return false;
+        var start = SafeCompactionStart(t, _llmOptions.CompactKeepRecentEntries);
         if (start <= 0) return false;
 
         var summary = await compactor.SummarizeAsync(s, t.Take(start).ToList(), _llmOptions);
@@ -1947,6 +1914,11 @@ public sealed class AgentGrain(
         await registry.UpdateStatusAsync(AgentId, status);
     }
 
+    /// <summary>Tells the registry the agent is thinking or running tools, so the graph and
+    /// find_agents see it busy (see <see cref="IAgentRegistryGrain.ReportActivityAsync"/>).</summary>
+    private Task ReportActivityAsync(AgentStatus status) =>
+        GrainFactory.GetGrain<IAgentRegistryGrain>(0).ReportActivityAsync(AgentId, status);
+
     private ValueTask PublishAsync(RuntimeEventType type, string summary, Dictionary<string, string>? data = null)
     {
         var s = S;
@@ -1989,7 +1961,6 @@ public sealed class AgentGrain(
         FailureReason = s.FailureReason,
         WorldId = s.WorldId,
         WorkspaceId = s.WorkspaceId,
-        Standing = s.Standing,
         TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
         SpawnsThisRequest = s.SpawnsThisRequest,
         PlannedWorkersLeft = s.PlannedWorkersLeft,
@@ -2001,6 +1972,7 @@ public sealed class AgentGrain(
         Replay = s.Replay,
         ModelProfileId = s.ModelProfileId,
         StartedExecutionAt = s.StartedExecutionAt,
-        FollowUps = s.FollowUps
+        FollowUps = s.FollowUps,
+        Paused = s.Paused
     };
 }

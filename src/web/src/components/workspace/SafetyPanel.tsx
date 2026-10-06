@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { apiErrorMessage, decideApproval, listAudit, updateSafetyPolicy, verifyAudit } from "@/lib/api";
+import { apiErrorMessage, decideApproval, getOrganizationPolicy, listAudit, updateSafetyPolicy, verifyAudit } from "@/lib/api";
 import type { TeamPolicy } from "@/lib/workspaceTypes";
 import type {
   ApprovalRecord,
@@ -9,13 +9,14 @@ import type {
   AuditEntry,
   AuditVerification,
   AutonomyLevel,
+  OrganizationSafetyPolicy,
   PolicyDecision,
   SafetyPolicy,
   SideEffectScope,
   WorkspaceSnapshot,
 } from "@/lib/workspaceTypes";
 
-const LEVELS: { value: AutonomyLevel; label: string; help: string }[] = [
+export const LEVELS: { value: AutonomyLevel; label: string; help: string }[] = [
   { value: "Autonomous", label: "Autonomous", help: "Agents act on their own. Rules below still apply." },
   { value: "SemiAutonomous", label: "Semi-autonomous", help: "Actions that can't be undone or safely repeated (sending, paying, deleting) need your approval." },
   { value: "Supervised", label: "Supervised", help: "Every external write needs your approval. Reads never do." },
@@ -25,6 +26,8 @@ const SCOPES: { value: SideEffectScope; label: string }[] = [
   { value: "Unsafe", label: "unsafe writes" },
   { value: "Any", label: "any call" },
 ];
+/** How strict each level is, to compare with the organization's minimum. */
+export const LEVEL_ORDER: Record<AutonomyLevel, number> = { Autonomous: 0, SemiAutonomous: 1, Supervised: 2 };
 const DECISIONS: { value: PolicyDecision; label: string }[] = [
   { value: "RequireApproval", label: "ask me" },
   { value: "Deny", label: "block" },
@@ -49,6 +52,9 @@ function prettyArgs(json: string) {
 }
 
 /** A pending approval with Approve / Reject; used in the Safety tab and above the chat. */
+/** Fired on the window when an approval is decided, so every view showing approvals refreshes. */
+export const APPROVALS_CHANGED = "aktor:approvals-changed";
+
 export function ApprovalCard({ workspaceId, approval, onDecided, compact = false }: {
   workspaceId: string;
   approval: ApprovalRecord;
@@ -64,6 +70,7 @@ export function ApprovalCard({ workspaceId, approval, onDecided, compact = false
     setError(null);
     try {
       await decideApproval(workspaceId, approval.approval_id, approve, reason.trim());
+      window.dispatchEvent(new Event(APPROVALS_CHANGED));
       onDecided();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -104,13 +111,13 @@ export function ApprovalCard({ workspaceId, approval, onDecided, compact = false
 
 /** Limits on the workspace's team: size, who may spawn, fan-out per level, duplicates. Counted over
  * live agents, since a workspace runs for months. Enforced by the runtime at every spawn. */
-function TeamShapeEditor({ team, onChange }: { team: TeamPolicy | null; onChange: (t: TeamPolicy | null) => void }) {
+export function TeamShapeEditor({ team, onChange, help }: { team: TeamPolicy | null; onChange: (t: TeamPolicy | null) => void; help?: string }) {
   const t: TeamPolicy = team ?? { max_agents: null, spawner_roles: [], max_fan_out_by_depth: [], prevent_duplicate_roles: true, count_finished_agents: false };
   const set = (patch: Partial<TeamPolicy>) => onChange({ ...t, count_finished_agents: false, ...patch });
   return (
     <>
       <h3 className="pt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">Team shape</h3>
-      <p className="text-[11px] text-zinc-500">Limits on top of the server&apos;s, checked by the runtime every time an agent tries to start another.</p>
+      <p className="text-[11px] text-zinc-500">{help ?? "Limits on top of the server's, checked by the runtime every time an agent tries to start another."}</p>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <label className="space-y-1">
           <span className="text-zinc-500">Max live agents</span>
@@ -139,14 +146,72 @@ function TeamShapeEditor({ team, onChange }: { team: TeamPolicy | null; onChange
   );
 }
 
-function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; policy: SafetyPolicy; onSaved: () => void }) {
+/** Tool rules: a pattern, which calls it covers, and what happens. Checked in order; the first match wins. */
+export function RulesEditor({ rules, onChange, disabled = false }: { rules: ApprovalRule[]; onChange: (rules: ApprovalRule[]) => void; disabled?: boolean }) {
+  const setRule = (i: number, patch: Partial<ApprovalRule>) => onChange(rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <>
+      {rules.map((r, i) => (
+        <div key={r.id} className="flex flex-wrap items-center gap-1 text-xs">
+          <input value={r.tool_pattern} disabled={disabled} onChange={(e) => setRule(i, { tool_pattern: e.target.value })} className={`${field} w-32`} placeholder="tool pattern" />
+          <select value={r.applies} disabled={disabled} onChange={(e) => setRule(i, { applies: e.target.value as SideEffectScope })} className={field}>
+            {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+          <span>→</span>
+          <select value={r.decision} disabled={disabled} onChange={(e) => setRule(i, { decision: e.target.value as PolicyDecision })} className={field}>
+            {DECISIONS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+          </select>
+          <input value={r.name} disabled={disabled} onChange={(e) => setRule(i, { name: e.target.value })} className={`${field} w-36`} placeholder="name (optional)" />
+          {!disabled && (
+            <button onClick={() => onChange(rules.filter((_, j) => j !== i))} className="px-1 text-zinc-400 hover:text-rose-600" aria-label="Remove rule">
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+      {!disabled && (
+        <button
+          onClick={() => onChange([...rules, { id: crypto.randomUUID().replace(/-/g, "").slice(0, 8), name: "", tool_pattern: "*", applies: "Writes", decision: "RequireApproval" }])}
+          className="text-xs text-brand-600 hover:underline dark:text-brand-400"
+        >
+          + Add rule
+        </button>
+      )}
+    </>
+  );
+}
+
+/** The organization's rules as they apply in this workspace (read-only; changed in Settings). */
+function OrganizationRules({ policy }: { policy: OrganizationSafetyPolicy }) {
+  const decision = (d: PolicyDecision) => DECISIONS.find((x) => x.value === d)?.label ?? d;
+  const scope = (a: SideEffectScope) => SCOPES.find((x) => x.value === a)?.label ?? a;
+  return (
+    <section className="space-y-1 rounded-lg border border-violet-200 bg-violet-50/60 p-2.5 text-xs dark:border-violet-900 dark:bg-violet-950/20">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-violet-900 dark:text-violet-200">Your organization&apos;s policy applies here too</h3>
+        <a href="/settings?tab=safety" className="text-[11px] text-violet-700 hover:underline dark:text-violet-300">Settings →</a>
+      </div>
+      {policy.minimum_autonomy !== "Autonomous" && (
+        <div className="text-violet-900 dark:text-violet-200">At least <span className="font-medium">{LEVELS.find((l) => l.value === policy.minimum_autonomy)?.label}</span> everywhere.</div>
+      )}
+      {policy.rules.map((r) => (
+        <div key={r.id} className="text-violet-900 dark:text-violet-200">
+          <code>{r.tool_pattern}</code> ({scope(r.applies)}) → <span className="font-medium">{decision(r.decision)}</span>{r.name ? ` · ${r.name}` : ""}
+        </div>
+      ))}
+      {policy.team && <div className="text-violet-900 dark:text-violet-200">Team-shape limits are set.</div>}
+      <p className="text-[11px] text-violet-700/80 dark:text-violet-300/80">
+        Checked as well as this workspace&apos;s policy: the stricter answer wins, so the rules below can add to it but not loosen it.
+      </p>
+    </section>
+  );
+}
+
+function PolicyEditor({ workspaceId, policy, onSaved, minimum = "Autonomous" }: { workspaceId: string; policy: SafetyPolicy; onSaved: () => void; minimum?: AutonomyLevel }) {
   const [draft, setDraft] = useState<SafetyPolicy>(policy);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(policy);
-
-  const setRule = (i: number, patch: Partial<ApprovalRule>) =>
-    setDraft((d) => ({ ...d, rules: d.rules.map((r, j) => (j === i ? { ...r, ...patch } : r)) }));
 
   async function save() {
     setSaving(true);
@@ -165,15 +230,22 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
     <section className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Autonomy</h3>
       <div className="space-y-1">
-        {LEVELS.map((l) => (
-          <label key={l.value} className="flex cursor-pointer gap-2 text-xs">
-            <input type="radio" name="autonomy" checked={draft.autonomy === l.value} onChange={() => setDraft({ ...draft, autonomy: l.value })} />
-            <span>
-              <span className="font-medium">{l.label}</span>
-              <span className="block text-zinc-500">{l.help}</span>
-            </span>
-          </label>
-        ))}
+        {LEVELS.map((l) => {
+          // Below the organization's minimum: it would still apply, so say so.
+          const overridden = LEVEL_ORDER[l.value] < LEVEL_ORDER[minimum];
+          return (
+            <label key={l.value} className={`flex cursor-pointer gap-2 text-xs ${overridden ? "opacity-60" : ""}`}>
+              <input type="radio" name="autonomy" checked={draft.autonomy === l.value} onChange={() => setDraft({ ...draft, autonomy: l.value })} />
+              <span>
+                <span className="font-medium">{l.label}</span>
+                <span className="block text-zinc-500">
+                  {l.help}
+                  {overridden && " Your organization requires more oversight, so its minimum applies instead."}
+                </span>
+              </span>
+            </label>
+          );
+        })}
       </div>
 
       <h3 className="pt-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Rules</h3>
@@ -181,30 +253,7 @@ function PolicyEditor({ workspaceId, policy, onSaved }: { workspaceId: string; p
         Checked in order before the autonomy level; the first match wins. Patterns match tool names, e.g. <code>billing__*</code> or{" "}
         <code>*__send_sms</code>.
       </p>
-      {draft.rules.map((r, i) => (
-        <div key={r.id} className="flex flex-wrap items-center gap-1 text-xs">
-          <input value={r.tool_pattern} onChange={(e) => setRule(i, { tool_pattern: e.target.value })} className={`${field} w-32`} placeholder="tool pattern" />
-          <select value={r.applies} onChange={(e) => setRule(i, { applies: e.target.value as SideEffectScope })} className={field}>
-            {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-          <span>→</span>
-          <select value={r.decision} onChange={(e) => setRule(i, { decision: e.target.value as PolicyDecision })} className={field}>
-            {DECISIONS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-          </select>
-          <button onClick={() => setDraft((d) => ({ ...d, rules: d.rules.filter((_, j) => j !== i) }))} className="px-1 text-zinc-400 hover:text-rose-600" aria-label="Remove rule">
-            ✕
-          </button>
-        </div>
-      ))}
-      <button
-        onClick={() => setDraft((d) => ({
-          ...d,
-          rules: [...d.rules, { id: crypto.randomUUID().replace(/-/g, "").slice(0, 8), name: "", tool_pattern: "*", applies: "Writes", decision: "RequireApproval" }],
-        }))}
-        className="text-xs text-brand-600 hover:underline dark:text-brand-400"
-      >
-        + Add rule
-      </button>
+      <RulesEditor rules={draft.rules} onChange={(rules) => setDraft((d) => ({ ...d, rules }))} />
 
       <label className="flex items-center gap-2 pt-1 text-xs">
         Unanswered requests expire after
@@ -307,6 +356,13 @@ export function SafetyPanel({ workspace, onChanged }: { workspace: WorkspaceSnap
   const approvals = workspace.approvals ?? [];
   const pending = approvals.filter((a) => a.status === "Pending");
   const decided = approvals.filter((a) => a.status !== "Pending").slice(0, 10);
+  const [orgPolicy, setOrgPolicy] = useState<OrganizationSafetyPolicy | null>(null);
+  useEffect(() => {
+    let live = true;
+    getOrganizationPolicy().then((p) => { if (live) setOrgPolicy(p); }).catch(() => { /* shown when it loads */ });
+    return () => { live = false; };
+  }, [workspace.updated_at]);
+  const orgApplies = orgPolicy && (orgPolicy.minimum_autonomy !== "Autonomous" || orgPolicy.rules.length > 0 || !!orgPolicy.team);
 
   return (
     <div className="space-y-5 p-3">
@@ -328,9 +384,38 @@ export function SafetyPanel({ workspace, onChanged }: { workspace: WorkspaceSnap
       </section>
 
       {/* Keyed on the saved policy: a refresh keeps unsaved edits, a saved change resets the form. */}
-      <PolicyEditor key={JSON.stringify(policy)} workspaceId={workspace.workspace_id} policy={policy} onSaved={onChanged} />
+      {orgPolicy && orgApplies && <OrganizationRules policy={orgPolicy} />}
+      <PolicyEditor key={JSON.stringify(policy)} workspaceId={workspace.workspace_id} policy={policy} onSaved={onChanged}
+        minimum={orgPolicy?.minimum_autonomy ?? "Autonomous"} />
 
       <AuditLog workspaceId={workspace.workspace_id} refreshKey={workspace.updated_at} />
+    </div>
+  );
+}
+
+/**
+ * Pending approvals across the top of a workspace, with Approve and Reject right there: the agent
+ * that asked is stopped until someone decides, so it shouldn't take a trip to the Safety tab.
+ */
+export function ApprovalBanner({ workspace, onDecided }: {
+  workspace: { workspace_id: string; approvals?: ApprovalRecord[] };
+  onDecided: () => void;
+}) {
+  const pending = workspace.approvals?.filter((a) => a.status === "Pending") ?? [];
+  if (pending.length === 0) return null;
+  return (
+    <div role="alert" className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 dark:border-amber-800 dark:bg-amber-500/10">
+      <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-amber-900 dark:text-amber-200">
+        <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+        {pending.length === 1 ? "An agent is waiting for your approval" : `${pending.length} agents are waiting for your approval`}
+      </div>
+      <div className="flex max-h-48 gap-2 overflow-x-auto pb-1">
+        {pending.map((a) => (
+          <div key={a.approval_id} className="w-80 shrink-0">
+            <ApprovalCard workspaceId={workspace.workspace_id} approval={a} onDecided={onDecided} compact />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

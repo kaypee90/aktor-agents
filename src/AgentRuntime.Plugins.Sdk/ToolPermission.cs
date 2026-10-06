@@ -21,8 +21,8 @@ public enum ToolPermission
     /// <summary>Acting inside a simulated world (move, speak, vote, ...). Only residents get this.</summary>
     WorldActions = 1 << 10,
 
-    /// <summary>Acting inside a workspace: notifying the user, creating schedules and webhooks.</summary>
-    WorkspaceActions = 1 << 11,
+    // 1 << 11 was WorkspaceActions (workspace agents' own triggers and notifications, before
+    // pipelines). Kept unused so stored permissions keep their meaning.
 
     /// <summary>Using tools provided by the workspace's connections (MCP servers, APIs, messaging).</summary>
     Integrations = 1 << 12

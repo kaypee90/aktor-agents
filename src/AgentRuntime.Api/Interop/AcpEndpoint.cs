@@ -236,7 +236,7 @@ internal sealed class AcpConnection(WebSocket socket, TaskService tasks, IEventS
             text = $"{text}\n\nThis follows up an earlier request in the same session. Its result: {previousSummary}";
         }
 
-        var started = await tasks.StartAsync(caller.TenantId, new StartTaskRequest { Goal = text, Source = "acp", CorrelationId = session.Id }, ct);
+        var started = await tasks.StartAsync(caller.TenantId, new StartTaskRequest { Goal = text, Source = "acp", CorrelationId = session.Id, StartedBy = caller.ActorId }, ct);
         session.LastTaskId = started.TaskId;
         session.RunningTaskId = started.TaskId;
         using var running = CancellationTokenSource.CreateLinkedTokenSource(ct);

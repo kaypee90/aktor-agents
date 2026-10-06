@@ -8,7 +8,9 @@ namespace AgentRuntime.Tools;
 /// <summary>Workspace agents run with their workspace's id as their task id: that's the knowledge they may see.</summary>
 internal static class MemoryScopes
 {
-    public static string? WorkspaceOf(ToolExecutionRequest request) => WorkspaceIds.IsWorkspace(request.TaskId) ? request.TaskId : null;
+    /// <summary>The calling agent's workspace (a pipeline run's agents run under the run's id, so
+    /// it comes from the runtime's stamp, never the task id).</summary>
+    public static string? WorkspaceOf(ToolExecutionRequest request) => WorkspaceIds.IsWorkspace(request.WorkspaceId) ? request.WorkspaceId : null;
 }
 
 public sealed class ReadMemoryTool(IMemoryStore memory) : ITool

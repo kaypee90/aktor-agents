@@ -4,13 +4,12 @@ using AgentRuntime.Agents;
 using AgentRuntime.Contracts;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.LLM;
-using AgentRuntime.Workspaces;
 using Orleans.TestingHost;
 using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 
-/// <summary>Model routing and context compaction on real grains.</summary>
+/// <summary>Context compaction on real grains.</summary>
 public sealed class TokenEfficiencyTests : IAsyncLifetime
 {
     private InProcessTestCluster _cluster = null!;
@@ -24,8 +23,7 @@ public sealed class TokenEfficiencyTests : IAsyncLifetime
             ["Llm:Model"] = "main-model",
             ["Llm:FastModel"] = "fast-model",
             ["Llm:CompactAboveTokens"] = "300",
-            ["Llm:CompactKeepRecentEntries"] = "4",
-            ["Workspaces:StandingContextWindow"] = "8"
+            ["Llm:CompactKeepRecentEntries"] = "4"
         });
     }
 
@@ -46,55 +44,8 @@ public sealed class TokenEfficiencyTests : IAsyncLifetime
         new() { Content = content, ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls, InputTokens = 100 };
 
     private static bool IsSummary(LlmCompletionRequest r) => r.Messages[0].Content?.StartsWith(ContextCompactor.SystemMarker) == true;
-    private static string Role(LlmCompletionRequest r) =>
-        r.Messages[0].Content?.Contains("acting as: Coordinator.") == true ? "coordinator"
-        : r.Messages[0].Content?.Contains("acting as: Stock Monitor.") == true ? "monitor" : "other";
-
     private LlmCompletionResponse SummaryReply(LlmCompletionRequest r) =>
         new() { Content = $"SUMMARY-{_requests.Count(IsSummary)}: checks so far were fine.", FinishReason = LlmFinishReason.Stop, InputTokens = 200, OutputTokens = 30 };
-
-    [Fact]
-    public async Task StandingAgents_UseTheFastModel_AndCompactHistoryIntoASummary()
-    {
-        ScriptedLlmProviderRegistry.Current = r =>
-        {
-            _requests.Enqueue(r);
-            if (IsSummary(r)) return SummaryReply(r);
-
-            var last = r.Messages[^1];
-            var input = r.Messages.LastOrDefault(m => m.Role == ChatRole.User)?.Content ?? string.Empty;
-            if (Role(r) == "coordinator")
-            {
-                if (last.Role == ChatRole.Tool) return Respond(null, Call("wait_for_events", new { summary = "ok" }));
-                return input.Contains("Your goal:")
-                    ? Respond(null, Call("spawn_agent", new { role = "Stock Monitor", goal = "Watch stock", standing = true, why_not_myself = "Ongoing monitoring." }))
-                    : Respond(null, Call("wait_for_events", new { summary = "ok" }));
-            }
-
-            if (last.Role == ChatRole.Tool) return Respond(null, Call("wait_for_events", new { summary = "watching" }));
-            if (input.Contains("Your goal:")) return Respond(null, Call("create_schedule", new { name = "check", instruction = "check", every_minutes = 1.0 / 60 }));
-            return Respond(null, Call("notify_user", new { text = "all good" }));
-        };
-
-        var id = WorkspaceIds.New();
-        var ws = _cluster.Client.GetGrain<IWorkspaceGrain>(id);
-        await ws.Create(new WorkspaceCreationRequest { Name = "Shop", Goal = "Watch stock." });
-
-        // Enough scheduled wake-ups for the monitor's history to pass its window twice.
-        var deadline = DateTime.UtcNow.AddSeconds(45);
-        while (_requests.Count(IsSummary) < 2 && DateTime.UtcNow < deadline) await Task.Delay(200);
-        Assert.True(_requests.Count(IsSummary) >= 2, "history was never compacted");
-
-        var nonSummary = _requests.Where(r => !IsSummary(r)).ToList();
-        Assert.All(nonSummary.Where(r => Role(r) == "coordinator"), r => Assert.Equal("main-model", r.Model));
-        Assert.All(nonSummary.Where(r => Role(r) == "monitor"), r => Assert.Equal("fast-model", r.Model));
-        Assert.All(_requests.Where(IsSummary), r => Assert.Equal("fast-model", r.Model));
-
-        // After compacting, the monitor carries the summary instead of its old entries.
-        var later = nonSummary.Last(r => Role(r) == "monitor" && r.Messages[0].Content!.Contains("EARLIER CONTEXT"));
-        Assert.Contains("SUMMARY-", later.Messages[0].Content);
-        Assert.True(later.Messages.Count - 1 <= 8 + 3, $"monitor sent {later.Messages.Count - 1} history entries");
-    }
 
     [Fact]
     public async Task TaskAgent_CompactsLongHistory_AndKeepsWorkingFromTheSummary()

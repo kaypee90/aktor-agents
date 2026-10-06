@@ -4,6 +4,7 @@ using AgentRuntime.Agents;
 using AgentRuntime.Contracts;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.LLM;
+using AgentRuntime.Pipelines;
 using AgentRuntime.Workspaces;
 using Orleans.TestingHost;
 using Xunit;
@@ -11,8 +12,9 @@ using Xunit;
 namespace AgentRuntime.IntegrationTests;
 
 /// <summary>
-/// The runtime's limits on spawning in a workspace: every spawn needs a reason, one request can
-/// start only a few agents, and workers can't spawn their own.
+/// The runtime's limits on a pipeline stage's helpers: every spawn needs a reason and a plan, a
+/// stage starts no more helpers than it's allowed, helpers can't spawn their own, and a stage with
+/// no helpers isn't offered spawning at all.
 /// </summary>
 public sealed class SpawnDisciplineTests : IAsyncLifetime
 {
@@ -44,135 +46,150 @@ public sealed class SpawnDisciplineTests : IAsyncLifetime
     private static LlmCompletionResponse Respond(params ToolCall[] calls) =>
         new() { ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls };
 
-    private static ToolCall SpawnWorker(string role) =>
+    private static ToolCall SpawnHelper(string role) =>
         Call("spawn_agent", new { role, goal = $"{role}: do one part", why_not_myself = "This part runs in parallel with the others." });
 
     private static ToolCall Plan(string size, int parts) =>
         Call("plan_request", new { parts = Enumerable.Range(1, parts).Select(i => new { title = $"Part {i}", size }).ToArray() });
 
-    /// <summary>The coordinator plans each command, then acts on the plan's result.</summary>
+    private static ToolCall Done() => Call("complete_task", new { status = "completed", summary = "Lead done." });
+
+    /// <summary>The Lead stage plans the run's input, then acts on the plan; helpers just report.</summary>
     private LlmCompletionResponse Script(LlmCompletionRequest r)
     {
         _requests.Enqueue(r);
-        var isCoordinator = r.Messages[0].Content?.Contains("acting as: Coordinator.") == true;
-        if (!isCoordinator) return Respond(Call("complete_task", new { status = "completed", summary = "part done" }));
+        if (r.Messages[0].Content?.Contains("acting as: Lead.") != true)
+        {
+            return Respond(Call("complete_task", new { status = "completed", summary = "part done" }));
+        }
 
-        var input = r.Messages.LastOrDefault(m => m.Role == ChatRole.User)?.Content ?? string.Empty;
+        var kickoff = r.Messages.First(m => m.Role == ChatRole.User).Content ?? string.Empty;
+        var input = kickoff.Split("## This run's input", 2)[1].Split('\n', StringSplitOptions.RemoveEmptyEntries)[1];
+        var called = r.Messages.Where(m => m.Role == ChatRole.Assistant).SelectMany(m => m.ToolCalls ?? []).Select(c => c.Name).ToList();
         var last = r.Messages[^1];
+
+        if (input == "review it")
+        {
+            if (!called.Contains("plan_request")) return Respond(Plan("large", 1));
+            if (!called.Contains("spawn_agent")) return Respond(SpawnHelper("Part E"));
+            if (called.Contains("send_message")) return Respond(Done());
+
+            // Once the helper has finished (its notice arrived, or its status says so), ask it for more.
+            var spawned = r.Messages.First(m => m.Role == ChatRole.Tool && m.ToolName == "spawn_agent");
+            var helperId = JsonDocument.Parse(spawned.Content!).RootElement.GetProperty("agent_id").GetString();
+            var finished = last.Content?.Contains("Your child agent") == true ||
+                           (last.ToolName == "get_agent_status" && last.Content?.Contains("Completed") == true);
+            if (finished) return Respond(Call("send_message", new { to_agent_id = helperId, message_type = "TaskRequest", payload = "Please review your work." }));
+            Thread.Sleep(200);
+            return Respond(Call("get_agent_status", new { agent_id = helperId }));
+        }
+
+        if (called.Count == 0)
+        {
+            return input switch
+            {
+                "spawn four" => Respond(Plan("large", 4)),
+                "spawn without a reason" => Respond(Plan("large", 2)),
+                "small job" => Respond(Plan("small", 2)),
+                "spawn without a plan" => Respond(SpawnHelper("Unplanned")),
+                _ => Respond(Done())
+            };
+        }
+
         if (last.Role == ChatRole.Tool && last.ToolName == "plan_request")
         {
-            if (input.EndsWith("spawn four")) return Respond(SpawnWorker("Part A"), SpawnWorker("Part B"), SpawnWorker("Part C"), SpawnWorker("Part D"));
-            if (input.EndsWith("spawn one more")) return Respond(SpawnWorker("Part E"));
-            if (input.EndsWith("spawn without a reason")) return Respond(Call("spawn_agent", new { role = "Helper", goal = "Help" }));
-            if (input.EndsWith("small job")) return Respond(SpawnWorker("Needless Helper"));
+            return input switch
+            {
+                "spawn four" => Respond(SpawnHelper("Part A"), SpawnHelper("Part B"), SpawnHelper("Part C"), SpawnHelper("Part D")),
+                "spawn without a reason" => Respond(Call("spawn_agent", new { role = "Helper", goal = "Help" })),
+                "small job" => Respond(SpawnHelper("Needless Helper")),
+                _ => Respond(Done())
+            };
         }
 
-        if (last.Role == ChatRole.Tool || !input.Contains("[Message from the user")) return Respond(Call("wait_for_events", new { summary = "Idle." }));
-
-        if (input.EndsWith("spawn four")) return Respond(Plan("large", 4));
-        if (input.EndsWith("spawn one more")) return Respond(Plan("large", 1));
-        if (input.EndsWith("spawn without a reason")) return Respond(Plan("large", 2));
-        if (input.EndsWith("small job")) return Respond(Plan("small", 2));
-        if (input.EndsWith("spawn without a plan")) return Respond(SpawnWorker("Unplanned"));
-        if (input.EndsWith("review it"))
-        {
-            // Asks the worker it started earlier, which has since finished.
-            var spawned = r.Messages.First(m => m.Role == ChatRole.Tool && m.ToolName == "spawn_agent" && m.Content!.Contains("agent_id"));
-            var workerId = JsonDocument.Parse(spawned.Content!).RootElement.GetProperty("agent_id").GetString();
-            return Respond(Call("send_message", new { to_agent_id = workerId, message_type = "TaskRequest", payload = "Please review your work." }));
-        }
-        return Respond(Call("wait_for_events", new { summary = "Idle." }));
+        return Respond(Done());
     }
 
-    private async Task<string> CreateWorkspaceAsync()
+    private async Task<string> RunAsync(string input, int maxHelpers = 2)
     {
         var id = WorkspaceIds.New();
-        await Workspace(id).Create(new WorkspaceCreationRequest { Name = "Shop", Goal = "Help me with my shop." });
-        return id;
-    }
+        await Workspace(id).Create(new WorkspaceCreationRequest
+        {
+            Name = "Shop",
+            Goal = "Help me with my shop.",
+            Pipeline = new PipelineDefinition { Stages = [new PipelineStage { StageId = "lead", Name = "Lead", Instructions = "Lead the work.", MaxHelpers = maxHelpers, Retries = 0 }] }
+        });
+        var run = await Workspace(id).StartRun(input, "user-1");
+        Assert.True(run.Success, run.Message);
 
-    private async Task<WorkspaceSnapshot> WaitForAsync(string id, Func<WorkspaceSnapshot, bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(20);
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
-            if (await Workspace(id).GetSnapshot() is { } s && condition(s)) return s;
-            await Task.Delay(100);
+            var view = await _cluster.Client.GetGrain<IPipelineRunGrain>(run.RunId!).GetView();
+            if (view?.Status is PipelineRunStatus.Completed or PipelineRunStatus.Failed) return run.RunId!;
+            await Task.Delay(150);
         }
 
-        throw new TimeoutException("Workspace condition not met.");
+        throw new TimeoutException("The run didn't finish.");
     }
+
+    private async Task<List<AgentDirectoryEntry>> HelpersAsync(string runId) =>
+        (await _cluster.Client.GetGrain<IAgentRegistryGrain>(0).FindAsync(new FindAgentsQuery { RootAgentId = runId }))
+        .Where(a => a.AgentId != runId && a.Role != "Lead").ToList();
 
     private bool ToolResultSeen(string text) =>
         _requests.Any(r => r.Messages.Any(m => m.Role == ChatRole.Tool && m.Content?.Contains(text) == true));
 
-    /// <summary>How many tool results containing <paramref name="text"/> the coordinator has seen.</summary>
-    private int RejectionsSeen(string text) =>
-        _requests.Select(r => r.Messages.Count(m => m.Role == ChatRole.Tool && m.Content?.Contains(text) == true)).DefaultIfEmpty(0).Max();
-
-    private static int Workers(WorkspaceSnapshot s) => s.Agents.Count(a => a.Role != "Coordinator");
-
     [Fact]
-    public async Task OneRequest_StartsAtMostThreeAgents_AndTheNextRequestGetsAFreshAllowance()
+    public async Task A_stage_starts_no_more_helpers_than_it_may_and_helpers_cannot_spawn()
     {
-        var id = await CreateWorkspaceAsync();
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.Status == "Waiting"));
+        var runId = await RunAsync("spawn four", maxHelpers: 2);
 
-        await Workspace(id).PostUserMessage("spawn four", null, null);
-        await WaitForAsync(id, s => Workers(s) == 3 && ToolResultSeen("the most allowed"));
-        Assert.True(ToolResultSeen("shared daily budget"), "the spawner should be told what the agent costs");
+        var helpers = await HelpersAsync(runId);
+        Assert.Equal(2, helpers.Count);
+        Assert.True(ToolResultSeen("Child-agent budget exhausted"), "the third and fourth are refused");
+        Assert.True(ToolResultSeen("shared daily budget"), "the spawner should be told what a helper costs");
 
-        await Workspace(id).PostUserMessage("spawn one more", null, null);
-        var s = await WaitForAsync(id, s => Workers(s) == 4);
-        Assert.DoesNotContain(s.Agents, a => a.Role == "Part D");
-
-        // Workers do their own job: no spawn tool and no permission to spawn.
-        var worker = await _cluster.Client.GetGrain<IAgentGrain>(s.Agents.First(a => a.Role == "Part A").AgentId).GetSnapshot();
-        Assert.DoesNotContain("spawn_agent", worker.AllowedTools);
-        Assert.False(worker.GrantedPermissions.HasFlag(ToolPermission.SpawnAgents));
-        Assert.Equal(0, worker.Budget.MaxChildren);
+        // Helpers do their own job: no spawn tool and no permission to spawn.
+        var helper = await _cluster.Client.GetGrain<IAgentGrain>(helpers[0].AgentId).GetSnapshot();
+        Assert.DoesNotContain("spawn_agent", helper.AllowedTools);
+        Assert.False(helper.GrantedPermissions.HasFlag(ToolPermission.SpawnAgents));
+        Assert.Equal(0, helper.Budget.MaxChildren);
     }
 
     [Fact]
-    public async Task AWorker_NeedsAPlan_AndAPlanForSmallWork_AllowsNone()
+    public async Task A_helper_needs_a_plan_and_a_plan_for_small_work_allows_none()
     {
-        var id = await CreateWorkspaceAsync();
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.Status == "Waiting"));
+        var unplanned = await RunAsync("spawn without a plan");
+        Assert.True(ToolResultSeen("No workers are planned"));
+        Assert.Empty(await HelpersAsync(unplanned));
 
-        await Workspace(id).PostUserMessage("spawn without a plan", null, null);
-        await WaitForAsync(id, _ => ToolResultSeen("No workers are planned"));
-
-        // Small parts: the plan says to do it yourself, so a worker is refused.
-        await Workspace(id).PostUserMessage("small job", null, null);
-        var s = await WaitForAsync(id, _ => ToolResultSeen("\"approach\":\"self\"") && RejectionsSeen("No workers are planned") >= 2);
-
-        Assert.Equal(0, Workers(s));
+        // Small parts: the plan says to do it yourself, so a helper is refused.
+        var small = await RunAsync("small job");
+        Assert.True(ToolResultSeen("\"approach\":\"self\""));
+        Assert.Empty(await HelpersAsync(small));
     }
 
     [Fact]
-    public async Task MessagingAFinishedWorker_IsRefused_InsteadOfWaitingForAReplyThatNeverComes()
+    public async Task Messaging_a_finished_helper_is_refused_instead_of_waiting_for_a_reply_that_never_comes()
     {
-        var id = await CreateWorkspaceAsync();
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.Status == "Waiting"));
-
-        await Workspace(id).PostUserMessage("spawn one more", null, null);
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Part E" && a.Status == "Completed"));
-
-        await Workspace(id).PostUserMessage("review it", null, null);
-        await WaitForAsync(id, _ => ToolResultSeen("has finished (Completed)"));
-
-        Assert.True(ToolResultSeen("plan it with plan_request"), "the refusal should say what to do instead");
+        await RunAsync("review it");
+        Assert.True(ToolResultSeen("has finished (Completed)"));
     }
 
     [Fact]
-    public async Task ASpawnWithoutAReason_IsRejected()
+    public async Task A_spawn_without_a_reason_is_rejected()
     {
-        var id = await CreateWorkspaceAsync();
-        await WaitForAsync(id, s => s.Agents.Any(a => a.Role == "Coordinator" && a.Status == "Waiting"));
+        var runId = await RunAsync("spawn without a reason");
+        Assert.True(ToolResultSeen("spawn_agent needs why_not_myself"));
+        Assert.Empty(await HelpersAsync(runId));
+    }
 
-        await Workspace(id).PostUserMessage("spawn without a reason", null, null);
-        var s = await WaitForAsync(id, _ => ToolResultSeen("spawn_agent needs why_not_myself"));
-
-        Assert.Equal(0, Workers(s));
+    [Fact]
+    public async Task A_stage_without_helpers_is_not_offered_spawning()
+    {
+        await RunAsync("anything", maxHelpers: 0);
+        var lead = _requests.First(r => r.Messages[0].Content?.Contains("acting as: Lead.") == true);
+        Assert.DoesNotContain(lead.Tools, t => t.Name is "spawn_agent" or "plan_request");
     }
 }

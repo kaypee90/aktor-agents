@@ -192,7 +192,8 @@ public sealed class TaskModelSwitchTests : IAsyncLifetime
         Assert.Contains(all, c => c.Role.Contains("Price", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(all, c => c.Role.Contains("Analyst", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(all, c => c.Role.Contains("Extra", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("No model 'gpt-9-ultra'", refusal);
+        // The refusal is the tool's JSON result: compare the decoded message, not escaped JSON.
+        Assert.Contains("No model 'gpt-9-ultra'", ErrorOf(refusal));
         Assert.Contains("careful", refusal);
     }
 
@@ -219,7 +220,10 @@ public sealed class TaskModelSwitchTests : IAsyncLifetime
         while (DateTime.UtcNow < deadline && (await root.GetSnapshot()).Status != AgentStatus.Completed) await Task.Delay(50);
 
         Assert.DoesNotContain("## MODELS", prompt);
-        Assert.Contains("doesn't let agents choose models", refusal);
+        Assert.Contains("doesn't let agents choose models", ErrorOf(refusal));
         Assert.Empty((await root.GetSnapshot()).Children);
     }
+
+    private static string ErrorOf(string toolResultJson) =>
+        JsonDocument.Parse(toolResultJson).RootElement.GetProperty("error").GetString() ?? string.Empty;
 }

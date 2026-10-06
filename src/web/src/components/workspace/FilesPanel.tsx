@@ -11,12 +11,11 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** A worker's file is final once the worker has finished; while it's still working the file may
- * change again. Standing agents (the coordinator included) never finish, so their files are just saved. */
+/** A file is final once the agent that wrote it has finished; while it's still working the file may
+ * change again. Agents of finished runs aren't listed, so their files are final. */
 function fileState(file: WorkspaceFile, workspace: WorkspaceSnapshot) {
   const author = workspace.agents.find((a) => a.agent_id === file.created_by_agent);
   if (!author || author.status === "Completed") return { label: "final", className: "text-emerald-700 dark:text-emerald-400" };
-  if (author.standing) return { label: "saved", className: "text-zinc-500" };
   if (["Failed", "Terminated", "TimedOut"].includes(author.status)) return { label: "unfinished", className: "text-amber-700 dark:text-amber-300" };
   return { label: "in progress", className: "text-zinc-500" };
 }

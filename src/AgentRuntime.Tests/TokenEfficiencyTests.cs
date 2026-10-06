@@ -137,10 +137,8 @@ public class TokenEfficiencyTests
     }
 
     [Theory]
-    [InlineData(true, false, "Monitor", true)]      // resident
-    [InlineData(false, true, "Monitor", true)]      // standing helper
-    [InlineData(false, true, "Coordinator", false)] // plans: main model
-    [InlineData(false, false, "Worker", false)]     // real work: main model
-    public void FastTier_IsForRoutineEventHandling(bool resident, bool standing, string role, bool expected) =>
-        Assert.Equal(expected, new AgentState { WorldId = resident ? "world-1" : null, Standing = standing, Role = role }.UsesFastTier);
+    [InlineData(true, true)]   // a simulation resident: routine moves
+    [InlineData(false, false)] // real work: main model
+    public void FastTier_IsForRoutineEventHandling(bool resident, bool expected) =>
+        Assert.Equal(expected, new AgentState { WorldId = resident ? "world-1" : null, Role = "Worker" }.UsesFastTier);
 }

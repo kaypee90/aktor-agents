@@ -883,6 +883,9 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasDefaultValue("api");
 
+                    b.Property<string>("StartedBy")
+                        .HasColumnType("text");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasColumnType("text");
@@ -893,12 +896,20 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasDefaultValue("default");
 
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("text");
+
                     b.HasKey("TaskId");
 
                     b.HasIndex("CallbackDeliveredAt")
                         .HasFilter("\"CallbackUrl\" IS NOT NULL");
 
+                    b.HasIndex("WorkspaceId")
+                        .HasFilter("\"WorkspaceId\" IS NOT NULL");
+
                     b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "StartedBy");
 
                     b.ToTable("Tasks");
                 });

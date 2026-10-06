@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiErrorMessage, continueTask, followUpTask, getTaskChat, taskFileSource, uploadTaskAttachments, type FileSource } from "@/lib/api";
 import type { AgentListItem, ResourceBudget, RuntimeEvent, TaskChatEntry, TaskChatFile } from "@/lib/types";
@@ -285,9 +286,11 @@ function Working({ steps, roles, active, onStop }: { steps: RuntimeEvent[]; role
  * instructions and files. Files open beside the conversation, the way they would look opened.
  * A follow-up on a finished task reopens it with everything the team already knows.
  */
-export function TaskChat({ taskId, running, events, agents, budget, ceiling, onStop, onShowAgents }: {
+export function TaskChat({ taskId, running, events, agents, budget, ceiling, onStop, onShowAgents, workspaceId }: {
   taskId: string;
   running: boolean;
+  /** Set for a run of a workspace's pipeline: it takes no follow-ups, so the composer links back there. */
+  workspaceId?: string | null;
   events: RuntimeEvent[];
   agents: AgentListItem[];
   /** The task's budget: what a continue offers by default. */
@@ -396,6 +399,15 @@ export function TaskChat({ taskId, running, events, agents, budget, ceiling, onS
           </div>
         </div>
 
+        {workspaceId ? (
+          <div className="px-4 pb-4">
+            <div className="mx-auto flex max-w-3xl items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+              <Icons.Workspaces className="h-4 w-4 shrink-0" />
+              <span className="flex-1">This is a run of a workspace&apos;s pipeline. To go again with a new input, run the pipeline from its workspace.</span>
+              <Link href={`/workspaces?id=${workspaceId}`} className="shrink-0 font-medium text-brand-600 hover:underline dark:text-brand-400">Open the workspace</Link>
+            </div>
+          </div>
+        ) : (
         <div className="px-4 pb-4">
           <form onSubmit={(e) => { e.preventDefault(); send(text); }}
             className="mx-auto max-w-3xl rounded-3xl border border-zinc-200 bg-white p-2 shadow-sm focus-within:border-zinc-300 focus-within:shadow-md dark:border-zinc-700 dark:bg-zinc-900 dark:focus-within:border-zinc-600">
@@ -430,6 +442,7 @@ export function TaskChat({ taskId, running, events, agents, budget, ceiling, onS
             </div>
           </form>
         </div>
+        )}
       </DropZone>
 
       {open && (

@@ -29,11 +29,13 @@ import { EventStream } from "@/components/EventStream";
 import { FinalResultPanel } from "@/components/FinalResultPanel";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { ModelPicker } from "@/components/tasks/ModelPicker";
+import { ActivityIndicator } from "@/components/tasks/ActivityIndicator";
 import { TaskChat } from "@/components/tasks/TaskChat";
 import { TaskComposer } from "@/components/tasks/TaskComposer";
 import { TaskToolsButton } from "@/components/tasks/TaskTools";
 import { Badge, Button, Card, CardHeader, EmptyState, PageHeader, StatusBadge, Tabs, ago, compact, cx, money } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { isWorking } from "@/lib/status";
 
 const MAX_EVENTS = 500;
 const POLL_INTERVAL_MS = 2000;
@@ -148,6 +150,8 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
   const [models, setModels] = useState<LlmSettingsView | null>(null);
   const [switching, setSwitching] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  // Set on Pause/Resume so the buttons switch at once, until the next poll confirms it.
+  const [pausedNow, setPausedNow] = useState<boolean | null>(null);
 
   useEffect(() => {
     getLlmSettings().then(setModels).catch(() => { /* the switcher is optional */ });
@@ -178,7 +182,10 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
       if (cancelled) return;
       if (nextSpend) setSpend(Object.fromEntries(nextSpend.map((s) => [s.agent_id, s])));
       setAgents(nextTask ? nextAgents.filter((a) => a.root_agent_id === nextTask.root_agent_id) : []);
-      if (nextTask) setTask(nextTask);
+      if (nextTask) {
+        setTask(nextTask);
+        setPausedNow(null);
+      }
     }
     poll();
     const interval = setInterval(poll, POLL_INTERVAL_MS);
@@ -209,6 +216,18 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
   }, [taskId]);
 
   const running = task !== null && !TERMINAL.includes(task.status);
+  const paused = running && (pausedNow ?? task?.paused ?? false);
+  const busy = agents.filter((a) => isWorking(a.status)).length;
+  const activity = running && <ActivityIndicator paused={paused} busy={busy} />;
+
+  async function setPaused(pause: boolean) {
+    setPausedNow(pause);
+    try {
+      await (pause ? pauseTask(taskId) : resumeTask(taskId));
+    } catch {
+      setPausedNow(null);
+    }
+  }
   const modelNames = useMemo(
     () => Object.fromEntries(models ? modelChoices(models).map((m) => [m.id, m.name]) : []),
     [models],
@@ -252,6 +271,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </button>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900 dark:text-zinc-100" title={task?.goal}>{task?.goal ?? "Loading…"}</span>
           {task && <StatusBadge status={task.status} />}
+          {activity}
           <span className="hidden text-xs text-zinc-500 md:inline">{agents.length} agents · {money(totalCost)}</span>
           <TaskToolsButton taskId={taskId} />
           {viewToggle}
@@ -260,7 +280,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </Button>
         </header>
         <div className="min-h-0 flex-1">
-          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop}
+          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id}
             budget={task?.budget} ceiling={task?.budget_ceiling}
             onShowAgents={(id) => { if (id) setSelected(id); onView("agents"); }} />
         </div>
@@ -284,10 +304,12 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
             {viewToggle}
             <TaskToolsButton taskId={taskId} />
             {task && <StatusBadge status={task.status} />}
+            {activity}
             {running && (
               <>
-                <Button size="sm" icon={<Icons.Pause className="h-3.5 w-3.5" />} onClick={() => pauseTask(taskId)}>Pause</Button>
-                <Button size="sm" icon={<Icons.Play className="h-3.5 w-3.5" />} onClick={() => resumeTask(taskId)}>Resume</Button>
+                {paused
+                  ? <Button size="sm" icon={<Icons.Play className="h-3.5 w-3.5" />} onClick={() => setPaused(false)}>Resume</Button>
+                  : <Button size="sm" icon={<Icons.Pause className="h-3.5 w-3.5" />} onClick={() => setPaused(true)}>Pause</Button>}
                 <Button size="sm" variant="danger" icon={<Icons.Stop className="h-3.5 w-3.5" />}
                   onClick={() => confirm("Stop every agent of this task?") && cancelTask(taskId)}>
                   Cancel

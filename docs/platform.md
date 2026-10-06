@@ -32,7 +32,7 @@ The tenant is stamped by the runtime and inherited, never chosen by an agent.
 | `find_agents`, `get_agent_status`, `list_children` | Filtered by organization. |
 | Shared memory (`write_memory` with `shared`, `search_knowledge`, `read_memory`) | Shared within an organization only. |
 | `database_query` | Each organization gets its own Postgres role and schema (`agent_scratch_t_…`), provisioned on first use. Other tenants' schemas are owned by their roles and never granted. |
-| Agent limits (`MaxTotalAgents`, `MaxActiveAgents`) | Counted per organization, so one tenant filling up can't block another. The plan's limit applies on top. |
+| Agent limits (`MaxTotalAgents`, `MaxActiveAgents`) | Counted per organization, so one tenant filling up can't block another. The plan's limit applies on top. A workspace pipeline run isn't an agent itself, and agents of finished runs don't count toward the total (each run is bounded by its stages), so a scheduled pipeline can't use the allowance up. |
 | Events | Every event carries its organization. The live stream and the event history only return the caller's. |
 | Files | Each task and workspace has its own sandbox directory, and its ids are unique. |
 
@@ -48,7 +48,7 @@ and the first account created on a server takes it over.
 |---|---|
 | Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. |
 | Member | Also create workspaces, tasks and worlds, pick or switch a task's model, instruct agents, add triggers, and decide approvals. |
-| Admin | Also manage connections, safety policies, workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys. |
+| Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys. |
 | Owner | Also manage billing and who is an owner. An organization always keeps at least one owner. |
 
 **Accounts** are email and password.
@@ -188,6 +188,7 @@ only ones who can use **Reset all**, which wipes every organization's work but k
 | `POST` | `/api/auth/password` | session | `{current_password, new_password}` |
 | `GET` / `POST` | `/api/auth/invitations/{token}` / `accept` | anyone / session | |
 | `GET` / `PATCH` | `/api/organization` | Viewer / Admin | |
+| `GET` / `PUT` | `/api/organization/policy` | Viewer / Admin | The organization's safety policy ([safety.md](safety.md#organization-policy)) |
 | `GET` / `PUT` / `DELETE` | `/api/organization/members[/{id}[/role]]` | Viewer / Admin | Anyone may remove themselves. |
 | `GET` / `POST` / `DELETE` | `/api/organization/invitations` | Admin | `POST` returns the token once. |
 | `GET` / `POST` / `DELETE` | `/api/api-keys` | Admin | `POST` returns the key once. |
