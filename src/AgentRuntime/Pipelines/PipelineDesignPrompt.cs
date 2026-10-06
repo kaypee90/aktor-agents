@@ -57,6 +57,7 @@ public static class PipelineDesignPrompt
                       "instructions": { "type": "string", "description": "What the stage's agent does with the run's input and its inputs' results." },
                       "inputs": { "type": "array", "items": { "type": "string" }, "description": "Stage ids whose results it needs (for parallel branches)." },
                       "capabilities": { "type": "array", "items": { "type": "string" } },
+                      "model_profile_id": { "type": "string", "description": "Run this stage on one of the listed models (its id); \"\" for the workspace's model." },
                       "max_helpers": { "type": "integer" },
                       "may_message_stages": { "type": "boolean" },
                       "retries": { "type": "integer" },
@@ -75,9 +76,12 @@ public static class PipelineDesignPrompt
 
     /// <param name="current">The pipeline now; null (or no stages) to design one from scratch.</param>
     /// <param name="connectionTools">Tools of the workspace's connections, which stages can name in their instructions.</param>
+    /// <param name="models">Models a stage can run on (the organization's profiles and the server's).</param>
     public static LlmCompletionRequest BuildRequest(PipelineDefinition? current, string request, string workspacePurpose,
-        IReadOnlyList<string> connectionTools, PipelineOptions limits, string? model, int maxOutputTokens)
+        IReadOnlyList<string> connectionTools, PipelineOptions limits, string? model, int maxOutputTokens,
+        IReadOnlyCollection<MentionableModel>? models = null)
     {
+        models ??= [];
         var system = new StringBuilder();
         system.AppendLine(SystemMarker);
         system.AppendLine("""
@@ -98,6 +102,11 @@ public static class PipelineDesignPrompt
         system.AppendLine($"Limits: at most {limits.MaxStages} stages, {limits.MaxHelpersPerStage} helpers per stage, {limits.MaxRetries} retries.");
         system.AppendLine($"Capabilities (grant tools): {string.Join(", ", AgentToolCatalog.KnownCapabilities)}. Every stage can read and write the run's files.");
         if (connectionTools.Count > 0) system.AppendLine($"Connected services' tools a stage can use: {string.Join(", ", connectionTools.Take(60))}.");
+        if (models.Count > 1)
+        {
+            system.AppendLine("Models a stage can run on (set model_profile_id only when asked to; otherwise stages use the workspace's model): " +
+                              string.Join("; ", models.Select(m => $"{m.Id} = {m.Name} ({m.Provider} {m.Model})")) + ".");
+        }
 
         var user = new StringBuilder();
         user.AppendLine($"The workspace's purpose: {workspacePurpose}");
@@ -115,12 +124,20 @@ public static class PipelineDesignPrompt
                                 (stage.Inputs.Count > 0 ? $" ← {string.Join(", ", stage.Inputs)}" : " (entry)") +
                                 $": {Clip(stage.Instructions, 300)}" +
                                 (stage.MaxHelpers > 0 ? $" [helpers: {stage.MaxHelpers}]" : "") +
+                                (stage.ModelProfileId is { } profile ? $" [model: {profile}]" : "") +
                                 (stage.Capabilities.Count > 0 ? $" [capabilities: {string.Join(", ", stage.Capabilities)}]" : ""));
             }
         }
 
         user.AppendLine();
         user.AppendLine($"What the person wants: {request.Trim()}");
+        var mentions = Mentions.Describe([request], current?.Stages ?? [], models);
+        if (mentions.Count > 0)
+        {
+            user.AppendLine();
+            user.AppendLine("What their @mentions refer to:");
+            foreach (var line in mentions) user.AppendLine($"- {line}");
+        }
         user.AppendLine();
         user.AppendLine($"Call {ToolName} with the changes.");
 

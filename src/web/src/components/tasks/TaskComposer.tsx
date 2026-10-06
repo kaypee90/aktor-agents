@@ -9,6 +9,7 @@ import type { TaskPreview } from "@/lib/types";
 import { TaskPreviewCard } from "@/components/TaskPreviewCard";
 import { Button, ErrorBanner, Field, Modal, Toggle, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { DEFAULT_MODEL_HANDLE, MentionTextarea, mentionsIn, useModelMentionables } from "@/components/ui/MentionTextarea";
 
 const STARTER_KEY = "aktor:starterGoal";
 
@@ -122,6 +123,18 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<{ preview: TaskPreview; mustConfirm: boolean } | null>(null);
 
+  const modelMentions = useModelMentionables();
+  // "@claude-fast" in the goal picks that model; "@anthropic" picks its first model if none is picked.
+  function goalChanged(text: string) {
+    setGoal(text);
+    const handles = mentionsIn(text).map((h) => h.toLowerCase());
+    const profiles = models ? [{ id: "server", provider: models.server.provider }, ...models.profiles] : [];
+    const named = profiles.find((p) => handles.includes(p.id === "server" ? DEFAULT_MODEL_HANDLE : p.id.toLowerCase()));
+    const byProvider = !model ? profiles.find((p) => handles.includes(p.provider.toLowerCase())) : undefined;
+    const pick = named ?? byProvider;
+    if (pick && pick.id !== model) { setModel(pick.id); setEstimate(null); }
+  }
+
   const upload = useCallback(async (file: File) => (await uploadFiles([file]))[0].upload_id, []);
   const files = useAttachments(upload);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -184,18 +197,20 @@ export function TaskComposer({ onStarted }: { onStarted: (taskId: string, previe
       <div className="overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-sm transition focus-within:border-zinc-300 focus-within:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:focus-within:border-zinc-700">
       <form onSubmit={run}>
         {files.pending.length > 0 && <div className="px-4 pt-3"><PendingFiles pending={files.pending} onRemove={files.remove} /></div>}
-        <textarea
+        <MentionTextarea
           ref={box}
           value={goal}
-          onChange={(e) => {
-            setGoal(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 320)}px`;
+          onValueChange={goalChanged}
+          mentionables={modelMentions}
+          onInput={(e) => {
+            const el = e.currentTarget;
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
           }}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); run(); } }}
           onPaste={(e) => { const pasted = Array.from(e.clipboardData.files); if (pasted.length > 0) { e.preventDefault(); files.add(pasted); } }}
           rows={3}
-          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context."
+          placeholder="Ask for anything: a report, an analysis, a spreadsheet, a slide deck… Attach files for context, and type @ to pick a model."
           className="block max-h-80 w-full resize-none border-0 bg-transparent px-5 pt-4 text-[15px] text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-600"
           disabled={busy !== null}
         />

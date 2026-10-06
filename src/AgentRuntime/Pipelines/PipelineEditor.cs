@@ -113,6 +113,7 @@ public static partial class PipelineEditor
     public static PipelineEditResult Apply(PipelineDefinition current, IReadOnlyList<PipelineEditOp> ops, PipelineOptions options)
     {
         var stages = current.Stages.Select(s => s with { Inputs = [.. s.Inputs] }).ToList();
+        var layout = new Dictionary<string, StagePosition>(current.Layout, StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
         var changes = new List<string>();
         if (ops.Count == 0) errors.Add("No changes were proposed.");
@@ -151,6 +152,7 @@ public static partial class PipelineEditor
 
                     var stage = ApplyPatch(new PipelineStage { StageId = id, Name = patch.Name.Trim() }, patch with { StageId = null }) with { Inputs = inputs };
                     stages.Add(stage);
+                    if (op.Position is { } at) layout[id] = at;
 
                     if (after is not null && before is not null)
                     {
@@ -242,7 +244,7 @@ public static partial class PipelineEditor
             }
         }
 
-        var next = current with { Stages = stages };
+        var next = current with { Stages = stages, Layout = PipelineLayout.Keep(layout, stages) };
         if (errors.Count == 0) errors.AddRange(PipelineValidator.Validate(next, options));
         return new PipelineEditResult(errors.Count == 0 ? next : null, errors, changes);
     }
@@ -281,5 +283,23 @@ public static partial class PipelineEditor
         var candidate = id;
         for (var n = 2; stages.Any(s => Same(s.StageId, candidate)); n++) candidate = $"{id}-{n}";
         return candidate;
+    }
+}
+
+/// <summary>Canvas positions of a pipeline's stages (<see cref="PipelineDefinition.Layout"/>).</summary>
+public static class PipelineLayout
+{
+    /// <summary>Positions on the canvas are kept within this distance of the origin.</summary>
+    public const double MaxCoordinate = 100_000;
+
+    /// <summary>The positions of stages that exist, with sane coordinates.</summary>
+    public static Dictionary<string, StagePosition> Keep(IReadOnlyDictionary<string, StagePosition> layout, IEnumerable<PipelineStage> stages)
+    {
+        var ids = stages.Select(s => s.StageId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return layout
+            .Where(p => ids.Contains(p.Key) && double.IsFinite(p.Value.X) && double.IsFinite(p.Value.Y))
+            .ToDictionary(p => p.Key, p => new StagePosition(
+                Math.Round(Math.Clamp(p.Value.X, -MaxCoordinate, MaxCoordinate)),
+                Math.Round(Math.Clamp(p.Value.Y, -MaxCoordinate, MaxCoordinate))));
     }
 }

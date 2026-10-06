@@ -20,6 +20,9 @@ export interface PipelineStage {
   max_cost_usd: number | null;
 }
 
+/** Where a stage sits on the canvas. */
+export type StagePosition = { x: number; y: number };
+
 export interface PipelineDefinition {
   version: number;
   stages: PipelineStage[];
@@ -30,13 +33,15 @@ export interface PipelineDefinition {
   max_concurrent_runs: number;
   /** How a finished run's result is posted, and so which channels forward it. */
   result_urgency: "info" | "warning" | "urgent";
+  /** Stages placed by hand, by stage id; the rest are laid out automatically. */
+  layout?: Record<string, StagePosition>;
 }
 
 /** Fields of a stage to set; anything left out stays as it is. */
 export type StagePatch = Partial<Omit<PipelineStage, "stage_id">> & { stage_id?: string };
 
 export type PipelineEditOp =
-  | { op: "add_stage"; stage: StagePatch & { name: string }; after?: string; before?: string }
+  | { op: "add_stage"; stage: StagePatch & { name: string }; after?: string; before?: string; position?: StagePosition }
   | { op: "update_stage"; stage_id: string; stage: StagePatch }
   | { op: "remove_stage"; stage_id: string }
   | { op: "connect"; from: string; to: string }

@@ -60,14 +60,47 @@ Cancelling stops every agent of the run and skips its unfinished stages.
   `disconnect`. The runtime applies and validates them (`PipelineEditor`, `PipelineValidator`): no
   loops, inputs that exist, known capabilities, limits. The canvas previews the result (new stages
   green, changed amber, removed struck through) and nothing changes until you apply it.
-- **On the canvas:** a + on any connection inserts a stage there, + before an entry stage or after
-  an output stage adds one at the ends, × removes a stage (its inputs are joined to what it fed),
-  and clicking a stage edits its settings.
+- **On the canvas, by hand** (no model involved, so it works the same whatever model you use):
+  - **Move** stages by dragging them. Where you put them is kept for the current version without
+    making a new one, since runs don't depend on it; **Tidy up** lays them out automatically again.
+  - **Connect** stages by dragging from a stage's right dot to another stage: that stage then takes
+    its result. A connection that would make a loop is refused.
+  - **Remove a connection** with the × beside its +, or select it and press Delete.
+  - **Add an agent** by dragging **New agent** onto the canvas (or clicking it), or by dragging from
+    a stage's right dot to empty space: the new agent goes where you let go, taking that stage's
+    result.
+  - + on a connection inserts a stage there, + at an entry or output stage adds one at that end,
+    × (or Delete) removes a stage (its inputs are joined to what it fed), and clicking a stage
+    edits its settings, including which model it runs on.
+- **Mentions:** in the text boxes (describe a change, stage instructions, a run's input, the chat,
+  triggers, a new workspace's description, and the task composer), type `@` to pick an agent, a
+  model or a provider. See [Mentions](#mentions).
 - **Versions:** every applied change is a new version; an edit based on an older version is
   refused as a conflict. **History** restores any kept version (as a new version).
 - **From a template:** see [templates.md](templates.md) for nine real-world pipelines to start from.
 - **A new workspace** is drafted from its description by the same editor. If the model can't
   propose a valid pipeline, the workspace starts with one stage that does its purpose.
+
+## Mentions
+
+Typing `@` in a text box suggests what you can refer to; ↑/↓ and Enter or Tab pick one:
+
+| Mention | Example | Means |
+|---|---|---|
+| An agent (a pipeline stage), by its id | `@diagnose` | That stage |
+| A model, by its profile id | `@claude-fast`, `@default-model` (the server's own) | That model (Settings → Models) |
+| A provider | `@anthropic` | The organization's models from that provider |
+
+A mention means one thing to whichever model reads it: the runtime adds a short glossary to the
+text it passes on (`Mentions`), so a weaker model doesn't have to guess.
+- **Describe a change:** "use `@claude-fast` for `@triage`" runs that stage on that model. The
+  editor is told every model a stage can run on, and a model that isn't set up is refused.
+- **A run's input, stage instructions, the chat and triggers:** each stage's agent is told which
+  stage a mention is.
+- **The task composer:** mentioning a model picks it for the task; mentioning a provider picks its
+  first model if none is picked yet.
+
+Unknown handles are left as they are, and an email address is never read as a mention.
 
 ## Inside a stage
 
@@ -181,6 +214,7 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 | `PUT` | `/api/workspaces/{id}/pipeline` | `{pipeline, base_version, note?}`: replace it (409 if it changed since `base_version`) |
 | `POST` | `/api/workspaces/{id}/pipeline/propose` | `{request}`: the editor's proposal (`ops`, `summary`, `changes`, `errors`, `preview`); changes nothing |
 | `POST` | `/api/workspaces/{id}/pipeline/edits` | `{ops, base_version, note?}`: apply edits |
+| `PUT` | `/api/workspaces/{id}/pipeline/layout` | `{layout: {stage_id: {x, y}}}`: where stages sit on the canvas, kept on the current version (no new version); `{}` lays it out automatically. An `add_stage` edit can carry a `position` too |
 | `GET` | `/api/workspaces/{id}/pipeline/history` | Earlier versions, newest first |
 | `POST` | `/api/workspaces/{id}/pipeline/restore` | `{version}` |
 | `POST` | `/api/workspaces/{id}/runs` | `{input}`: start (or queue) a run; follow it at `/api/tasks/{run_id}` |
@@ -205,7 +239,11 @@ changes, run progress, and its runs' agents' events) or `?taskId={runId}` (one r
 ## Tests
 
 `PipelineEditorTests` (unit) covers the rules and edits: adding before, after and in parallel,
-removing with the neighbours joined up, loops and limits refused. `PipelineTests` checks, with a
+removing with the neighbours joined up, loops and limits refused, and canvas positions kept for
+existing stages only. `MentionTests` covers finding and explaining mentions, and that the editor is
+told the models. `PipelineCanvasApiTests` edits by hand through the API: moving (no new version),
+dropping an agent where it was dropped, drawing and removing connections, a loop refused, an
+unknown model refused, and "use @default-model for @write" setting that stage's model. `PipelineTests` checks, with a
 scripted LLM:
 - stages run in order, each with its inputs' results, and the output is the run's result;
 - parallel branches run at the same time and the stage merging them waits for both;

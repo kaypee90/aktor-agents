@@ -446,6 +446,15 @@ public sealed class PipelineRunGrain(
             }
         }
 
+        // "@diagnose" in the input or the instructions: say which stage that is.
+        var mentions = Mentions.Describe([R.Input, stage.Instructions], R.Pipeline.Stages, []);
+        if (mentions.Count > 0)
+        {
+            sb.AppendLine("## What @mentions refer to");
+            foreach (var line in mentions) sb.AppendLine($"- {line}");
+            sb.AppendLine();
+        }
+
         var dependents = R.Pipeline.DependentsOf(stage.StageId).Select(d => d.Name).ToList();
         sb.AppendLine("## How to work");
         sb.AppendLine(dependents.Count > 0

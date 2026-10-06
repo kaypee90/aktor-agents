@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button, ErrorBanner, StatusBadge, ago, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
 import { apiErrorMessage, controlPipelineRun, startPipelineRun } from "@/lib/api";
 import { RUN_ACTIVE, type PipelineRunView, type WorkspaceRunSummary } from "@/lib/pipelineTypes";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
@@ -62,14 +63,16 @@ export function RunsPanel({ workspace, selectedRun, onSelectRun, onChanged }: {
   return (
     <div className="flex h-full flex-col">
       <form onSubmit={run} className="flex items-start gap-2 border-b border-zinc-200 p-3 dark:border-zinc-800">
-        <textarea
+        <MentionTextarea
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onValueChange={setInput}
+          mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+          wrapperClassName="flex-1"
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(e); }}
           rows={2}
           disabled={archived}
-          placeholder={archived ? "This workspace is archived." : "What should the pipeline do this time? (⌘/Ctrl+Enter to run)"}
-          className={cx(inputClass, "min-h-[2.75rem] flex-1 resize-y text-xs")}
+          placeholder={archived ? "This workspace is archived." : "What should the pipeline do this time? (⌘/Ctrl+Enter to run, @ to mention a stage)"}
+          className={cx(inputClass, "block min-h-[2.75rem] resize-y text-xs")}
         />
         <Button type="submit" variant="primary" icon={<Icons.Play className="h-3.5 w-3.5" />} disabled={!input.trim() || starting || archived}>
           {starting ? "Starting…" : "Run"}

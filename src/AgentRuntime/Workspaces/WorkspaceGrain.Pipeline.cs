@@ -63,6 +63,14 @@ public sealed partial class WorkspaceGrain
         return new PipelineChangeResult { Success = true, Pipeline = changed, Changes = result.Changes };
     }
 
+    public async Task<PipelineDefinition?> SetPipelineLayout(Dictionary<string, StagePosition> layout)
+    {
+        if (!Exists || S.Pipeline is null) return null;
+        S.Pipeline = S.Pipeline with { Layout = PipelineLayout.Keep(layout, S.Pipeline.Stages) };
+        await SaveAsync();
+        return S.Pipeline;
+    }
+
     public async Task<PipelineChangeResult> RestorePipelineVersion(int version, string changedBy)
     {
         if (!Exists || S.Pipeline is null) return new PipelineChangeResult { Errors = ["No such workspace."] };
@@ -111,6 +119,7 @@ public sealed partial class WorkspaceGrain
         var previous = S.Pipeline;
         var next = pipeline with
         {
+            Layout = PipelineLayout.Keep(pipeline.Layout, pipeline.Stages),
             Version = (previous?.Version ?? 0) + 1,
             UpdatedAt = DateTimeOffset.UtcNow,
             UpdatedBy = changedBy,

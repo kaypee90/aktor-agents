@@ -139,4 +139,71 @@ public class PipelineEditorTests
         Assert.Contains(result.Errors, e => e.Contains("nope"));
         Assert.Contains(result.Errors, e => e.Contains("rename_everything"));
     }
+
+    [Fact]
+    public void A_stage_added_on_the_canvas_keeps_its_place_and_a_removed_one_loses_it()
+    {
+        var placed = Linear() with { Layout = new() { ["research"] = new(0, 0), ["write"] = new(300, 0) } };
+        var added = PipelineEditor.Apply(placed,
+            [new PipelineEditOp { Op = PipelineEditOps.AddStage, Stage = new PipelineStagePatch { Name = "Fact check", Instructions = "Check.", Inputs = ["research"] }, Position = new(150, 200.6) }],
+            Options);
+        Assert.True(added.Success, string.Join("; ", added.Errors));
+        Assert.Equal(new StagePosition(150, 201), added.Pipeline!.Layout["fact-check"]);
+        Assert.Equal(new StagePosition(300, 0), added.Pipeline.Layout["write"]);
+
+        var removed = PipelineEditor.Apply(added.Pipeline, [new PipelineEditOp { Op = PipelineEditOps.RemoveStage, StageId = "fact-check" }], Options);
+        Assert.False(removed.Pipeline!.Layout.ContainsKey("fact-check"));
+    }
+
+    [Fact]
+    public void Layout_keeps_only_existing_stages_with_sane_coordinates()
+    {
+        var kept = PipelineLayout.Keep(new Dictionary<string, StagePosition>
+        {
+            ["research"] = new(double.NaN, 0),
+            ["write"] = new(1e12, -5.5),
+            ["ghost"] = new(1, 1)
+        }, Linear().Stages);
+        Assert.Equal([("write", new StagePosition(PipelineLayout.MaxCoordinate, -6))], kept.Select(p => (p.Key, p.Value)));
+    }
+}
+
+/// <summary>@mentions: a stage, a model or a provider means one thing to whichever model reads it.</summary>
+public class MentionTests
+{
+    private static readonly List<PipelineStage> Stages =
+        [new() { StageId = "diagnose", Name = "Diagnose", Role = "Incident analyst" }, new() { StageId = "remediate", Name = "Remediate" }];
+
+    private static readonly List<MentionableModel> Models =
+        [new("server", "Server default", "Ollama", "qwen3:8b"), new("claude-fast", "Claude fast", "Anthropic", "claude-haiku-4-5")];
+
+    [Fact]
+    public void Handles_are_found_but_not_inside_email_addresses()
+    {
+        Assert.Equal(["diagnose", "claude-fast"], Mentions.Find("Use @claude-fast?? no: @diagnose, then @claude-fast. Mail ops@example.com").OrderBy(h => h.Length));
+        Assert.Empty(Mentions.Find("ops@example.com and @"));
+    }
+
+    [Fact]
+    public void Stages_models_providers_and_the_default_model_are_described_and_unknown_handles_ignored()
+    {
+        var lines = Mentions.Describe(["Run @diagnose on @claude-fast, or @default-model, ask @anthropic, cc @someone"], Stages, Models);
+        Assert.Equal(4, lines.Count);
+        Assert.Contains(lines, l => l.StartsWith("@diagnose:") && l.Contains("'Diagnose' stage (Incident analyst)"));
+        Assert.Contains(lines, l => l.StartsWith("@claude-fast:") && l.Contains("model_profile_id to \"claude-fast\""));
+        Assert.Contains(lines, l => l.StartsWith("@default-model:") && l.Contains("\"server\""));
+        Assert.Contains(lines, l => l.StartsWith("@anthropic:") && l.Contains("'Claude fast'"));
+    }
+
+    [Fact]
+    public void The_editor_is_told_the_models_and_what_mentions_mean()
+    {
+        var pipeline = new PipelineDefinition { Version = 1, Stages = Stages };
+        var request = PipelineDesignPrompt.BuildRequest(pipeline, "Use @claude-fast for @remediate", "Incidents", [], new PipelineOptions(), null, 1000, Models);
+        var system = request.Messages[0].Content;
+        var user = request.Messages[1].Content;
+        Assert.Contains("claude-fast = Claude fast (Anthropic claude-haiku-4-5)", system);
+        Assert.Contains("@remediate: the 'Remediate' stage", user);
+        Assert.Contains("model_profile_id", request.Tools[0].JsonSchema);
+    }
 }

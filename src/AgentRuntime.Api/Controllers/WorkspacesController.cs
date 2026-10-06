@@ -25,6 +25,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     public sealed record ProposeBody(string Request);
     public sealed record EditsBody(List<PipelineEditOp> Ops, int BaseVersion, string? Note);
     public sealed record RestoreBody(int Version);
+    public sealed record LayoutBody(Dictionary<string, StagePosition>? Layout);
     public sealed record RunBody(string Input);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
     public sealed record WatchConditionBody(string Field, string Op, string? Value);
@@ -155,8 +156,30 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     /// <summary>Applies edits (a proposal's, or the canvas's) to the pipeline at base_version.</summary>
     [HttpPost("{id}/pipeline/edits")]
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
-    public async Task<IActionResult> ApplyEdits(string id, [FromBody] EditsBody body) =>
-        ChangeResult(await Workspace(id).ApplyPipelineEdits(body.Ops, body.BaseVersion, HttpContext.Caller().ActorId, body.Note));
+    public async Task<IActionResult> ApplyEdits(string id, [FromBody] EditsBody body, CancellationToken ct)
+    {
+        // A stage's model must be one the organization set up (an empty id means the workspace's).
+        var models = body.Ops.Select(o => o.Stage?.ModelProfileId).Where(m => !string.IsNullOrEmpty(m)).ToList();
+        if (models.Count > 0)
+        {
+            var known = (await designer.ModelsAsync(access.TenantId, ct)).Select(m => m.Id).ToList();
+            if (models.FirstOrDefault(m => !known.Contains(m!)) is { } unknown)
+                return BadRequest(new PipelineChangeResult { Errors = [$"There's no model '{unknown}'. Use one of: {string.Join(", ", known)}."] });
+        }
+
+        return ChangeResult(await Workspace(id).ApplyPipelineEdits(body.Ops, body.BaseVersion, HttpContext.Caller().ActorId, body.Note));
+    }
+
+    /// <summary>Places stages on the canvas (no new version). `{layout: {stage_id: {x, y}}}`; empty
+    /// lays the pipeline out automatically again.</summary>
+    [HttpPut("{id}/pipeline/layout")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> SaveLayout(string id, [FromBody] LayoutBody body)
+    {
+        if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
+        if (body.Layout is { Count: > 200 }) return BadRequest(new { error = "Too many positions." });
+        return await Workspace(id).SetPipelineLayout(body.Layout ?? []) is { } pipeline ? Ok(pipeline) : NotFound();
+    }
 
     [HttpPost("{id}/pipeline/restore")]
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]

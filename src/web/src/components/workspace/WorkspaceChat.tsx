@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { API_BASE, postWorkspaceMessage } from "@/lib/api";
 import type { ChatEntry, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { Icons } from "@/components/ui/icons";
+import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
 import { BotIcon } from "../BotIcon";
 import { ApprovalCard } from "./SafetyPanel";
 
@@ -139,14 +140,17 @@ export function WorkspaceChat({ workspace, onSent, onSelectRun }: {
       <form onSubmit={send} className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         {error && <div className="mb-2 text-xs text-rose-600">{error}</div>}
         <div className="flex gap-2">
-          <textarea
+          <MentionTextarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onValueChange={setText}
+            mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+            above
+            wrapperClassName="flex-1"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e); } }}
             rows={2}
             disabled={archived}
-            placeholder={archived ? "This workspace is archived." : "Send a task to run the pipeline on… (Enter to send)"}
-            className="flex-1 resize-none rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            placeholder={archived ? "This workspace is archived." : "Send a task to run the pipeline on… (Enter to send, @ to mention a stage)"}
+            className="block w-full resize-none rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
           />
           <button type="submit" disabled={sending || archived || !text.trim()} className="rounded bg-brand-500 px-4 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
             {sending ? "…" : "Send"}

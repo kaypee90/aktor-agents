@@ -61,6 +61,10 @@ public sealed record PipelineStage
     public string EffectiveRole => string.IsNullOrWhiteSpace(Role) ? Name : Role;
 }
 
+/// <summary>Where a stage sits on the canvas (presentation only; runs don't depend on it).</summary>
+[GenerateSerializer]
+public sealed record StagePosition([property: Id(0)] double X, [property: Id(1)] double Y);
+
 /// <summary>A workspace's pipeline at one version. Every applied change makes a new version.</summary>
 [GenerateSerializer]
 public sealed record PipelineDefinition
@@ -78,6 +82,9 @@ public sealed record PipelineDefinition
     /// <summary>How a finished run's result is posted: "info", "warning" or "urgent". Connected
     /// channels (SMS, Slack, email) forward it by their notify level. Failures are at least warnings.</summary>
     [Id(7)] public string ResultUrgency { get; init; } = "info";
+    /// <summary>Stages a person placed on the canvas, by stage id; the others are laid out
+    /// automatically. Moving stages changes this in place, without a new version.</summary>
+    [Id(8)] public Dictionary<string, StagePosition> Layout { get; init; } = [];
 
     public PipelineStage? Find(string stageId) =>
         Stages.FirstOrDefault(s => string.Equals(s.StageId, stageId, StringComparison.OrdinalIgnoreCase));
@@ -111,6 +118,7 @@ public static class PipelineEditOps
 /// <item><c>remove_stage</c>: <see cref="StageId"/>; its inputs are connected to its dependents, so
 /// the pipeline stays joined up.</item>
 /// <item><c>connect</c> / <c>disconnect</c>: <see cref="From"/> → <see cref="To"/>.</item>
+/// <item>With <see cref="Position"/>, an added stage is placed there on the canvas (the canvas only).</item>
 /// </list>
 /// </summary>
 [GenerateSerializer]
@@ -123,6 +131,7 @@ public sealed record PipelineEditOp
     [Id(4)] public string? Before { get; init; }
     [Id(5)] public string? From { get; init; }
     [Id(6)] public string? To { get; init; }
+    [Id(7)] public StagePosition? Position { get; init; }
 }
 
 /// <summary>Stage fields for an edit; null leaves a field as it is (or at its default, when adding).</summary>

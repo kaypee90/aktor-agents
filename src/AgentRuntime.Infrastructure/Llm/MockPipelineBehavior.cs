@@ -34,9 +34,19 @@ internal static partial class MockPipelineBehavior
         var stages = StageLines().Matches(prompt).Select(m => new StageLine(m.Groups[1].Value, m.Groups[2].Value,
             m.Groups[3].Success ? m.Groups[3].Value.Split(", ", StringSplitOptions.RemoveEmptyEntries) : [])).ToList();
 
+        // "@claude-fast for @diagnose": the mention glossary names the model and the stages.
+        var model = Regex.Match(prompt, @"set its model_profile_id to ""([^""]+)""");
+        var mentioned = Regex.Matches(prompt, @"^- @\S+: the '[^']+' stage \([^)]*\), stage id ([a-z0-9-]+)\.", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToList();
+
         object[] changes;
         string summary;
-        if (stages.Count == 0)
+        if (model.Success && mentioned.Count > 0)
+        {
+            summary = $"Runs {string.Join(", ", mentioned)} on the model '{model.Groups[1].Value}'.";
+            changes = [.. mentioned.Select(id => (object)new { op = "update_stage", stage_id = id, stage = new { model_profile_id = model.Groups[1].Value } })];
+        }
+        else if (stages.Count == 0)
         {
             summary = "A researcher gathers what's needed and a writer turns it into the deliverable.";
             changes =
@@ -90,7 +100,7 @@ internal static partial class MockPipelineBehavior
 
     private static StageLine? Resolve(List<StageLine> stages, string text)
     {
-        var t = text.Trim().Trim('"', '\'', '.').ToLowerInvariant();
+        var t = text.Trim().Trim('"', '\'', '.', '@').ToLowerInvariant();
         return stages.FirstOrDefault(s => s.Id == t || s.Name.Equals(t, StringComparison.OrdinalIgnoreCase))
                ?? stages.FirstOrDefault(s => t.Contains(s.Name.ToLowerInvariant()) || t.Contains(s.Id));
     }

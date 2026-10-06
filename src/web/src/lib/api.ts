@@ -369,6 +369,14 @@ export function savePipeline(id: string, pipeline: import("./pipelineTypes").Pip
   });
 }
 
+/** Places stages on the canvas (no new version); an empty layout lays it out automatically. */
+export function savePipelineLayout(id: string, layout: Record<string, import("./pipelineTypes").StagePosition>) {
+  return apiFetch<import("./pipelineTypes").PipelineDefinition>(`/api/workspaces/${id}/pipeline/layout`, {
+    method: "PUT",
+    body: JSON.stringify({ layout }),
+  });
+}
+
 export function restorePipelineVersion(id: string, version: number) {
   return apiFetch<import("./pipelineTypes").PipelineChangeResult>(`/api/workspaces/${id}/pipeline/restore`, {
     method: "POST",

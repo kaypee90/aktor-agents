@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Field, Toggle, cx, inputClass } from "@/components/ui";
 import { CAPABILITIES, type PipelineStage, type StagePatch } from "@/lib/pipelineTypes";
+import { MentionTextarea, useModelChoices, type Mentionable } from "@/components/ui/MentionTextarea";
 
 /** A blank stage for the "add a stage" form. */
 export const NEW_STAGE: StagePatch & { name: string } = {
@@ -21,7 +22,7 @@ export const NEW_STAGE: StagePatch & { name: string } = {
  * A stage's settings: who the agent is, what it does, its tools, and how much freedom it has
  * (helpers, messaging other stages, retries). The runtime checks every value when it's saved.
  */
-export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel, onRemove, busy }: {
+export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel, onRemove, busy, mentionables = [] }: {
   stage: StagePatch & { name: string };
   /** Names of the stages this one takes input from, to show where it sits. */
   stageNames?: string[];
@@ -30,8 +31,11 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
   onCancel?: () => void;
   onRemove?: () => void;
   busy?: boolean;
+  /** What the instructions can @mention (the pipeline's stages, models). */
+  mentionables?: Mentionable[];
 }) {
   const [draft, setDraft] = useState(stage);
+  const models = useModelChoices();
   const set = <K extends keyof PipelineStage>(key: K, value: PipelineStage[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const caps = new Set(draft.capabilities ?? []);
   const toggleCap = (id: string) => {
@@ -58,9 +62,19 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
         </Field>
       </div>
       <Field label="Instructions" hint="What the agent does with the run's input and earlier stages' results, for whom, to what standard.">
-        <textarea className={cx(inputClass, "min-h-28 resize-y")} value={draft.instructions ?? ""} onChange={(e) => set("instructions", e.target.value)}
-          placeholder="Review the backend's changes for security issues (auth, injection, secrets) and list what must be fixed before release." />
+        <MentionTextarea className={cx(inputClass, "min-h-28 resize-y")} value={draft.instructions ?? ""} onValueChange={(v) => set("instructions", v)}
+          mentionables={mentionables.filter((m) => m.kind === "agent")}
+          placeholder="Review @backend's changes for security issues (auth, injection, secrets) and list what must be fixed before release. Type @ to mention a stage." />
       </Field>
+      {models.length > 1 && (
+        <Field label="Model" hint="A stronger model for hard stages, a cheaper one for simple ones.">
+          <select className={inputClass} value={draft.model_profile_id ?? ""}
+            onChange={(e) => set("model_profile_id", e.target.value)}>
+            <option value="">The workspace&apos;s model</option>
+            {models.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.provider} · {m.model})</option>)}
+          </select>
+        </Field>
+      )}
       <Field label="Tools">
         <div className="flex flex-wrap gap-1.5">
           {CAPABILITIES.filter((c) => c.id !== "filesystem").map((c) => (

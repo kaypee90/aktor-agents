@@ -31,6 +31,7 @@ public sealed record PipelineProposal
 public sealed class PipelineDesignService(
     ILLMProvider llm,
     ILlmSettingsResolver llmSettings,
+    LlmSettingsService modelSettings,
     IGrainFactory grains,
     IOptions<PipelineOptions> options,
     ILogger<PipelineDesignService> logger)
@@ -50,7 +51,8 @@ public sealed class PipelineDesignService(
             ? []
             : (await grains.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools()).Select(t => t.Name).ToList();
         var prices = await llmSettings.ResolveAsync(tenantId, null, ct);
-        var llmRequest = PipelineDesignPrompt.BuildRequest(current, request, purpose, connectionTools, options.Value, prices.Model, MaxOutputTokens) with
+        var models = await ModelsAsync(tenantId, ct);
+        var llmRequest = PipelineDesignPrompt.BuildRequest(current, request, purpose, connectionTools, options.Value, prices.Model, MaxOutputTokens, models) with
         {
             TenantId = tenantId,
             ModelProfileId = prices.ProfileId ?? ModelProfiles.ServerId
@@ -76,6 +78,11 @@ public sealed class PipelineDesignService(
         if (proposal is null) return new PipelineProposal { BaseVersion = current?.Version ?? 0, Errors = [error!] };
 
         var applied = PipelineEditor.Apply(current ?? new PipelineDefinition(), proposal.Ops, options.Value);
+        if (applied.Pipeline?.Stages.Select(s => s.ModelProfileId).FirstOrDefault(m => m is not null && !models.Any(x => x.Id == m)) is { } unknown)
+        {
+            applied = applied with { Pipeline = null, Errors = [.. applied.Errors, $"There's no model '{unknown}'. Use one of: {string.Join(", ", models.Select(m => m.Id))}."] };
+        }
+
         return new PipelineProposal
         {
             BaseVersion = current?.Version ?? 0,
@@ -85,5 +92,17 @@ public sealed class PipelineDesignService(
             Errors = applied.Errors,
             Preview = applied.Pipeline
         };
+    }
+
+    /// <summary>The models a stage can run on: the server's and the organization's profiles.</summary>
+    public async Task<List<MentionableModel>> ModelsAsync(string tenantId, CancellationToken ct = default)
+    {
+        var org = await modelSettings.GetAsync(TenantIds.Normalize(tenantId), ct);
+        var server = modelSettings.Server;
+        return
+        [
+            new MentionableModel(ModelProfiles.ServerId, "Server default", server.Provider, server.Model),
+            .. org.Profiles.Select(p => new MentionableModel(p.Id, p.Name, p.Provider, string.IsNullOrEmpty(p.Model) ? server.Model : p.Model))
+        ];
     }
 }

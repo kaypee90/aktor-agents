@@ -55,6 +55,10 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// <summary>Applies edits (from the natural-language editor) to the pipeline at <paramref name="baseVersion"/>.</summary>
     Task<PipelineChangeResult> ApplyPipelineEdits(List<Pipelines.PipelineEditOp> ops, int baseVersion, string changedBy, string? note);
 
+    /// <summary>Places stages on the canvas: replaces the layout of the current version in place
+    /// (no new version, since runs don't depend on it). An empty layout lays it out automatically.</summary>
+    Task<Pipelines.PipelineDefinition?> SetPipelineLayout(Dictionary<string, Pipelines.StagePosition> layout);
+
     /// <summary>Makes an earlier version current again (as a new version).</summary>
     Task<PipelineChangeResult> RestorePipelineVersion(int version, string changedBy);
 

@@ -1,19 +1,24 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Button, ErrorBanner, Field, Modal, ago, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import { apiErrorMessage, applyPipelineEdits, getPipelineHistory, proposePipelineChange, restorePipelineVersion, savePipeline } from "@/lib/api";
-import type { PipelineDefinition, PipelineEditOp, PipelineProposal, PipelineRunView, StagePatch } from "@/lib/pipelineTypes";
+import { apiErrorMessage, applyPipelineEdits, getPipelineHistory, proposePipelineChange, restorePipelineVersion, savePipeline, savePipelineLayout } from "@/lib/api";
+import type { PipelineDefinition, PipelineEditOp, PipelineProposal, PipelineRunView, StagePatch, StagePosition } from "@/lib/pipelineTypes";
+import { MentionTextarea, stageMentionables, useModelMentionables } from "@/components/ui/MentionTextarea";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
-import { PipelineCanvas } from "./PipelineCanvas";
+import { PipelineCanvas, type CanvasEditing } from "./PipelineCanvas";
 import { NEW_STAGE, StageEditor } from "./StageEditor";
 
 const EXAMPLES = ["Add a fact checker after Research", "Add a reviewer before the last stage", "Remove the reviewer"];
 
+/** Where a stage being added goes: on a connection or at an end, or where it was dropped on the canvas. */
+type Insertion = { after?: string; before?: string; position?: StagePosition; inputs?: string[] };
+
 /**
  * The workspace's pipeline: describe a change in plain language (previewed on the canvas before
- * it's applied), or edit on the canvas directly. Every applied change is a new version, so any
+ * it's applied; @mention stages and models to be precise), or edit on the canvas directly: drag
+ * stages around, draw connections, drop in new agents. Every applied change is a new version, so any
  * change can be undone from the history. With a run selected, the canvas shows that run instead.
  */
 export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectAgent }: {
@@ -32,12 +37,14 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   const [busy, setBusy] = useState<"propose" | "apply" | "edit" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [inserting, setInserting] = useState<{ after?: string; before?: string } | null>(null);
+  const [inserting, setInserting] = useState<Insertion | null>(null);
   const [history, setHistory] = useState<PipelineDefinition[] | null>(null);
   const [settings, setSettings] = useState<Pick<PipelineDefinition, "max_run_minutes" | "max_concurrent_runs" | "result_urgency"> | null>(null);
 
   const editable = !archived && !proposal && !run;
   const shown = proposal?.preview ?? pipeline;
+  const models = useModelMentionables();
+  const mentionables = useMemo(() => [...stageMentionables(pipeline.stages), ...models], [pipeline.stages, models]);
   const nameOf = (id: string) => pipeline.stages.find((s) => s.stage_id === id)?.name ?? id;
 
   /** Applies edits to the version on screen; a conflict means someone else changed it first. */
@@ -91,10 +98,22 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
 
   async function addStage(stage: StagePatch & { name: string }) {
     if (!inserting) return;
+    const { inputs, ...where } = inserting;
     setBusy("edit");
-    if (await apply([{ op: "add_stage", stage, ...inserting }], pipeline.version)) setInserting(null);
+    if (await apply([{ op: "add_stage", stage: inputs ? { ...stage, inputs } : stage, ...where }], pipeline.version)) setInserting(null);
     setBusy(null);
   }
+
+  const editing = useMemo<CanvasEditing | null>(() => !editable ? null : {
+    onInsert,
+    onRemove,
+    onConnect: (from, to) => void apply([{ op: "connect", from, to }], pipeline.version),
+    onDisconnect: (from, to) => void apply([{ op: "disconnect", from, to }], pipeline.version),
+    onAddAt: (position, inputs) => setInserting({ position, inputs }),
+    onMove: (layout) => {
+      savePipelineLayout(workspaceId, layout).then(onChanged).catch((e) => setError(apiErrorMessage(e)));
+    },
+  }, [editable, onInsert, onRemove, apply, pipeline.version, workspaceId, onChanged]);
 
   async function updateStage(stageId: string, stage: StagePatch & { name: string }) {
     setBusy("edit");
@@ -168,12 +187,14 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
         ) : (
           <form onSubmit={(e) => { e.preventDefault(); void propose(request); }} className="flex items-center gap-2">
             <div className="relative min-w-0 flex-1">
-              <Icons.Sparkles className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-brand-500" />
-              <input
+              <Icons.Sparkles className="pointer-events-none absolute left-2.5 top-2 z-10 h-4 w-4 text-brand-500" />
+              <MentionTextarea
+                singleLine
                 value={request}
-                onChange={(e) => setRequest(e.target.value)}
+                onValueChange={setRequest}
+                mentionables={mentionables}
                 disabled={archived || busy === "propose"}
-                placeholder="Describe a change: add a security reviewer after Backend, run research in parallel…"
+                placeholder="Describe a change: add a security reviewer after @backend, use @default-model for @research… (@ to mention)"
                 className={cx(inputClass, "py-1.5 pl-8 text-xs")}
               />
             </div>
@@ -207,11 +228,9 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
           pipeline={shown}
           baseline={proposal ? pipeline : null}
           runStages={run?.stages ?? null}
-          editable={editable}
+          editing={editing}
           selectedStageId={selected}
           onSelectStage={setSelected}
-          onInsert={onInsert}
-          onRemove={onRemove}
         />
 
         {/* The selected stage: its settings, or its result in the run on screen. */}
@@ -247,6 +266,7 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
                   key={`${selectedStage.stage_id}:${pipeline.version}`}
                   stage={selectedStage}
                   stageNames={selectedStage.inputs.map(nameOf)}
+                  mentionables={mentionables}
                   submitLabel="Save stage"
                   busy={busy === "edit"}
                   onSubmit={(patch) => updateStage(selectedStage.stage_id, patch)}
@@ -265,11 +285,14 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
         title="Add a stage"
         description={inserting
           ? inserting.after && inserting.before ? `Between ${nameOf(inserting.after)} and ${nameOf(inserting.before)}.`
-            : inserting.after ? `After ${nameOf(inserting.after)}.` : `Before ${nameOf(inserting.before!)}.`
+            : inserting.after ? `After ${nameOf(inserting.after)}.`
+            : inserting.before ? `Before ${nameOf(inserting.before)}.`
+            : inserting.inputs?.length ? `Takes ${inserting.inputs.map(nameOf).join(", ")}'s result. Connect it onward by dragging from its right dot.`
+            : "Where you dropped it. Connect it by dragging between the stages' dots."
           : undefined}
       >
         {inserting && (
-          <StageEditor stage={NEW_STAGE} submitLabel="Add stage" busy={busy === "edit"} onSubmit={addStage} onCancel={() => setInserting(null)} />
+          <StageEditor stage={NEW_STAGE} submitLabel="Add stage" busy={busy === "edit"} onSubmit={addStage} onCancel={() => setInserting(null)} mentionables={mentionables} />
         )}
       </Modal>
 

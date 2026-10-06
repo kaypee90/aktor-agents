@@ -403,12 +403,32 @@ Remove the fact checker
 ### W4. Change it on the canvas
 
 **Check:**
+- [ ] Drag a stage somewhere else: it stays there after a reload, and the version number doesn't
+      change. **Tidy up** puts every stage back in automatic columns.
+- [ ] Drag from a stage's right dot to another stage: a connection appears and the second stage
+      lists the first as an input. Dragging from the last stage back to the first is refused (a loop).
+- [ ] Hover a connection and click its ×, or click it and press Delete: the connection goes.
+- [ ] Drag **New agent** onto an empty spot: "Add a stage" opens, and once added the stage sits
+      where you dropped it, unconnected. Drag from a stage's right dot to empty space: the new
+      stage takes that stage's result.
+- [ ] A stage's settings have a **Model** choice when the organization has more than one model;
+      the stage then shows the model's `@` badge.
 - [ ] Hovering a connection shows a **+**; clicking it opens "Add a stage" between those two
-      stages. Hovering the first stage shows + on its left; the last stage + on its right.
+      stages. Hovering the first stage shows + at its top left; the last stage + at its bottom right.
 - [ ] × on a stage removes it after a confirmation, and the stages around it are joined up.
 - [ ] Editing a stage's instructions and saving makes a new version; the next run uses it.
 - [ ] **Run settings**: lower runs at once to 1, start two runs quickly: the second shows
       **Queued** until the first finishes.
+
+### W4b. Mentions
+
+**Check:**
+- [ ] In "Describe a change", type `@`: agents (stages), models and providers are suggested; ↑/↓
+      and Enter pick one, and Enter doesn't submit while the list is open.
+- [ ] `Use @default-model for @<a stage>` (Mock LLM): the preview changes that stage's model.
+- [ ] In a stage's instructions, a run's input and the chat, `@` suggests the pipeline's stages.
+- [ ] In the task composer, `@` suggests models; picking one switches the model picker to it.
+- [ ] An email address such as `ops@example.com` opens no suggestions.
 
 ### W5. Triggers start runs
 

@@ -8,6 +8,7 @@ import type { TriggerView, WorkspaceFile, WorkspaceSnapshot } from "@/lib/worksp
 import { STATUS_STYLES } from "@/lib/status";
 import { useLiveList } from "@/lib/useLiveList";
 import { BotIcon } from "../BotIcon";
+import { MentionTextarea, stageMentionables } from "@/components/ui/MentionTextarea";
 import { EventStream } from "../EventStream";
 import { FilesPanel } from "./FilesPanel";
 import { WorkspaceChat } from "./WorkspaceChat";
@@ -284,8 +285,8 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
           )
         )}
         {(kind !== "watch" || mode === "run") && (
-          <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} rows={2}
-            placeholder={kind === "watch" ? "What the run should do with the matches" : "The run's input each time, e.g. Summarise yesterday's support tickets"} className={field} />
+          <MentionTextarea value={instruction} onValueChange={setInstruction} rows={2} mentionables={stageMentionables(workspace.pipeline?.stages ?? [])}
+            placeholder={kind === "watch" ? "What the run should do with the matches" : "The run's input each time, e.g. Summarise yesterday's support tickets"} className={`${field} block`} />
         )}
         {kind !== "webhook" && (
           <div className="grid grid-cols-2 gap-2">
