@@ -230,9 +230,33 @@ export interface AuditVerification {
 export interface WorkspaceTemplate {
   id: string;
   name: string;
+  /** Operations, Support, Research, Engineering, Sales, Marketing, Legal & finance, People… */
+  category: string;
   description: string;
   goal: string;
   autonomy: string;
+  /** What to try it with first (a webhook template's sample payload). */
+  sample_input: string | null;
+  stages: { stage_id: string; name: string; inputs: string[] }[];
   connections: { plugin_id: string; name: string; demo_only: boolean }[];
   webhooks: { name: string; sample_payload: string }[];
+  schedules: { name: string; cron: string }[];
+}
+
+/** A pipeline's shape in one line: stages that run together joined by ∥, levels by →. */
+export function pipelineShape(stages: { stage_id: string; name: string; inputs: string[] }[]): string {
+  const byId = new Map(stages.map((s) => [s.stage_id, s]));
+  const depth = new Map<string, number>();
+  const depthOf = (id: string, seen = new Set<string>()): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const inputs = byId.get(id)?.inputs.filter((i) => byId.has(i)) ?? [];
+    const d = inputs.length === 0 ? 0 : Math.max(...inputs.map((i) => depthOf(i, seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const levels: string[][] = [];
+  for (const s of stages) (levels[depthOf(s.stage_id)] ??= []).push(s.name);
+  return levels.filter(Boolean).map((l) => l.join(" ∥ ")).join(" → ");
 }

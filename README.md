@@ -428,9 +428,13 @@ does.
   questions to other stages. The runtime starts stages when their inputs are done, retries
   failures, and enforces a time limit per run and one **daily budget** per workspace.
 - Every run is a task with its own agent graph, files, events and result; results reach you in
-  the chat and on your channels.
+  the chat and on your channels. The **Live agents** canvas shows the agents of recent runs at
+  work; show only running runs, or hide and show any run.
+- **Templates** start you from real-world pipelines: incident response, support triage, market
+  research, pull request review, lead research, content production, weekly competitive
+  intelligence, contract review and candidate screening.
 
-See [docs/workspaces.md](docs/workspaces.md).
+See [docs/workspaces.md](docs/workspaces.md) and [docs/templates.md](docs/templates.md).
 
 ## 10b-3. Integrations and plugins
 

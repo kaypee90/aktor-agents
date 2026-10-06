@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
-import type { WorkspaceTemplate } from "@/lib/workspaceTypes";
+import Link from "next/link";
+import { pipelineShape, type WorkspaceTemplate } from "@/lib/workspaceTypes";
 
 // Deliberately varied: workspaces are generic, and these only seed the form. Each describes a
 // job to do again and again; the pipeline is drafted from it.
@@ -69,14 +70,12 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       {templates.length > 0 && (
         <div className="space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/40">
           <div className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">Start from a template</div>
-          {templates.map((t) => (
+          {templates.slice(0, 3).map((t) => (
             <div key={t.id} className="flex items-start gap-3 text-xs">
               <div className="flex-1">
                 <div className="font-medium">{t.name}</div>
                 <div className="text-zinc-600 dark:text-zinc-400">{t.description}</div>
-                <div className="mt-0.5 text-[11px] text-zinc-500">
-                  {t.autonomy} · webhooks: {t.webhooks.map((w) => w.name).join(", ") || "none"}
-                </div>
+                <div className="mt-0.5 text-[11px] text-zinc-500">{t.category} · {pipelineShape(t.stages)}</div>
               </div>
               <button
                 type="button"
@@ -88,6 +87,11 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
               </button>
             </div>
           ))}
+          {templates.length > 3 && (
+            <Link href="/templates" className="block text-[11px] font-medium text-emerald-800 hover:underline dark:text-emerald-200">
+              See all {templates.length} templates →
+            </Link>
+          )}
           <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
             <input type="checkbox" checked={useDemoSystem} onChange={(e) => setUseDemoSystem(e.target.checked)} />
             Connect the simulated production system, so it can be tried right away (add your real connections later)

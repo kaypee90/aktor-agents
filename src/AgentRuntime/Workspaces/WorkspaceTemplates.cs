@@ -9,6 +9,9 @@ public sealed record TemplateConnection(string PluginId, string Name, bool DemoO
 /// <summary>A webhook a template sets up, and an example payload to try it with.</summary>
 public sealed record TemplateWebhook(string Name, string Instruction, string SamplePayload);
 
+/// <summary>A schedule a template sets up: a 5-field UTC cron and the run's input each time.</summary>
+public sealed record TemplateSchedule(string Name, string Instruction, string Cron);
+
 /// <summary>
 /// A ready-made workspace: its purpose, its pipeline, safety policy, connections and triggers.
 /// The pipeline is a starting point the user can change like any other; inside each stage the
@@ -18,17 +21,22 @@ public sealed record WorkspaceTemplate
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
+    /// <summary>For grouping in the gallery: Operations, Support, Research, Engineering, Sales, ...</summary>
+    public required string Category { get; init; }
     public required string Description { get; init; }
     public required string Goal { get; init; }
+    /// <summary>An input to try the pipeline with straight away (a webhook template's is its sample payload).</summary>
+    public string? SampleInput { get; init; }
     public required Pipelines.PipelineDefinition Pipeline { get; init; }
     public required WorkspaceSafetyPolicy Safety { get; init; }
     public List<TemplateConnection> Connections { get; init; } = [];
     public List<TemplateWebhook> Webhooks { get; init; } = [];
+    public List<TemplateSchedule> Schedules { get; init; } = [];
     public int? DailyTokenLimit { get; init; }
     public decimal? DailyCostLimitUsd { get; init; }
 }
 
-public static class WorkspaceTemplates
+public static partial class WorkspaceTemplates
 {
     public const string IncidentResponseId = "incident-response";
 
@@ -55,6 +63,7 @@ public static class WorkspaceTemplates
     {
         Id = IncidentResponseId,
         Name = "Incident response",
+        Category = "Operations",
         Description = "Each alert runs a pipeline: triage, parallel investigation of logs, metrics and recent deploys, " +
                       "an incident report, and a proposed fix that waits for your approval.",
         Goal = "Investigate production incidents for the user's services and propose fixes, from each alert.",
@@ -128,7 +137,13 @@ public static class WorkspaceTemplates
         DailyCostLimitUsd = 10m
     };
 
-    public static IReadOnlyList<WorkspaceTemplate> All { get; } = [IncidentResponse];
+    // A property, not a field: the templates are spread over partial files, whose static
+    // initializers run in no guaranteed order.
+    public static IReadOnlyList<WorkspaceTemplate> All =>
+    [
+        IncidentResponse, SupportTriage, MarketResearch, PullRequestReview, LeadResearch,
+        ContentProduction, CompetitiveIntelligence, ContractReview, CandidateScreening
+    ];
 
     public static WorkspaceTemplate? Get(string id) => All.FirstOrDefault(t => t.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
 }

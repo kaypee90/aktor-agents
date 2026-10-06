@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AgentRuntime.Api.Controllers;
 
-/// <summary>Ready-made workspaces (docs/incident-response.md).</summary>
+/// <summary>Ready-made workspaces: real-world pipelines to start from (docs/templates.md).</summary>
 [ApiController]
 public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbContext db) : ControllerBase
 {
@@ -19,16 +19,21 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
     {
         id = t.Id,
         name = t.Name,
+        category = t.Category,
         description = t.Description,
         goal = t.Goal,
         autonomy = t.Safety.Autonomy.ToString(),
+        // What it would try first: a webhook's sample payload goes through the real webhook.
+        sample_input = t.SampleInput ?? t.Webhooks.FirstOrDefault()?.SamplePayload,
+        stages = t.Pipeline.Stages.Select(s => new { stage_id = s.StageId, name = s.Name, inputs = s.Inputs }),
         connections = t.Connections.Select(c => new { plugin_id = c.PluginId, name = c.Name, demo_only = c.DemoOnly }),
-        webhooks = t.Webhooks.Select(w => new { name = w.Name, sample_payload = w.SamplePayload })
+        webhooks = t.Webhooks.Select(w => new { name = w.Name, sample_payload = w.SamplePayload }),
+        schedules = t.Schedules.Select(s => new { name = s.Name, cron = s.Cron })
     }));
 
     /// <summary>
     /// Creates a workspace from a template: its goal, its pipeline, its safety policy (in force
-    /// before the first run), its webhooks, and, with use_demo_system, the simulated
+    /// before the first run), its webhooks and schedules, and, with use_demo_system, the simulated
     /// connections it needs to be tried right away. Returns the webhook URLs (they hold a secret).
     /// </summary>
     [HttpPost("api/workspaces/from-template")]
@@ -84,7 +89,15 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
             webhooks.Add(new { name = w.Name, ok = added.Success, message = added.Message, path });
         }
 
-        return Ok(new { workspace_id = id, template = template.Id, connections, webhooks });
+        var schedules = new List<object>();
+        foreach (var s in template.Schedules)
+        {
+            var added = await workspace.AddTrigger(new TriggerSpec { Kind = TriggerKind.Schedule, Name = s.Name, Instruction = s.Instruction, Cron = s.Cron },
+                "user", $"template:{id}:{s.Name}", revealSecret: false);
+            schedules.Add(new { name = s.Name, ok = added.Success, message = added.Message });
+        }
+
+        return Ok(new { workspace_id = id, template = template.Id, connections, webhooks, schedules, sample_input = template.SampleInput });
     }
 
     /// <summary>Sends the template's sample alert through the workspace's own webhook, exactly as

@@ -395,13 +395,13 @@ export function listWorkspaceTemplates() {
 /** A workspace from a template: its instructions, safety policy, webhooks and (with the demo
  * system) simulated connections. Returns the webhook paths, which hold a secret. */
 export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true) {
-  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[] }>("/api/workspaces/from-template", {
+  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[]; sample_input: string | null }>("/api/workspaces/from-template", {
     method: "POST",
     body: JSON.stringify({ template, name, use_demo_system: useDemoSystem }),
   });
 }
 
-/** Sends the template's sample alert through the workspace's own webhook. */
+/** Sends the template's sample event through the workspace's own webhook (starting a run). */
 export function simulateWorkspaceAlert(id: string) {
   return apiFetch<{ delivered: boolean }>(`/api/workspaces/${id}/simulate-alert`, { method: "POST", body: "{}" });
 }

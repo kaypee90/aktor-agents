@@ -20,6 +20,27 @@ const V_GAP = 72;
 const TERMINAL = new Set(["Completed", "Failed", "TimedOut", "Terminated"]);
 const isRun = (id: string | null | undefined) => !!id?.startsWith("run-");
 
+/** Which runs the viewer chose to see: remembered per workspace, in this browser only. */
+type RunFilter = { runningOnly: boolean; hidden: string[] };
+const filterKey = (workspaceId: string) => `aktor:teamFilter:${workspaceId}`;
+
+function readFilter(workspaceId: string): RunFilter {
+  try {
+    const raw = JSON.parse(localStorage.getItem(filterKey(workspaceId)) ?? "null") as Partial<RunFilter> | null;
+    return { runningOnly: raw?.runningOnly === true, hidden: Array.isArray(raw?.hidden) ? raw.hidden.filter((h) => typeof h === "string") : [] };
+  } catch {
+    return { runningOnly: false, hidden: [] };
+  }
+}
+
+function writeFilter(workspaceId: string, filter: RunFilter) {
+  try {
+    localStorage.setItem(filterKey(workspaceId), JSON.stringify(filter));
+  } catch {
+    // Storage unavailable: the choice lasts until the page is reloaded.
+  }
+}
+
 type Link = { from: string; to: string; label: string; color: string };
 
 const MESSAGE_KINDS: Record<string, { label: string; color: string }> = {
@@ -137,6 +158,17 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect }: {
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [showAllFinished, setShowAllFinished] = useState(false);
+  const [filter, setFilterState] = useState<RunFilter>(() => readFilter(workspace.workspace_id));
+  const setFilter = (next: RunFilter) => {
+    setFilterState(next);
+    writeFilter(workspace.workspace_id, next);
+  };
+  // Another workspace opened in the same view: its own remembered filter.
+  const [filterFor, setFilterFor] = useState(workspace.workspace_id);
+  if (filterFor !== workspace.workspace_id) {
+    setFilterFor(workspace.workspace_id);
+    setFilterState(readFilter(workspace.workspace_id));
+  }
   const container = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(0);
 
@@ -160,12 +192,42 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect }: {
     return () => clearInterval(timer);
   }, []);
 
+  // The runs on the canvas, newest first, and the run each agent belongs to.
+  const runs = useMemo(() => {
+    const numbers = new Map(workspace.runs.map((r) => [r.run_id, r.number]));
+    return workspace.agents.filter((a) => isRun(a.agent_id))
+      .map((a) => ({ id: a.agent_id, number: numbers.get(a.agent_id) ?? 0, finished: TERMINAL.has(a.status), status: a.status }))
+      .sort((a, b) => b.number - a.number);
+  }, [workspace.agents, workspace.runs]);
+  const runOf = useMemo(() => {
+    const parent = new Map(workspace.agents.map((a) => [a.agent_id, a.parent_agent_id]));
+    const root = (id: string): string | null => {
+      for (let cur: string | null | undefined = id, hops = 0; cur && hops < 20; cur = parent.get(cur), hops++) {
+        if (isRun(cur)) return cur;
+      }
+      return null;
+    };
+    return new Map(workspace.agents.map((a) => [a.agent_id, root(a.agent_id)]));
+  }, [workspace.agents]);
+  const hiddenRuns = useMemo(() => new Set([
+    ...filter.hidden,
+    ...(filter.runningOnly ? runs.filter((r) => r.finished).map((r) => r.id) : []),
+  ]), [filter, runs]);
+
   const { visibleAgents, hiddenFinished } = useMemo(() => {
     const recentlyFinished = (a: WorkspaceAgentView) =>
       !a.completed_at || now - Date.parse(a.completed_at) < FINISHED_VISIBLE_MS;
-    const shown = workspace.agents.filter((a) => !TERMINAL.has(a.status) || showAllFinished || recentlyFinished(a));
-    return { visibleAgents: shown, hiddenFinished: workspace.agents.length - shown.length };
-  }, [workspace.agents, showAllFinished, now]);
+    const inShownRun = workspace.agents.filter((a) => !hiddenRuns.has(runOf.get(a.agent_id) ?? ""));
+    const shown = inShownRun.filter((a) => !TERMINAL.has(a.status) || showAllFinished || recentlyFinished(a));
+    return { visibleAgents: shown, hiddenFinished: inShownRun.length - shown.length };
+  }, [workspace.agents, showAllFinished, now, hiddenRuns, runOf]);
+
+  const toggleRun = (runId: string) => {
+    const hidden = new Set(filter.hidden);
+    if (hidden.has(runId)) hidden.delete(runId); else hidden.add(runId);
+    // Only runs still on the canvas are remembered, so the list doesn't grow forever.
+    setFilter({ ...filter, hidden: [...hidden].filter((h) => runs.some((r) => r.id === h)) });
+  };
 
   const visibleIds = useMemo(() => new Set([USER_ID, ...visibleAgents.map((a) => a.agent_id)]), [visibleAgents]);
 
@@ -262,26 +324,51 @@ export function WorkspaceTeamView({ workspace, events, selectedId, onSelect }: {
         <span><span className="text-slate-400">┅</span> team</span>
       </div>
 
-      {hiddenFinished > 0 && (
-        <button
-          onClick={() => setShowAllFinished(true)}
-          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-        >
-          Show {hiddenFinished} earlier finished agent{hiddenFinished === 1 ? "" : "s"}
-        </button>
-      )}
-      {showAllFinished && (
-        <button
-          onClick={() => setShowAllFinished(false)}
-          className="absolute right-3 top-3 rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] text-zinc-600 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-        >
-          Hide earlier finished agents
-        </button>
+      {/* Which runs to show: running only, and any run on or off. */}
+      {(runs.length > 0 || hiddenFinished > 0 || showAllFinished) && (
+        <div className="absolute right-3 top-3 flex max-w-[60%] flex-wrap items-center justify-end gap-1.5 rounded-md bg-white/90 px-2 py-1.5 text-[11px] shadow-sm dark:bg-zinc-900/90">
+          {runs.length > 0 && (
+            <label className="flex cursor-pointer items-center gap-1.5 pr-1 font-medium text-zinc-700 dark:text-zinc-300" title="Hide runs that have finished">
+              <input type="checkbox" className="h-3 w-3 accent-brand-500" checked={filter.runningOnly}
+                onChange={(e) => setFilter({ ...filter, runningOnly: e.target.checked })} />
+              Running only
+            </label>
+          )}
+          {runs.map((r) => {
+            const shown = !hiddenRuns.has(r.id);
+            const lockedByFilter = filter.runningOnly && r.finished;
+            return (
+              <button key={r.id} onClick={() => !lockedByFilter && toggleRun(r.id)} disabled={lockedByFilter}
+                aria-pressed={shown}
+                title={lockedByFilter ? "Finished: hidden by Running only" : shown ? `Hide run #${r.number}` : `Show run #${r.number}`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 tabular-nums transition ${
+                  shown ? "border-zinc-300 bg-white text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                    : "border-dashed border-zinc-300 text-zinc-400 line-through dark:border-zinc-700"
+                } ${lockedByFilter ? "cursor-not-allowed opacity-50" : "hover:border-brand-400"}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${
+                  r.status === "Completed" ? "bg-emerald-500" : r.finished ? "bg-rose-500" : "animate-pulse bg-sky-500"}`} />
+                #{r.number}
+              </button>
+            );
+          })}
+          {hiddenFinished > 0 && (
+            <button onClick={() => setShowAllFinished(true)} className="rounded-full px-1.5 text-zinc-500 underline-offset-2 hover:underline">
+              +{hiddenFinished} earlier finished agent{hiddenFinished === 1 ? "" : "s"}
+            </button>
+          )}
+          {showAllFinished && (
+            <button onClick={() => setShowAllFinished(false)} className="rounded-full px-1.5 text-zinc-500 underline-offset-2 hover:underline">
+              Hide earlier finished agents
+            </button>
+          )}
+        </div>
       )}
 
       {visibleAgents.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-zinc-500">
-          No run in the last 30 minutes. Run the pipeline and its agents appear here as they work.
+          {runs.length > 0
+            ? "Every run is hidden. Turn off Running only, or click a run above to show it."
+            : "No run in the last 30 minutes. Run the pipeline and its agents appear here as they work."}
         </div>
       )}
     </div>

@@ -65,6 +65,7 @@ Cancelling stops every agent of the run and skips its unfinished stages.
   and clicking a stage edits its settings.
 - **Versions:** every applied change is a new version; an edit based on an older version is
   refused as a conflict. **History** restores any kept version (as a new version).
+- **From a template:** see [templates.md](templates.md) for nine real-world pipelines to start from.
 - **A new workspace** is drafted from its description by the same editor. If the model can't
   propose a valid pipeline, the workspace starts with one stage that does its purpose.
 
@@ -150,8 +151,9 @@ resets it). Sizes are remembered per browser.
   coloured arrows (task, done, question and answer, started), runs started by you and their
   results flow as arrows to and from you, and speech bubbles show what each agent last said or did
   (planning, saving a file, searching). Agents of runs that finished over 30 minutes ago drop off;
-  finished agents of recent runs are hidden behind "Show earlier finished agents". The tab counts
-  agents working now.
+  finished agents of recent runs are hidden behind "+N earlier finished agents". **Running only**
+  hides every finished run, and each run's chip (#12) hides or shows that run; the choice is
+  remembered per workspace in your browser. The tab counts agents working now.
 - **Center top, Pipeline:** the pipeline canvas, with "Describe a change", **History** and **Run
   settings** (time limit, runs at once, result urgency). With a run selected, the canvas shows that
   run: each stage's status, a pulsing marker on stages working now, and its result when clicked.

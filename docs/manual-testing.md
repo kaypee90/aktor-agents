@@ -511,6 +511,8 @@ and a skill under **Skills** with the scope set to the workspace.
       bubbles appear as they message each other, start helpers and use tools, and fade after about
       20 seconds; the run's result flows back to you as a green arrow.
 - [ ] The tab shows how many agents are working; clicking an agent opens its details.
+- [ ] With two or more runs on the canvas: **Running only** hides finished runs (their chips grey
+      out), clicking a run's chip hides or shows that run, and the choice survives a reload.
 - [ ] Reloading the page shows recent arrows and bubbles again, from history.
 - [ ] Opening a run from the runs list switches to **Pipeline** with that run's stages; switching
       back to Live agents keeps the canvas as it was.

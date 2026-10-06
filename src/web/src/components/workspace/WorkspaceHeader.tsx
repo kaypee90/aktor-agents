@@ -127,13 +127,13 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
           <div className="text-[11px] tabular-nums text-zinc-700 dark:text-zinc-300">{workspace.total_tokens.toLocaleString()} tokens · ${workspace.total_cost_usd.toFixed(4)}</div>
         </div>
         <div className="flex shrink-0 gap-2">
-          {workspace.template_id && workspace.status === "Active" && (
+          {workspace.template_id && workspace.status === "Active" && workspace.triggers.some((t) => t.kind === "Webhook") && (
             <button
               onClick={() => simulateWorkspaceAlert(workspace.workspace_id).finally(onChanged)}
-              title="Send the template's sample alert through this workspace's own webhook"
+              title="Send the template's sample event through this workspace's own webhook: it starts a run"
               className={btn}
             >
-              Simulate alert
+              {workspace.template_id === "incident-response" ? "Simulate alert" : "Send sample event"}
             </button>
           )}
           {workspace.status === "Active" && <button onClick={() => act("pause")} className={btn}>Pause</button>}
