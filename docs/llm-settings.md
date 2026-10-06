@@ -44,7 +44,10 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
   step**, with the model picker next to it). The steps before the fork are copied, so both runs share
   the same start and the diff shows how the models differ.
 
-Workspaces use the organization's default model.
+Workspaces use the organization's default model, and each pipeline stage can run on another one:
+pick it in the stage's settings (**Model**), or say so in plain language with mentions ("use
+`@claude-fast` for `@triage`"). Only models the organization has set up are accepted. A stage's
+helpers run on its model. See [workspaces.md](workspaces.md#mentions).
 
 ## Different models for different agents, in plain language
 
@@ -54,6 +57,10 @@ each model's id, name, "when to use it" note and prices), and `spawn_agent` take
 
 > Research the AI bookkeeping market. Use **Careful** for the market analysis, **Quick** for
 > collecting competitor pricing, and **Local Qwen** for anything touching our customer list.
+
+In the composer, type `@` to pick a model by its id: mentioning one also switches the task's model
+picker to it (a provider, such as `@anthropic`, picks that provider's first model if none is
+picked).
 
 The root agent spawns each specialist on the model named. When the goal says nothing, an agent can
 still pick one from the models' notes (a cheaper model for routine work, a stronger one for hard

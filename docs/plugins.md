@@ -118,6 +118,17 @@ Reference **`AgentRuntime.Plugins.Sdk`** (the `AktorAgents.Plugins.Sdk` package)
 
 Declare settings in the manifest (`Secret = true` for anything sensitive), give every tool an
 honest `SideEffects`, and pass `request.IdempotencyKey` to APIs that support idempotency.
+
+`ExecuteToolAsync` gets a `ToolExecutionRequest` stamped by the runtime, never by the agent:
+
+| Field | |
+|---|---|
+| `ToolName`, `ArgumentsJson` | The call (arguments come from the model: validate them) |
+| `AgentId`, `TaskId` | The calling agent and its task (a workspace run's id is `run-…`) |
+| `TenantId` | The agent's organization: scope anything you keep by it |
+| `WorkspaceId` | The agent's workspace, or null for a task agent: scope per-workspace data by it, not by `TaskId` |
+| `IdempotencyKey` | Stable across retries of the same call |
+| `GrantedPermissions` | What the runtime granted the agent |
 Constructor parameters are resolved from dependency injection (`IHttpClientFactory`, logging and
 so on).
 

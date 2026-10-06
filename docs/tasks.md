@@ -27,6 +27,9 @@ activity, result and estimate panels. Both views show the same task.
 
 The home page composer takes a goal, files (button, drag and drop, or paste), the model, and
 **Options** for budget, team shape and delivery. Enter runs it; Shift+Enter adds a new line.
+Type `@` to mention a model (`@claude-fast`, which also picks it for the task), a provider, or a
+skill (`@skill:report-style`, which the root agent loads before anything else); see
+[workspaces.md](workspaces.md#mentions).
 **Estimate cost** previews the team and cost first ([preview.md](preview.md)).
 
 Files picked before the task exists are uploaded straight away to a staging area

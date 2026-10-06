@@ -18,6 +18,17 @@ Shared knowledge belongs either to the whole organization or to one workspace:
 | A workspace's agents | The organization's knowledge, plus their workspace's own |
 | Another workspace's agents | Never this workspace's knowledge |
 
+"A workspace's agents" means every agent of its pipeline runs: the stage agents and the helpers
+they start. Each run is a task with its own id (`run-…`), so the runtime doesn't go by the task id:
+it stamps the agent's workspace on every tool call (`ToolExecutionRequest.WorkspaceId`), and
+`write_memory`, `read_memory`, `search_knowledge` and the skill tools scope by that. What a stage
+saves with `shared: true` is therefore found by later runs of the same workspace and by no other
+workspace; only `organization_wide: true` shares it with everyone.
+
+> Before this was fixed (October 2026), stage agents' shared entries were saved organization-wide.
+> Such entries show on the organization's **Shared memory** page with a stage agent's id
+> (`stg-…`) as their author; delete them there, or add them again to the workspace's knowledge.
+
 People add workspace knowledge from **Shared memory** with the **Scope** picker set to the
 workspace (or the workspace's **Skills & knowledge** tab), as text or files. Over the API, add
 `?workspace={id}` to `GET /api/memory`, `POST /api/memory` and `POST /api/memory/files`. A workspace
@@ -84,7 +95,8 @@ model:
 `WorkspaceScopeTests` (unit, through the agents' tools) and `WorkspaceScopeApiTests` (API and
 Postgres) check that a workspace's knowledge is found by its agents and by no task or other
 workspace, that `organization_wide` shares it with everyone, and that `?workspace=` keeps the
-organization's and the workspace's apart.
+organization's and the workspace's apart. `PipelineTests` checks it end to end: a stage shares a
+fact during a run, the workspace's next run finds it, and another workspace's run doesn't.
 
 ## Knowledge from files
 

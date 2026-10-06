@@ -51,7 +51,9 @@ sequenceDiagram
 3. Watch the run on the canvas:
    - Triage reads the alert, then the three investigators work at the same time;
    - Diagnose writes `incident-report.md` (it appears under **Files**, in `run-1/`);
-   - Remediate's rollback approval (`A1`) appears in the chat and the **Safety** tab.
+   - Remediate's rollback approval (`A1`) appears in the chat and the **Safety** tab, and wherever
+     you are in the dashboard: the sidebar bell counts it, a toast offers Approve and Reject, the
+     workspace shows a banner, and Remediate is marked **Needs approval** on the Live agents canvas.
 4. **Approve** (or reply `approve A1`). The rollback runs once, and the run's urgent result is
    posted (and forwarded to connected channels). **Reject** instead, and nothing changes in
    production; the result says so.
