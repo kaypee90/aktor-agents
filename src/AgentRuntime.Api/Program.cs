@@ -126,7 +126,7 @@ AgentRuntime.Api.Interop.A2aEndpoint.MapA2a(app);
 AgentRuntime.Api.Interop.AcpEndpoint.MapAcp(app);
 
 // Real-time event stream (CLAUDE.md sections 29, 31, 46) via Server-Sent Events.
-app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, string? taskId, CancellationToken ct) =>
+app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, AgentRuntime.Infrastructure.Persistence.AgentDbContext db, string? taskId, CancellationToken ct) =>
 {
     // Each viewer sees their own organization's events only.
     var tenant = http.Caller().TenantId;
@@ -134,12 +134,33 @@ app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, string? t
     http.Response.Headers.CacheControl = "no-cache";
     http.Response.Headers["X-Accel-Buffering"] = "no";
 
+    // A workspace's stream includes its pipeline runs' events (they're published under the run),
+    // so its live agent view sees their messages and tools: runs it knows of, and each new one as
+    // the workspace announces it.
+    var scopes = new HashSet<string>(StringComparer.Ordinal);
+    if (taskId is not null)
+    {
+        scopes.Add(taskId);
+        if (AgentRuntime.Workspaces.WorkspaceIds.IsWorkspace(taskId))
+        {
+            scopes.UnionWith(await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Tasks)
+                    .Where(t => t.TenantId == tenant && t.WorkspaceId == taskId && t.CompletedAt == null)
+                    .Select(t => t.TaskId), ct));
+        }
+    }
+
     await foreach (var evt in stream.Subscribe(ct))
     {
-        if (!AgentRuntime.Tenancy.TenantIds.Same(evt.TenantId, tenant) ||
-            (taskId is not null && !string.Equals(evt.TaskId, taskId, StringComparison.Ordinal)))
+        if (!AgentRuntime.Tenancy.TenantIds.Same(evt.TenantId, tenant)) continue;
+        if (taskId is not null)
         {
-            continue;
+            if (evt.Type == AgentRuntime.Contracts.RuntimeEventType.PipelineRunUpdated && evt.TaskId == taskId && evt.Data.GetValueOrDefault("run_id") is { } runId)
+            {
+                scopes.Add(runId);
+            }
+
+            if (evt.TaskId is null || !scopes.Contains(evt.TaskId)) continue;
         }
 
         var json = JsonSerializer.Serialize(evt, apiJsonOptions);

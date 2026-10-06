@@ -144,14 +144,23 @@ Every section is resizable: drag a divider (or focus it and use the arrow keys; 
 resets it). Sizes are remembered per browser.
 
 - **Left:** your workspaces.
-- **Center top:** the pipeline canvas, with "Describe a change", **History** and **Run settings**
-  (time limit, runs at once, result urgency). With a run selected, the canvas shows that run: each
-  stage's status, a pulsing marker on stages working now, and its result when clicked.
+- **Center top, Live agents:** the team at work, like the simulation map. You sit at the top, each
+  recent run below you, its stage agents below the run, and their helpers below them, joined by
+  dashed lines. For about 20 seconds after something happens, messages between agents animate as
+  coloured arrows (task, done, question and answer, started), runs started by you and their
+  results flow as arrows to and from you, and speech bubbles show what each agent last said or did
+  (planning, saving a file, searching). Agents of runs that finished over 30 minutes ago drop off;
+  finished agents of recent runs are hidden behind "Show earlier finished agents". The tab counts
+  agents working now.
+- **Center top, Pipeline:** the pipeline canvas, with "Describe a change", **History** and **Run
+  settings** (time limit, runs at once, result urgency). With a run selected, the canvas shows that
+  run: each stage's status, a pulsing marker on stages working now, and its result when clicked.
+  Both tabs stay loaded, so switching loses neither an unapplied change nor the live history.
 - **Center bottom:** **Run** with an input, and the runs, newest first, with pause, resume and
   cancel for runs in progress and a link to each run's full page.
-- **Right:** Chat, Agents (of runs in progress), Files, Skills & knowledge, Triggers (schedules,
-  webhooks, watches), Integrations, Safety and Events. Clicking an agent opens its details beside
-  the canvas.
+- **Right:** Chat, Agents (of recent runs), Files, Skills & knowledge, Triggers (schedules,
+  webhooks, watches), Integrations, Safety and Events. Clicking an agent, on either canvas or in
+  the list, opens its details beside the canvas.
 
 ## Workspaces made before pipelines
 
@@ -165,7 +174,7 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 |---|---|---|
 | `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?}`; without `pipeline`, one is drafted from `goal` |
 | `GET` | `/api/workspaces` | List |
-| `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of runs in progress, triggers, budget |
+| `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of recent runs (each run's own entry first), triggers, budget |
 | `GET` | `/api/workspaces/{id}/pipeline` | The pipeline |
 | `PUT` | `/api/workspaces/{id}/pipeline` | `{pipeline, base_version, note?}`: replace it (409 if it changed since `base_version`) |
 | `POST` | `/api/workspaces/{id}/pipeline/propose` | `{request}`: the editor's proposal (`ops`, `summary`, `changes`, `errors`, `preview`); changes nothing |
@@ -188,7 +197,8 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 
 MCP's `run_goal` and A2A take a `workspace`: the goal becomes the input of a run, and the run's id is
 the task id they report. The live event stream is `/ws/events?taskId={workspaceId}` (pipeline
-changes and run progress) or `?taskId={runId}` (one run's agents).
+changes, run progress, and its runs' agents' events) or `?taskId={runId}` (one run's agents).
+`/api/events?taskId={workspaceId}` includes the five most recent runs' events.
 
 ## Tests
 

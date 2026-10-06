@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BaseEdge,
   Background,
@@ -213,6 +213,18 @@ export function PipelineCanvas({
   onInsert?: (where: { after?: string; before?: string }) => void;
   onRemove?: (stageId: string) => void;
 }) {
+  // Re-fit when the canvas is resized (a divider dragged, a panel opened) or its stages change.
+  const container = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState("");
+  useEffect(() => {
+    const el = container.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setSize(`${Math.round(entry.contentRect.width / 40)}x${Math.round(entry.contentRect.height / 40)}`));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const { nodes, edges } = useMemo(() => {
     const removed = baseline ? baseline.stages.filter((b) => !pipeline.stages.some((s) => s.stage_id === b.stage_id)) : [];
     const positions = layoutStages(pipeline.stages);
@@ -274,7 +286,9 @@ export function PipelineCanvas({
   }, [pipeline, baseline, runStages, editable, selectedStageId, onInsert, onRemove]);
 
   return (
+    <div ref={container} className="h-full w-full">
     <ReactFlow
+      key={`${size}|${pipeline.stages.map((s) => s.stage_id).join(",")}`}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
@@ -291,5 +305,6 @@ export function PipelineCanvas({
       <Background gap={20} size={1} className="!bg-zinc-50 dark:!bg-zinc-950" />
       <Controls showInteractive={false} position="bottom-left" />
     </ReactFlow>
+    </div>
   );
 }

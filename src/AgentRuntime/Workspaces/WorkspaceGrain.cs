@@ -1282,12 +1282,13 @@ public sealed partial class WorkspaceGrain(
     {
         if (!Exists) return null;
 
-        // The agents of runs in progress (stages and their helpers); finished runs' agents are on the runs' pages.
-        var entries = await RunAgentsAsync(liveOnly: false);
+        // Recent runs and their agents (stages and helpers), for the live team view; older runs'
+        // agents are on the runs' own pages.
+        var entries = await RecentRunAgentsAsync();
         var agents = await Task.WhenAll(entries.Select(async e =>
         {
             AgentSnapshot? snap = null;
-            try { snap = await GrainFactory.GetGrain<IAgentGrain>(e.AgentId).GetSnapshot(); }
+            try { snap = await orchestrator.GetSnapshotAsync(e.AgentId); }
             catch (Exception ex) { logger.LogDebug(ex, "Snapshot of {AgentId} failed", e.AgentId); }
 
             return new WorkspaceAgentView

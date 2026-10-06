@@ -506,6 +506,14 @@ and a skill under **Skills** with the scope set to the workspace.
 
 ### W10. The workspace screen
 
+- [ ] **Live agents** (the default tab) draws you, then each recent run, its stage agents and their
+      helpers. While W2 runs: agents stay visible the whole time they work, arrows and speech
+      bubbles appear as they message each other, start helpers and use tools, and fade after about
+      20 seconds; the run's result flows back to you as a green arrow.
+- [ ] The tab shows how many agents are working; clicking an agent opens its details.
+- [ ] Reloading the page shows recent arrows and bubbles again, from history.
+- [ ] Opening a run from the runs list switches to **Pipeline** with that run's stages; switching
+      back to Live agents keeps the canvas as it was.
 - [ ] Every divider (workspace list, side panel, runs panel, agent details) can be dragged, moved
       with the arrow keys when focused, and reset with a double-click; sizes are kept after a reload.
 - [ ] Selecting a stage's agent opens its details beside the canvas without losing an unapplied

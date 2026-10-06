@@ -238,13 +238,24 @@ public sealed partial class WorkspaceGrain
         }
     }
 
-    private async Task<IReadOnlyList<AgentDirectoryEntry>> RunAgentsAsync(bool liveOnly)
+    /// <summary>How long a finished run stays on the live team view, and how many at most.</summary>
+    private static readonly TimeSpan RecentRunWindow = TimeSpan.FromMinutes(30);
+    private const int RecentRunsShown = 5;
+
+    /// <summary>Runs in progress and the few that finished lately, each with its agents (the run's
+    /// own entry first): what the workspace's live team view draws.</summary>
+    private async Task<IReadOnlyList<AgentDirectoryEntry>> RecentRunAgentsAsync()
     {
+        var cutoff = DateTimeOffset.UtcNow - RecentRunWindow;
+        var runIds = S.Runs.AsEnumerable().Reverse()
+            .Where(r => S.ActiveRunIds.Contains(r.RunId) || r.CompletedAt > cutoff)
+            .Take(Math.Max(RecentRunsShown, S.ActiveRunIds.Count))
+            .Select(r => r.RunId)
+            .ToList();
         var all = new List<AgentDirectoryEntry>();
-        foreach (var runId in S.ActiveRunIds)
+        foreach (var runId in runIds)
         {
-            all.AddRange((await Registry.FindAsync(new FindAgentsQuery { RootAgentId = runId }))
-                .Where(a => a.AgentId != runId && (!liveOnly || !IsTerminal(a.Status))));
+            all.AddRange((await Registry.FindAsync(new FindAgentsQuery { RootAgentId = runId })).OrderBy(a => a.Depth));
         }
 
         return all;

@@ -16,10 +16,22 @@ import { PipelinePanel } from "@/components/workspace/PipelinePanel";
 import { RunsPanel } from "@/components/workspace/RunsPanel";
 import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
+import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
 const POLL_MS = 2000;
 const MAX_EVENTS = 500;
 const LAST_KEY = "aktor:lastWorkspaceId";
+const VIEW_KEY = "aktor:workspaceView";
+
+type CenterView = "live" | "pipeline";
+
+function readView(): CenterView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "pipeline" ? "pipeline" : "live";
+  } catch {
+    return "live";
+  }
+}
 
 function remember(id: string | null) {
   try {
@@ -55,6 +67,17 @@ function Workspaces() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<PipelineRunView | null>(null);
   const [creating, setCreating] = useState(false);
+  // The centre shows the agents at work (live) or the pipeline (editing, or a run's stages).
+  const [view, setView] = useState<CenterView>(readView);
+  const changeView = useCallback((next: CenterView) => {
+    setView(next);
+    try { localStorage.setItem(VIEW_KEY, next); } catch { /* only costs the remembered choice */ }
+  }, []);
+  // Opening a run from the list shows its stages on the pipeline.
+  const selectRun = useCallback((runId: string | null) => {
+    setSelectedRunId(runId);
+    if (runId) changeView("pipeline");
+  }, [changeView]);
 
   const reloadList = useCallback(() => listWorkspaces().then(setWorkspaces).catch(() => {}), []);
 
@@ -216,13 +239,43 @@ function Workspaces() {
     // The run on the canvas: only once it's loaded (not a previously selected one).
     const shownRun = selectedRun?.run_id === selectedRunId ? selectedRun : null;
     // Every section can be resized: drag a divider, or focus it and use the arrow keys.
+    const working = workspace.agents.filter((a) => !a.agent_id.startsWith("run-") && ["Thinking", "Executing", "Spawning"].includes(a.status)).length;
+    const tab = (id: CenterView, label: React.ReactNode) => (
+      <button role="tab" aria-selected={view === id} onClick={() => changeView(id)}
+        className={cx("-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs transition-colors",
+          view === id ? "border-brand-500 font-medium text-zinc-900 dark:text-zinc-100" : "border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200")}>
+        {label}
+      </button>
+    );
+    // Both views stay mounted, so switching keeps an unapplied change and the live history.
     const center = (
       <Split direction="vertical" sized="second" initial={260} min={120} minOther={220} storageKey="workspace-runs" label="Resize the runs panel">
-        <PipelinePanel workspace={workspace} run={shownRun} onCloseRun={() => setSelectedRunId(null)} onChanged={refresh} onSelectAgent={setSelectedAgent} />
-        <RunsPanel workspace={workspace} selectedRun={shownRun} onSelectRun={setSelectedRunId} onChanged={() => { refresh(); refreshRun(); }} />
+        <div className="flex h-full flex-col">
+          <div role="tablist" className="flex shrink-0 items-center border-b border-zinc-200 px-2 dark:border-zinc-800">
+            {tab("live", <>
+              <Icons.Graph className="h-3.5 w-3.5" /> Live agents
+              {working > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />{working} working
+                </span>
+              )}
+            </>)}
+            {tab("pipeline", <><Icons.Workspaces className="h-3.5 w-3.5" /> Pipeline{shownRun && <span className="text-zinc-400">· run #{shownRun.number}</span>}</>)}
+          </div>
+          <div className="relative min-h-0 flex-1">
+            {/* Hidden by opacity, not visibility: React Flow sets its nodes visible itself. */}
+            <div aria-hidden={view !== "live"} className={cx("absolute inset-0", view !== "live" && "pointer-events-none opacity-0")}>
+              <WorkspaceTeamView workspace={workspace} events={events} selectedId={selectedAgent} onSelect={setSelectedAgent} />
+            </div>
+            <div aria-hidden={view !== "pipeline"} className={cx("absolute inset-0", view !== "pipeline" && "pointer-events-none opacity-0")}>
+              <PipelinePanel workspace={workspace} run={shownRun} onCloseRun={() => setSelectedRunId(null)} onChanged={refresh} onSelectAgent={setSelectedAgent} />
+            </div>
+          </div>
+        </div>
+        <RunsPanel workspace={workspace} selectedRun={shownRun} onSelectRun={selectRun} onChanged={() => { refresh(); refreshRun(); }} />
       </Split>
     );
-    const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onSelectRun={setSelectedRunId} onChanged={refresh} />;
+    const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onSelectRun={selectRun} onChanged={refresh} />;
     main = (
       <div className="flex h-full min-w-0 flex-col">
         <WorkspaceHeader workspace={workspace} onChanged={refresh} />

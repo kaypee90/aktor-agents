@@ -109,7 +109,7 @@ export function Split({
   const single = second === null || second === undefined || second === false;
 
   return (
-    <div ref={container} className={cx("flex min-h-0 min-w-0", horizontal ? "flex-row" : "flex-col", className)}>
+    <div ref={container} className={cx("flex h-full min-h-0 w-full min-w-0", horizontal ? "flex-row" : "flex-col", className)}>
       <div className={cx("min-h-0 min-w-0 overflow-hidden", sized === "first" && !single ? "shrink-0" : "flex-1")} style={sized === "first" && !single ? sizedStyle : undefined}>
         {first}
       </div>
