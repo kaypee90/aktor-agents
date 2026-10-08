@@ -320,7 +320,7 @@ produces.
     ([docs/analytics.md](docs/analytics.md)).
   - **Run history**: every run with its source (API, MCP, A2A, ACP, replay), status, agents and
     cost, with links to its graph and its journal (step through, replay, fork, diff).
-  - **Simulation**, **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
+  - **Studies** (research with your own data, below), **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
     snippets), and **Settings** (organization, members, AI models, API keys, usage and billing,
     your account).
 - **Result tab**: once the root agent finishes (Completed/Failed/Terminated/TimedOut), the run's
@@ -368,52 +368,42 @@ volume — all without restarting the containers. Existing agent grain activatio
 somehow still mid-turn) are simply left to idle out; nothing references their old ids once the
 registry and history are both cleared.
 
-## 10b. World simulation: agents living in a shared environment
+## 10b. Studies: research with your own data
 
-Besides goal-driven tasks, the runtime can host an open-ended **world** of autonomous residents
-that plan, talk and act on their own. Open **World simulation →** in the dashboard header
-(`/simulation`), describe a setting, and press *Create world and start*.
+**Studies** (`/studies`) puts an agent team on a research question with your data
+([docs/studies.md](docs/studies.md)). A study has its own **datasets** (CSV, Excel, Parquet, JSON:
+profiled on upload, with a share sealed as holdout), **documents** and **connections** (MCP
+servers and APIs, with secrets in the vault). Nothing is shared with other studies.
 
 ```mermaid
 flowchart LR
-    Seed[Seed description] --> Genesis[Genesis: LLM calls define_world]
-    Genesis --> World[WorldGrain<br/>clock, places, board, energy, votes]
-    World -- "tick: perception event" --> R1[Resident agent]
-    World -- "tick: perception event" --> R2[Resident agent]
-    R1 -- "say / move_to / give_energy / vote ..." --> World
-    R1 -- "talk_to (private message, wakes recipient)" --> R2
-    R2 -- "bring_new_agent" --> World
-    World --> R3[New resident]
+    Q[Question + sources] --> Lead[Lead agent]
+    Lead -- spawn --> M[Modelers] & R[Reviewer]
+    Lead & M -- "query_dataset / fit_model / run_analysis" --> Box[Python sandbox<br/>no network, data read-only]
+    M -- "run_simulation" --> Sim[Simulated population<br/>built from the data]
+    Box & Sim --> Ev[(Evidence ids)]
+    R -- review_model --> Reg[(Model registry)]
+    Lead -- "submit_report (cites evidence)" --> Check{Runtime checks}
+    Check --> Report[Report + data coverage + notebook]
 ```
 
-- **Genesis.** An LLM turns your description into locations and residents (persona, drives,
-  relationships) through a single structured `define_world` tool call.
-- **Residents are ordinary agent grains** with a world id. They get only world tools (no
-  filesystem, shell, network or `spawn_agent`), a per-resident spending cap, and short turns: each
-  tick's perception wakes them, they take a few actions, then call `end_turn` with a one-line plan.
-  Their LLM calls see only a sliding window of recent history (older memories go in
-  `note_to_self`), so cost per turn stays flat instead of growing over the world's lifetime.
-- **World actions** (all validated and charged by the `WorldGrain`, never by the LLM):
-  `look_around`, `move_to`, `say` (heard at your location), `talk_to` (private, wakes the recipient
-  at once), `post_to_board`, `give_energy`, `propose_removal`, `vote`, `bring_new_agent`,
-  `note_to_self`, `leave_world`, `end_turn`.
-- **Energy.** Every action costs energy; residents regain a little each tick. At 0 they go dormant
-  (their agent is paused, spending nothing) until another resident gives them energy.
-- **Removal is by vote.** A proposal needs a strict majority of the residents who were eligible
-  when it opened (minimum 3 voters) within 3 ticks. Nobody can remove anyone alone.
-- **Cost bound.** A world always ends at its tick limit or time limit, whichever comes first (both
-  clamped server-side), and ending it retires every resident. Pausing pauses every agent too.
-- **Insight.** The map shows who is where, speech bubbles, private-message and energy-gift arrows,
-  energy bars and lineage. The feed has *Conversations* (public and private speech, filterable),
-  *Minds* (each resident's stated plans and notes; structured summaries, never hidden
-  chain-of-thought), *Board*, *Votes* and *Raw events*. Clicking a resident shows its persona,
-  drives, notes, usage, and its full tool-call trace and messages.
-- **Mock provider.** With `LLM_PROVIDER=Mock` worlds run for free with randomised stand-in
-  behaviour, which is handy for trying the UI. Real personalities need a real provider.
-- **API:** `POST /api/worlds`, `GET /api/worlds`, `GET /api/worlds/{id}`,
-  `POST /api/worlds/{id}/pause|resume|end`. The live SSE feed is `/ws/events?taskId={worldId}`.
-  Snapshots are archived to the `Worlds` table every tick, so a world remains inspectable after a
-  restart. Rules live in the `Simulation` section of `appsettings.json`.
+- **Models decide, code computes.** Statistics (linear and logistic regression, ARIMA, anything
+  else in Python: scipy, statsmodels, sympy) run in a locked-down container; every result gets an
+  evidence id the report cites.
+- **The runtime enforces rigor:** citations must exist, a model counts only after another agent
+  accepts it, the holdout is scored only through `evaluate_on_holdout` (a few times per study),
+  every source needs a role in the data-use plan, and the run can't finish without an accepted
+  report.
+- **Experiments** replace the old world simulation: a population generated from your data reacts to
+  control and treatment scenarios, every decision becomes a dataset, and the runtime reports
+  effects, a calibration gap against the real rate, and low-diversity warnings.
+- **Analytics → Studies** tracks spend (agents vs. simulated participants), analyses, simulations,
+  data sources and evidence quality.
+- **Setup:** `docker compose up` builds the `aktor-analysis:1` image; locally run
+  `docker build -t aktor-analysis:1 docker/analysis`. With `LLM_PROVIDER=Mock` a study still runs
+  end to end (real statistics, scripted interpretation).
+
+Open-ended worlds (`/api/worlds`) remain available over the API but no longer have a page.
 
 ## 10b-2. Workspaces: reusable agent pipelines
 

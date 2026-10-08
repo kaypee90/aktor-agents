@@ -132,6 +132,14 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task<IReadOnlyList<Integrations.ConnectionView>> ListConnections();
 
+    /// <summary>What the workspace is made of, to clone it or export it as a template. Secrets are
+    /// included only with <paramref name="includeSecrets"/>, for a copy made inside this server.</summary>
+    Task<WorkspaceDefinition?> ExportDefinition(bool includeSecrets);
+
+    /// <summary>Deletes an archived workspace: its state, connections and their secrets. Its runs'
+    /// history and the audit log are kept.</summary>
+    Task<WorkspaceActionResult> Delete(string deletedBy);
+
     /// <summary>Enabled connection tools, for an agent's LLM call. Empty unless the workspace is active.</summary>
     [AlwaysInterleave]
     Task<IReadOnlyList<Integrations.ConnectionToolDescriptor>> GetConnectionTools();

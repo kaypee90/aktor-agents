@@ -187,6 +187,16 @@ public sealed class PostgresMemoryStore(
         return doomed.Select(ToRecord).ToList();
     }
 
+    public async Task<IReadOnlyList<(string Key, string AgentId)>> ListSharedKeysAsync(
+        string tenantId, MemoryScope scope, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.MemoryEntries.Where(m => m.TenantId == tenantId && m.Kind == nameof(MemoryKind.Shared));
+        query = scope.WorkspaceId is null ? query.Where(m => m.WorkspaceId == null) : query.Where(m => m.WorkspaceId == scope.WorkspaceId);
+        var rows = await query.OrderByDescending(m => m.CreatedAt).Select(m => new { m.Key, m.AgentId }).ToListAsync(cancellationToken);
+        return rows.Select(r => (r.Key, r.AgentId)).ToList();
+    }
+
     private static string BuildSearchSql(bool useVectors)
     {
         var vec = useVectors

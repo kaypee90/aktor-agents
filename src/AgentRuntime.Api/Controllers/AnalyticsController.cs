@@ -22,6 +22,8 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     private const string UnknownUser = "unknown";
     /// <summary>The source of a workspace pipeline's runs: shown in the Workspaces view, not Tasks.</summary>
     private const string PipelineSource = "pipeline";
+    /// <summary>Study runs are reported under Studies (docs/studies.md).</summary>
+    private const string StudySource = "study";
 
     private static readonly (string Label, double UpTo)[] DurationBuckets =
     [
@@ -60,10 +62,11 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         if (start >= end) return BadRequest(new { error = "from must be before to." });
         if (end - start > TimeSpan.FromDays(400)) return BadRequest(new { error = "Choose a range of at most 400 days." });
         if (status is not (null or "" or "running" or "completed" or "failed")) return BadRequest(new { error = "status is running, completed or failed." });
-        if (scope is not (null or "" or "tasks" or "workspaces")) return BadRequest(new { error = "scope is tasks or workspaces." });
+        if (scope is not (null or "" or "tasks" or "workspaces" or "studies")) return BadRequest(new { error = "scope is tasks, workspaces or studies." });
 
         var offset = TimeSpan.FromMinutes(Math.Clamp(-tzOffsetMinutes, -14 * 60, 14 * 60));
         if (scope == "workspaces") return Ok(await WorkspacesAsync(start, end, workspace, model, offset, ct));
+        if (scope == "studies") return Ok(await StudiesAsync(start, end, model, offset, ct));
 
         var tenant = access.TenantId;
         var runs = Filtered(tenant, start, end, source, status, q, model, user);
@@ -254,7 +257,8 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         string? user)
     {
         // Workspace pipelines' runs are tasks too, but they're reported with their workspaces.
-        var runs = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.CreatedAt >= start && t.CreatedAt < end && t.Source != PipelineSource);
+        var runs = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.CreatedAt >= start && t.CreatedAt < end
+                                                  && t.Source != PipelineSource && t.Source != StudySource);
         if (!string.IsNullOrWhiteSpace(source)) runs = runs.Where(t => t.Source == source);
         if (user == UnknownUser) runs = runs.Where(t => t.StartedBy == null);
         else if (!string.IsNullOrWhiteSpace(user)) runs = runs.Where(t => t.StartedBy == user);
@@ -381,6 +385,193 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
         }).ToList();
     }
 
+    /// <summary>
+    /// Studies (docs/studies.md): their runs, what they cost (agents vs. simulated participants),
+    /// analyses by method and their compute time, simulations and their calibration, data sources,
+    /// and the evidence quality of their reports. A run counts in the period it started in.
+    /// </summary>
+    private async Task<object> StudiesAsync(DateTimeOffset start, DateTimeOffset end, string? modelFilter, TimeSpan offset, CancellationToken ct)
+    {
+        var tenant = access.TenantId;
+        var studies = await db.Studies.AsNoTracking().Where(s => s.TenantId == tenant)
+            .Select(s => new { s.StudyId, s.Name, s.WorkspaceId }).ToListAsync(ct);
+        var byWorkspace = studies.ToDictionary(s => s.WorkspaceId);
+        var runQuery = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenant && t.Source == StudySource && t.CreatedAt >= start && t.CreatedAt < end);
+        if (!string.IsNullOrWhiteSpace(modelFilter)) runQuery = runQuery.Where(t => db.LlmCalls.Any(c => c.TaskId == t.TaskId && c.ProfileId == modelFilter));
+        var runs = await runQuery.OrderByDescending(t => t.CreatedAt).Take(MaxRuns)
+            .Select(t => new { t.TaskId, t.Goal, t.Status, t.Source, t.CreatedAt, t.CompletedAt, t.StartedBy, t.WorkspaceId }).ToListAsync(ct);
+        var ids = runs.Select(r => r.TaskId).ToList();
+        var studyIds = studies.Select(s => s.StudyId).ToList();
+
+        var perTask = (await db.Agents.AsNoTracking().Where(a => a.TenantId == tenant && ids.Contains(a.TaskId))
+                .GroupBy(a => a.TaskId)
+                .Select(g => new { TaskId = g.Key, Tokens = g.Sum(a => (long)a.TokensUsed), Cost = g.Sum(a => a.CostUsd), Agents = g.Count() })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.TaskId);
+        var calls = db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId));
+        // Simulated participants' calls are recorded with the run, so a run's cost includes them.
+        var simulationSpend = (await calls.Where(c => c.Purpose == "simulation").GroupBy(c => c.TaskId)
+                .Select(g => new { TaskId = g.Key, Tokens = g.Sum(c => (long)c.InputTokens + c.OutputTokens), Cost = g.Sum(c => c.CostUsd) })
+                .ToListAsync(ct))
+            .ToDictionary(x => x.TaskId);
+        var rows = runs.Select(t =>
+        {
+            perTask.TryGetValue(t.TaskId, out var usage);
+            simulationSpend.TryGetValue(t.TaskId, out var sim);
+            var goal = t.WorkspaceId is { } ws && byWorkspace.TryGetValue(ws, out var st) ? $"{st.Name}: {t.Goal}" : t.Goal;
+            return new Row(t.TaskId, goal, t.Status, t.Source, t.CreatedAt, t.CompletedAt is { } done ? (done - t.CreatedAt).TotalSeconds : null,
+                (usage?.Tokens ?? 0) + (sim?.Tokens ?? 0), (usage?.Cost ?? 0) + (sim?.Cost ?? 0), usage?.Agents ?? 0, t.StartedBy ?? UnknownUser);
+        }).ToList();
+        var finished = rows.Where(r => r.DurationS is not null).Select(r => r.DurationS!.Value).ToList();
+        var people = await PeopleAsync(tenant, rows.Select(r => r.StartedBy), ct);
+
+        // What the analyses ran: tool calls of the study tools, by tool, with their compute time.
+        var studyTools = AgentRuntime.Tools.AgentToolCatalog.StudyTools;
+        var tools = await db.ToolCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId))
+            .GroupBy(c => c.ToolName)
+            .Select(g => new { Tool = g.Key, Calls = g.Count(), Failures = g.Count(c => !c.Success), Avg = g.Average(c => (double?)c.DurationMs), Total = g.Sum(c => (long?)c.DurationMs) ?? 0 })
+            .ToListAsync(ct);
+        var models = await db.StudyModels.AsNoTracking().Where(m => studyIds.Contains(m.StudyId) && m.CreatedAt >= start && m.CreatedAt < end)
+            .Select(m => new { m.Method, m.Status, Holdout = m.HoldoutJson != null }).ToListAsync(ct);
+        var simulations = await db.StudySimulations.AsNoTracking().Where(x => studyIds.Contains(x.StudyId) && x.CreatedAt >= start && x.CreatedAt < end)
+            .Select(x => new { x.StudyId, x.Name, x.Participants, x.Decisions, x.CostUsd, x.SummaryJson, x.CreatedAt }).ToListAsync(ct);
+        double? GapOf(string json)
+        {
+            try { return System.Text.Json.Nodes.JsonNode.Parse(json)?["calibration"]?["gap"]?.GetValue<double>(); }
+            catch (Exception) { return null; }
+        }
+
+        int WarningsOf(string json)
+        {
+            try { return (System.Text.Json.Nodes.JsonNode.Parse(json)?["warnings"] as System.Text.Json.Nodes.JsonArray)?.Count ?? 0; }
+            catch (Exception) { return 0; }
+        }
+
+        var gaps = simulations.Select(x => GapOf(x.SummaryJson)).OfType<double>().Select(Math.Abs).ToList();
+        var datasets = await db.StudyDatasets.AsNoTracking().Where(d => studyIds.Contains(d.StudyId) && d.CreatedAt >= start && d.CreatedAt < end)
+            .Select(d => new { d.Kind, d.SizeBytes, d.Rows }).ToListAsync(ct);
+        var evidence = await db.StudyEvidence.AsNoTracking().Where(e => studyIds.Contains(e.StudyId) && e.CreatedAt >= start && e.CreatedAt < end)
+            .GroupBy(e => e.Kind).Select(g => new { Kind = g.Key, Count = g.Count() }).ToListAsync(ct);
+        var reports = await db.StudyReports.AsNoTracking().Where(r => ids.Contains(r.RunId)).Select(r => r.Json).ToListAsync(ct);
+        int supported = 0, interpretations = 0, simulated = 0;
+        foreach (var json in reports)
+        {
+            try
+            {
+                foreach (var f in System.Text.Json.Nodes.JsonNode.Parse(json)?["findings"] as System.Text.Json.Nodes.JsonArray ?? [])
+                {
+                    if (f?["status"]?.ToString() == "supported") supported++; else interpretations++;
+                    if (f?["simulated"]?.GetValue<bool>() == true) simulated++;
+                }
+            }
+            catch (Exception)
+            {
+                // A report that doesn't parse adds nothing.
+            }
+        }
+
+        var connectionCalls = tools.Where(t => t.Tool.Contains(AgentRuntime.Integrations.ConnectionNames.Separator)).ToList();
+        var hourly = end - start <= TimeSpan.FromDays(2);
+        object View(Row r) => new
+        {
+            task_id = r.TaskId, goal = r.Goal, status = r.DurationS is null ? "Running" : r.Status, created_at = r.CreatedAt,
+            duration_s = r.DurationS, tokens = r.Tokens, cost_usd = r.Cost, agents = r.Agents,
+            started_by = r.StartedBy, started_by_name = people[r.StartedBy].Name
+        };
+        return new
+        {
+            scope = "studies",
+            range = new { from = start, to = end, bucket = hourly ? "hour" : "day" },
+            truncated = runs.Count == MaxRuns,
+            totals = new
+            {
+                studies = studies.Count,
+                active_studies = runs.Select(r => r.WorkspaceId).Distinct().Count(),
+                runs = rows.Count,
+                completed = rows.Count(r => r.DurationS is not null && !FailedStatuses.Contains(r.Status)),
+                failed = rows.Count(r => r.DurationS is not null && FailedStatuses.Contains(r.Status)),
+                running = rows.Count(r => r.DurationS is null),
+                tokens = rows.Sum(r => r.Tokens),
+                cost_usd = rows.Sum(r => r.Cost),
+                avg_cost_usd = rows.Count == 0 ? 0 : rows.Average(r => r.Cost),
+                p50_duration_s = finished.Count == 0 ? (double?)null : Percentile(finished, 0.5),
+                p95_duration_s = finished.Count == 0 ? (double?)null : Percentile(finished, 0.95),
+                usage = await UsageAsync(calls, ct)
+            },
+            spend_by_stage = new[]
+            {
+                new { stage = "Agents (planning, analysis, review)", cost_usd = rows.Sum(r => r.Cost) - simulationSpend.Values.Sum(v => v.Cost), tokens = rows.Sum(r => r.Tokens) - simulationSpend.Values.Sum(v => v.Tokens) },
+                new { stage = "Simulated participants", cost_usd = simulationSpend.Values.Sum(v => v.Cost), tokens = simulationSpend.Values.Sum(v => v.Tokens) }
+            },
+            analyses = new
+            {
+                by_tool = tools.Where(t => studyTools.Contains(t.Tool)).OrderByDescending(t => t.Calls).Select(t => new
+                {
+                    tool = t.Tool, calls = t.Calls, failures = t.Failures, avg_duration_ms = t.Avg, total_duration_ms = t.Total
+                }),
+                models_by_method = models.GroupBy(m => m.Method).Select(g => new
+                {
+                    method = g.Key, models = g.Count(), accepted = g.Count(m => m.Status == "accepted"), rejected = g.Count(m => m.Status == "rejected"),
+                    candidates = g.Count(m => m.Status == "candidate"), holdout_scored = g.Count(m => m.Holdout)
+                }).OrderByDescending(x => x.models),
+                compute_ms = tools.Where(t => studyTools.Contains(t.Tool)).Sum(t => t.Total)
+            },
+            simulations = new
+            {
+                count = simulations.Count,
+                participants = simulations.Sum(x => x.Participants),
+                decisions = simulations.Sum(x => x.Decisions),
+                cost_usd = simulations.Sum(x => x.CostUsd),
+                calibrated = gaps.Count,
+                avg_calibration_gap = gaps.Count == 0 ? (double?)null : gaps.Average(),
+                warnings = simulations.Sum(x => WarningsOf(x.SummaryJson)),
+                recent = simulations.OrderByDescending(x => x.CreatedAt).Take(10).Select(x => new
+                {
+                    study = studies.FirstOrDefault(st => st.StudyId == x.StudyId)?.Name, name = x.Name, participants = x.Participants,
+                    decisions = x.Decisions, cost_usd = x.CostUsd, calibration_gap = GapOf(x.SummaryJson), created_at = x.CreatedAt
+                })
+            },
+            data_sources = new
+            {
+                datasets_added = datasets.Count(d => d.Kind != "simulated"),
+                bytes_added = datasets.Where(d => d.Kind != "simulated").Sum(d => d.SizeBytes),
+                rows_added = datasets.Where(d => d.Kind != "simulated").Sum(d => d.Rows),
+                connection_calls = connectionCalls.Sum(c => c.Calls),
+                connection_failures = connectionCalls.Sum(c => c.Failures),
+                by_connection = connectionCalls.GroupBy(c => c.Tool.Split(AgentRuntime.Integrations.ConnectionNames.Separator)[0])
+                    .Select(g => new { connection = g.Key, calls = g.Sum(c => c.Calls), failures = g.Sum(c => c.Failures), avg_duration_ms = g.Average(c => c.Avg) })
+                    .OrderByDescending(x => x.calls)
+            },
+            evidence = new
+            {
+                by_kind = evidence.OrderByDescending(e => e.Count).Select(e => new { kind = e.Kind, count = e.Count }),
+                reports = reports.Count,
+                findings_supported = supported,
+                findings_interpretation = interpretations,
+                findings_simulated = simulated,
+                reports_rejected = tools.Where(t => t.Tool == "submit_report").Sum(t => t.Failures),
+                reviews_accepted = models.Count(m => m.Status == "accepted"),
+                reviews_rejected = models.Count(m => m.Status == "rejected")
+            },
+            series = Series(rows, start, end, hourly, offset),
+            by_model = await ByModelAsync(calls, ct),
+            by_user = rows.GroupBy(r => r.StartedBy).Select(g => new
+            {
+                user = g.Key, name = people[g.Key].Name, kind = people[g.Key].Kind, runs = g.Count(), tokens = g.Sum(r => r.Tokens),
+                cost_usd = g.Sum(r => r.Cost), avg_cost_usd = g.Average(r => r.Cost),
+                failed = g.Count(r => r.DurationS is not null && FailedStatuses.Contains(r.Status)), last_run_at = g.Max(r => r.CreatedAt)
+            }).OrderByDescending(x => x.cost_usd).Take(50),
+            by_study = runs.GroupBy(r => r.WorkspaceId ?? string.Empty).Select(g =>
+            {
+                var st = byWorkspace.GetValueOrDefault(g.Key);
+                var these = rows.Where(r => g.Any(x => x.TaskId == r.TaskId)).ToList();
+                return new { study_id = st?.StudyId, name = st?.Name ?? "Deleted study", runs = these.Count, cost_usd = these.Sum(r => r.Cost), tokens = these.Sum(r => r.Tokens) };
+            }).OrderByDescending(x => x.cost_usd),
+            top_by_cost = rows.OrderByDescending(r => r.Cost).Take(10).Select(View),
+            slowest = rows.Where(r => r.DurationS is not null).OrderByDescending(r => r.DurationS).Take(10).Select(View)
+        };
+    }
+
     /// <summary>Model calls and their tokens by kind. A call's input tokens include the ones read
     /// from or written to the prompt cache; here input is the rest, so the four kinds add up to
     /// every token sent and received, each priced differently.</summary>
@@ -413,7 +604,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     private async Task<object> WorkspacesAsync(DateTimeOffset start, DateTimeOffset end, string? workspaceFilter, string? modelFilter, TimeSpan offset, CancellationToken ct)
     {
         var tenant = access.TenantId;
-        var workspaces = await db.Workspaces.AsNoTracking().Where(w => w.TenantId == tenant)
+        var workspaces = await db.Workspaces.AsNoTracking().Where(w => w.TenantId == tenant && w.Kind != "study")
             .Select(w => new { w.WorkspaceId, w.Name, w.Status }).ToListAsync(ct);
         var ids = workspaces.Select(w => w.WorkspaceId).Where(id => string.IsNullOrEmpty(workspaceFilter) || id == workspaceFilter).ToList();
 

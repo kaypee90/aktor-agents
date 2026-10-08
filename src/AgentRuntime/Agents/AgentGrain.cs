@@ -53,6 +53,7 @@ public sealed class AgentGrain(
     ILlmSettingsResolver llmSettings,
     ITaskModelSelection taskModels,
     LlmSettingsService modelSettings,
+    IToolEvidenceRecorder evidenceRecorder,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -960,6 +961,8 @@ public sealed class AgentGrain(
             }
 
             var toolElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(toolStarted);
+            // Inside a study, knowledge searches and connection calls become citable evidence.
+            if (s.WorkspaceId is not null && !s.IsReplaying) result = await evidenceRecorder.AttachAsync(toolRequest, result);
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
             if (!s.IsResident) await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
             s.InFlightToolCallIds.Remove(call.Id);

@@ -46,7 +46,12 @@ public sealed record StartTaskRequest
     public string? StartedBy { get; init; }
     /// <summary>Tool connections (MCP servers, APIs) the task's agents can use from their first step.</summary>
     public IReadOnlyList<Integrations.ConnectionRequest>? Connections { get; init; }
+    /// <summary>A study run (docs/studies.md): the task works inside the study's workspace with the
+    /// study tools. Set by <see cref="StudyService"/> only.</summary>
+    public StudyRunLaunch? Study { get; init; }
 }
+
+public sealed record StudyRunLaunch(string StudyId, string WorkspaceId);
 
 /// <summary>A task (or a workspace pipeline's run) as every protocol reports it.</summary>
 public sealed record TaskView
@@ -161,7 +166,7 @@ public sealed class TaskService(
         var modelProfileId = await CheckModelAsync(tenantId, request.ModelProfileId, ct);
         // Checked before the task exists, so an expired upload doesn't leave a task behind.
         var staged = request.UploadIds is { Count: > 0 } uploadIds ? uploads.Find(tenantId, uploadIds) : [];
-        var taskId = Guid.NewGuid().ToString("n");
+        var taskId = request.Study is null ? Guid.NewGuid().ToString("n") : Studies.StudyIds.NewRun();
 
         // Connected (and their tools discovered) before the task exists, so a server that can't be
         // reached is reported at once and leaves no task behind.
@@ -205,7 +210,8 @@ public sealed class TaskService(
                 CallbackUrl = request.CallbackUrl,
                 PreviewId = estimateJson is null ? null : request.PreviewId,
                 EstimateJson = estimateJson,
-                StartedBy = request.StartedBy
+                StartedBy = request.StartedBy,
+                WorkspaceId = request.Study?.WorkspaceId
             });
             await db.SaveChangesAsync(ct);
         }
@@ -240,7 +246,9 @@ public sealed class TaskService(
                 CorrelationId = correlationId,
                 TeamPolicy = request.TeamPolicy,
                 Replay = request.Replay,
-                InitialContext = initialContext
+                InitialContext = initialContext,
+                WorkspaceId = request.Study?.WorkspaceId,
+                ExtraTools = request.Study is null ? [] : [.. Tools.AgentToolCatalog.StudyTools]
             }, ct);
         }
         catch (InvalidOperationException ex)

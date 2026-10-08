@@ -794,6 +794,87 @@ public sealed partial class WorkspaceGrain(
         await ChangedAsync($"connection {c.Name} removed");
     }
 
+    public async Task<WorkspaceDefinition?> ExportDefinition(bool includeSecrets)
+    {
+        if (!Exists) return null;
+        var connections = new List<ConnectionRequest>();
+        var withoutSecrets = new List<string>();
+        foreach (var c in S.Connections.Values.OrderBy(c => c.CreatedAt))
+        {
+            var secrets = new Dictionary<string, string>();
+            if (includeSecrets)
+            {
+                foreach (var key in c.SecretKeys)
+                {
+                    if (await secretStore.GetAsync(ConnectionNames.Scope(S.WorkspaceId, c.ConnectionId), key) is { Length: > 0 } value) secrets[key] = value;
+                }
+            }
+            else if (c.SecretKeys.Count > 0)
+            {
+                withoutSecrets.Add(c.Name);
+            }
+
+            connections.Add(new ConnectionRequest
+            {
+                PluginId = c.PluginId,
+                Name = c.Name,
+                Settings = new Dictionary<string, string>(c.Settings),
+                Secrets = secrets,
+                NotifyLevel = c.NotifyLevel,
+                AllowedSenders = [.. c.AllowedSenders]
+            });
+        }
+
+        return new WorkspaceDefinition
+        {
+            Name = S.Name,
+            Goal = S.Goal,
+            TemplateId = S.TemplateId,
+            Pipeline = S.Pipeline,
+            SafetyPolicy = S.SafetyPolicy,
+            DailyTokenLimit = S.DailyTokenLimit,
+            DailyCostLimitUsd = S.DailyCostLimitUsd,
+            Triggers = S.Triggers.Values.OrderBy(t => t.CreatedAt).Select(t => new TriggerSpec
+            {
+                Kind = t.Kind,
+                Name = t.Name,
+                Instruction = t.Instruction,
+                EveryMinutes = t.IntervalSeconds is { } seconds ? seconds / 60.0 : null,
+                Cron = t.Cron,
+                Rule = t.Rule,
+                SourceTool = t.SourceTool,
+                SourceArgumentsJson = t.SourceArgumentsJson,
+                WatchMode = t.WatchMode,
+                MessageTemplate = t.MessageTemplate,
+                Urgency = t.Urgency
+            }).ToList(),
+            Connections = connections,
+            ConnectionsWithoutSecrets = withoutSecrets,
+            DisabledTools = S.Connections.Values.Where(c => c.Tools.Any(t => !t.Enabled))
+                .ToDictionary(c => c.Name, c => c.Tools.Where(t => !t.Enabled).Select(t => t.LocalName).ToList())
+        };
+    }
+
+    public async Task<WorkspaceActionResult> Delete(string deletedBy)
+    {
+        if (!Exists) return WorkspaceActionResult.Ok("Already deleted.");
+        if (S.Status != WorkspaceStatus.Archived) return WorkspaceActionResult.Fail("Archive the workspace before deleting it.");
+
+        var name = S.Name;
+        foreach (var connectionId in S.Connections.Keys.ToList())
+        {
+            await secretStore.DeleteScopeAsync(ConnectionNames.Scope(S.WorkspaceId, connectionId));
+        }
+
+        foreach (var trigger in S.Triggers.Values.ToList()) await UnregisterTriggerReminderAsync(trigger.TriggerId);
+        await AuditAsync("user", deletedBy, deletedBy, "workspace.deleted", name, "ok", "Workspace deleted with its connections and secrets",
+            key: $"workspace:{S.WorkspaceId}:deleted");
+        await PublishAsync(RuntimeEventType.WorkspaceChanged, $"Workspace '{name}' deleted.", new Dictionary<string, string> { ["change"] = "deleted" });
+        await state.ClearStateAsync();
+        DeactivateOnIdle();
+        return WorkspaceActionResult.Ok($"Workspace '{name}' deleted.");
+    }
+
     public Task<IReadOnlyList<ConnectionView>> ListConnections() =>
         Task.FromResult<IReadOnlyList<ConnectionView>>(S.Connections.Values.Select(ToView).ToList());
 

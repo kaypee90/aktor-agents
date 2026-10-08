@@ -50,7 +50,8 @@ public sealed class AgentOrchestrator(
         var effectiveBudget = _ceiling.Clamp(options.Budget ?? _defaultBudget.ToBudget());
         // "filesystem" so the root can write a final consolidated report before completing
         // (CLAUDE.md section 26/52 — the task should produce an inspectable final artifact).
-        var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"]);
+        var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"])
+            .Union(options.ExtraTools, StringComparer.OrdinalIgnoreCase).ToList();
         // Integrations: the tools of connections the task's owner adds (MCP servers, APIs). None
         // exist until the owner adds one, and the agent can't add any itself.
         var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
@@ -97,6 +98,7 @@ public sealed class AgentOrchestrator(
             JournalPath = "r",
             Replay = options.Replay,
             InitialContext = options.InitialContext,
+            WorkspaceId = options.WorkspaceId,
             AutoStart = true
         });
 
@@ -158,7 +160,9 @@ public sealed class AgentOrchestrator(
 
         ResourceBudget childBudget;
         WorkspacePolicy? policy = null;
-        if (parentSnapshot.WorkspaceId is { } workspaceId)
+        // A study run works inside its study's workspace (connections, knowledge, safety, daily budget)
+        // but organizes itself like a task: its budget splits down the tree and helpers may spawn.
+        if (parentSnapshot.WorkspaceId is { } workspaceId && !Studies.StudyIds.IsRun(parentSnapshot.TaskId))
         {
             // Inside a workspace the runtime funds agents from the workspace's policy (and caps
             // the whole workspace's daily spend), rather than splitting the parent's budget: a
@@ -223,7 +227,8 @@ public sealed class AgentOrchestrator(
         // A child can never see a tool the parent itself couldn't see, nor exercise a permission
         // the parent lacks — capability-based resolution is clamped by the parent's own grant
         // (CLAUDE.md section 44/51). Governance tools (spawn/message/etc.) are always available.
-        var inheritedWorkspaceTools = parentSnapshot.AllowedTools.Intersect(AgentToolCatalog.WorkspaceTools, StringComparer.OrdinalIgnoreCase);
+        var inheritedWorkspaceTools = parentSnapshot.AllowedTools
+            .Intersect(AgentToolCatalog.WorkspaceTools.Concat(AgentToolCatalog.StudyTools), StringComparer.OrdinalIgnoreCase);
         var childTools = FilterToolsByPermission(
             requestedTools.Intersect(parentSnapshot.AllowedTools.Concat(AgentToolCatalog.GovernanceTools), StringComparer.OrdinalIgnoreCase)
                 .Union(inheritedWorkspaceTools, StringComparer.OrdinalIgnoreCase)

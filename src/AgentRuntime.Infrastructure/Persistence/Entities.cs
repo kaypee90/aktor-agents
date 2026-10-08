@@ -241,6 +241,8 @@ public sealed class WorkspaceRecord
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string SnapshotJson { get; set; } = "{}";
+    /// <summary>"pipeline", or "study" for a study's workspace, which the Workspaces page doesn't list.</summary>
+    public string Kind { get; set; } = "pipeline";
 }
 
 /// <summary>An encrypted connection secret (see Secrets/SecretProtector). Never plaintext.</summary>

@@ -59,6 +59,19 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITaskModelSelection, Tasks.PostgresTaskModelSelection>();
         services.AddSingleton<AgentRuntime.Safety.IAuditLog, Persistence.PostgresAuditLog>();
 
+        // Studies (docs/studies.md): state in PostgreSQL, analyses in the Docker sandbox, files next
+        // to the agents' workspaces unless Studies:DataRoot says otherwise.
+        services.AddSingleton<Studies.EfStudyStore>();
+        services.AddSingleton<AgentRuntime.Studies.IStudyStore>(sp => sp.GetRequiredService<Studies.EfStudyStore>());
+        services.AddSingleton<AgentRuntime.Studies.IAnalysisSandbox, Studies.DockerAnalysisSandbox>();
+        services.PostConfigure<AgentRuntime.Studies.StudyOptions>(o =>
+        {
+            if (configuration[$"{AgentRuntime.Studies.StudyOptions.SectionName}:DataRoot"] is null)
+            {
+                o.DataRoot = Path.Combine(configuration["Tools:WorkspaceRoot"] ?? "./workspace", "studies");
+            }
+        });
+
         // Platform: accounts and access (docs/platform.md), and billing if a provider is configured.
         services.Configure<Identity.AuthOptions>(configuration.GetSection(Identity.AuthOptions.SectionName));
         services.AddSingleton<Identity.IdentityService>();

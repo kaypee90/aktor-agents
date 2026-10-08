@@ -2,7 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { apiErrorMessage, createWorkspaceFromTemplate, listWorkspaceTemplates, simulateWorkspaceAlert, startPipelineRun } from "@/lib/api";
+import {
+  apiErrorMessage,
+  createWorkspaceFromTemplate,
+  deleteWorkspaceTemplate,
+  importWorkspaceTemplate,
+  listWorkspaceTemplates,
+  simulateWorkspaceAlert,
+  startPipelineRun,
+  workspaceTemplateDownloadUrl,
+} from "@/lib/api";
+import { useAuth } from "@/components/platform/AuthProvider";
+import { atLeast, type Role } from "@/lib/platformTypes";
 import { pipelineShape, type WorkspaceTemplate } from "@/lib/workspaceTypes";
 import { Badge, Button, Card, ErrorBanner, Modal, PageHeader, Toggle, cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
@@ -58,10 +69,34 @@ export default function TemplatesPage() {
   const [tryIt, setTryIt] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { me } = useAuth();
+  const role = (me?.role ?? "Viewer") as Role;
 
   useEffect(() => {
     listWorkspaceTemplates().then(setTemplates).catch((e) => setError(apiErrorMessage(e)));
   }, []);
+
+  /** A template file someone downloaded from Templates (here or on another server). */
+  async function importFile(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    try {
+      const added = await importWorkspaceTemplate(await file.text());
+      setTemplates((t) => [...t, added]);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    }
+  }
+
+  async function removeTemplate(t: WorkspaceTemplate) {
+    if (!confirm(`Delete the template "${t.name}"? Workspaces made from it aren't affected.`)) return;
+    try {
+      await deleteWorkspaceTemplate(t.id);
+      setTemplates((all) => all.filter((x) => x.id !== t.id));
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    }
+  }
 
   const categories = useMemo(() => [...new Set(templates.map((t) => t.category))], [templates]);
   const shown = category ? templates.filter((t) => t.category === category) : templates;
@@ -93,6 +128,13 @@ export default function TemplatesPage() {
         <section>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h2 className="mr-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">Workspace templates</h2>
+            {atLeast(role, "Member") && (
+              <label className="order-last ml-auto inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                title="Add a template from a file downloaded from Templates">
+                <Icons.Upload className="h-3.5 w-3.5" /> Import template
+                <input type="file" accept=".json,application/json" className="hidden" onChange={(e) => { importFile(e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
+            )}
             {[null, ...categories].map((c) => (
               <button key={c ?? "all"} onClick={() => setCategory(c)}
                 className={cx("rounded-full border px-2.5 py-0.5 text-xs transition",
@@ -112,6 +154,7 @@ export default function TemplatesPage() {
                       <Icon className="h-5 w-5" />
                     </div>
                     <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">{t.category}</span>
+                    {t.custom && <Badge tone="brand" className="ml-auto">Yours</Badge>}
                   </div>
                   <div className="font-semibold text-zinc-900 dark:text-zinc-100">{t.name}</div>
                   <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{t.description}</p>
@@ -124,7 +167,23 @@ export default function TemplatesPage() {
                     {t.schedules.map((s) => <Badge key={s.name}>Schedule: {cronText(s.cron)}</Badge>)}
                     {t.connections.map((c) => <Badge key={c.name}>{c.demo_only ? "Demo " : ""}{c.name}</Badge>)}
                   </div>
-                  <Button className="mt-4" variant="primary" onClick={() => setChosen(t)}>Use template</Button>
+                  <div className="mt-4 flex items-center gap-2">
+                    <Button className="flex-1" variant="primary" onClick={() => setChosen(t)}>Use template</Button>
+                    {t.custom && (
+                      <>
+                        <a href={workspaceTemplateDownloadUrl(t.id)} title="Download as a file, to keep or to import on another server"
+                          className="rounded-lg border border-zinc-200 p-2 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 dark:border-zinc-700 dark:hover:bg-zinc-800">
+                          <Icons.Download className="h-4 w-4" />
+                        </a>
+                        {atLeast(role, "Admin") && (
+                          <button onClick={() => removeTemplate(t)} title="Delete this template"
+                            className="rounded-lg border border-zinc-200 p-2 text-zinc-500 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:hover:bg-rose-950/40">
+                            <Icons.Trash className="h-4 w-4" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </Card>
               );
             })}
@@ -160,7 +219,9 @@ export default function TemplatesPage() {
         onClose={() => setChosen(null)}
         wide
         title={chosen ? `Create "${chosen.name}"` : ""}
-        description="A starting point: change any stage, its safety policy, triggers and connections afterwards."
+        description={chosen?.custom
+          ? "Your organization's template: its pipeline, triggers, safety policy and integrations (an Admin's secrets for them aren't part of it, so add them under Integrations)."
+          : "A starting point: change any stage, its safety policy, triggers and connections afterwards."}
         footer={
           <>
             <Button onClick={() => setChosen(null)}>Cancel</Button>

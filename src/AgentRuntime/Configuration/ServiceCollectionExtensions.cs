@@ -38,6 +38,7 @@ public static class ServiceCollectionExtensions
         services.Configure<Pipelines.PipelineOptions>(configuration.GetSection(Pipelines.PipelineOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
         services.Configure<Tenancy.BillingOptions>(configuration.GetSection(Tenancy.BillingOptions.SectionName));
+        services.Configure<Studies.StudyOptions>(configuration.GetSection(Studies.StudyOptions.SectionName));
 
         services.AddSingleton<InMemoryEventBus>();
         services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<InMemoryEventBus>());
@@ -49,6 +50,26 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<Durability.IStepJournal, Durability.InMemoryStepJournal>();
         services.AddSingleton<Durability.RecordedLlmProvider>();
         services.AddSingleton<ToolRegistry>();
+
+        // Studies (docs/studies.md): in memory and without a sandbox by default; the infrastructure
+        // layer makes the store durable and runs analyses in Docker.
+        services.TryAddSingleton<Studies.IStudyStore, Studies.InMemoryStudyStore>();
+        services.TryAddSingleton<Studies.IAnalysisSandbox, Studies.UnavailableAnalysisSandbox>();
+        services.AddSingleton<Studies.StudySources>();
+        services.AddSingleton<Studies.StudyToolSupport>();
+        services.AddSingleton<Studies.ExperimentRunner>();
+        services.AddSingleton<ITool, Studies.StudySourcesTool>();
+        services.AddSingleton<ITool, Studies.QueryDatasetTool>();
+        services.AddSingleton<ITool, Studies.RecordHypothesisTool>();
+        services.AddSingleton<ITool, Studies.FitModelTool>();
+        services.AddSingleton<ITool, Studies.RunAnalysisTool>();
+        services.AddSingleton<ITool, Studies.ReviewModelTool>();
+        services.AddSingleton<ITool, Studies.EvaluateOnHoldoutTool>();
+        services.AddSingleton<ITool, Studies.SetSourceRoleTool>();
+        services.AddSingleton<ITool, Studies.RunSimulationTool>();
+        services.AddSingleton<ITool, Studies.SubmitReportTool>();
+        services.AddSingleton<IToolEvidenceRecorder, Studies.StudyEvidenceRecorder>();
+        services.AddSingleton<ICompletionGate, Studies.StudyCompletionGate>();
 
         // Governance tools: always available to every agent, independent of capabilities.
         services.AddSingleton<ITool, SpawnAgentTool>();
@@ -102,6 +123,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();
         services.AddSingleton<ISystemPromptSection, CompletionCriteriaSection>();
         services.AddSingleton<ISystemPromptSection, AnswerFormatSection>();
+        services.AddSingleton<ISystemPromptSection, Studies.StudyPromptSection>();
         services.AddSingleton<ISystemPromptSection, BehavioralRulesSection>();
         services.Configure<PromptOptions>(configuration.GetSection(PromptOptions.SectionName));
         services.AddSingleton<ISystemPromptSection, OperatorInstructionsSection>();

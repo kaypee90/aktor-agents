@@ -50,6 +50,11 @@ public sealed record TaskLaunchOptions
     [Id(4)] public Durability.ReplaySpec? Replay { get; init; }
     /// <summary>Context the root agent starts with besides its goal (e.g. excerpts of attached files).</summary>
     [Id(5)] public string? InitialContext { get; init; }
+    /// <summary>The root works inside this workspace (a study's): its connections, knowledge, safety
+    /// policy and daily budget apply to it and every agent it starts.</summary>
+    [Id(6)] public string? WorkspaceId { get; init; }
+    /// <summary>Tools the root gets beyond the defaults (a study's), inherited by its agents.</summary>
+    [Id(7)] public List<string> ExtraTools { get; init; } = [];
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>

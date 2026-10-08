@@ -249,8 +249,12 @@ export interface WorkspaceTemplate {
   sample_input: string | null;
   stages: { stage_id: string; name: string; inputs: string[] }[];
   connections: { plugin_id: string; name: string; demo_only: boolean }[];
-  webhooks: { name: string; sample_payload: string }[];
+  webhooks: { name: string; sample_payload: string | null }[];
   schedules: { name: string; cron: string }[];
+  /** One of the organization's own templates, made from a workspace (not built in). */
+  custom: boolean;
+  created_by?: string | null;
+  created_at?: string;
 }
 
 /** A pipeline's shape in one line: stages that run together joined by ∥, levels by →. */

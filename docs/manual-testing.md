@@ -1,6 +1,6 @@
 # Manual test prompts
 
-Prompts for testing Tasks, Simulation, Workspaces and the dashboard by hand. Each test says what it covers, the
+Prompts for testing Tasks, Studies, Workspaces and the dashboard by hand. Each test says what it covers, the
 prompt to use, and what to check. Run them in order within a section: later tests build on
 earlier ones.
 
@@ -22,7 +22,7 @@ model makes good decisions with the runtime's tools and limits.
   |---|---|
   | Tasks | the agent graph, the Activity and Result tabs, the agent details panel |
   | Analytics | the trend, what consumes the most, tools, durations, runs to look at |
-  | Simulation | the world map, the feed, resident details |
+  | Studies | sources, models, experiments, evidence and the report |
   | Workspaces | the team view, chat widget, and the Agents, Files, Triggers, Safety and Events tabs |
 
 A useful habit: for every spawn, read the `Why not itself:` reason in the event stream. A weak
@@ -239,101 +239,45 @@ server: `PORT=3005 npx -y @modelcontextprotocol/server-everything streamableHttp
 
 ---
 
-## Simulation
+## Studies
 
-A simulation is a world of resident agents with energy. They talk, move, trade energy, post on a
-board, vote to remove each other, bring in newcomers, or leave. The **seed** describes the world;
-the model generates the residents and places from it.
+A study researches a question with its own datasets, documents and connections
+([studies.md](studies.md)). It needs Docker and the analysis image
+(`docker build -t aktor-analysis:1 docker/analysis`).
 
-With a local model, keep populations small (3-5) and tick intervals long enough for the model to
-answer (20-30 s).
+### ST1. A question answered from a dataset
 
-### S1. A small town comes to life
+**Tests:** profiling, the sealed holdout, models, review, the report's checks.
 
-**Tests:** world generation, movement, public speech, private messages and notes.
+1. **Studies → New study**, name "Renewals", question "What drives lease renewals?".
+2. **Sources → Add dataset**: a CSV with a 0/1 `renewed` column and a few explanatory columns
+   (rent increase, tenure, unit type). Open it: columns, kinds, ranges and the sealed rows show;
+   write a meaning for `renewed` in the data dictionary and save.
+3. **Run study.**
 
-**Settings:** population 5, tick 20 s, max ticks 30.
+- [ ] The run's agents show under **Overview → Runs → Agents**.
+- [ ] **Models**: a fitted model with coefficients, intervals and diagnostics; it's accepted by a
+      different agent than its author, and has a holdout score.
+- [ ] **Report**: findings with evidence ids that open what was run; a data coverage table in which
+      every source has a role.
+- [ ] **Notebook** downloads a `.ipynb` with the queries and model code.
 
-```text
-A small coastal fishing village in 1920s Ghana, preparing for the annual harvest festival in
-three days. There is a harbour, a market, a chief's house and a church. Residents include
-fishermen, a trader, a schoolteacher, a priest and the chief's assistant. Everyone wants the
-festival to go well, but supplies are short and there is disagreement about how to share them.
-```
+### ST2. An experiment calibrated against real data
 
-**Check:**
-- [ ] The map shows the generated places, with residents inside them.
-- [ ] Residents move between places over the first few ticks.
-- [ ] Speech bubbles show public talk; private messages show as dashed bubbles and arrows.
-- [ ] The feed shows plans and notes that fit each resident's role.
-- [ ] Residents refer back to earlier events: continuity, not a new conversation every tick.
+**Tests:** simulation, calibration, simulated datasets.
 
-### S2. Scarcity, gifts and dormancy
+Run the study again with the instructions "Simulate an 8% rent increase against no increase,
+calibrated against the real renewal rate."
 
-**Tests:** the energy economy: costs per action, gifts, residents going dormant and being revived.
+- [ ] **Experiments**: shares per condition, the effect against the control, and the calibration gap.
+- [ ] **Sources → Simulated datasets** has the decisions; findings that rest on them are marked
+      *Simulated*.
 
-**Settings:** population 5, tick 15 s, max ticks 40.
+### ST3. Isolation and limits
 
-```text
-A mountain research station cut off by a blizzard. Food and heating fuel are running out, and
-everyone's energy drains faster than usual. Some residents are generous, some hoard supplies, and
-one is secretly ill. Help only arrives if everyone survives until the storm ends.
-```
-
-**Check:**
-- [ ] Energy bars fall with activity and regenerate slowly.
-- [ ] At least one resident **gives** energy to another (an orange "energy" arrow on the map).
-- [ ] A resident who runs out goes **dormant** (greyed out), and a gift **revives** them.
-- [ ] Hoarders and generous residents behave differently, consistent with their personas.
-
-### S3. Conflict and a vote
-
-**Tests:** proposals, voting windows, a removal (or a rejected proposal), and the board.
-
-**Settings:** population 6, tick 15 s, max ticks 40.
-
-```text
-A startup of six co-founders in a shared office. One of them keeps taking credit for others'
-work and missed three investor meetings. The others must decide, using the notice board and
-private conversations, whether to vote them out before the funding deadline. Some are loyal to
-them, some are furious.
-```
-
-**Check:**
-- [ ] Residents post on the notice board.
-- [ ] Someone proposes a removal, and others vote within the voting window.
-- [ ] The outcome follows the votes: the resident is **removed** (listed under Departed), or the
-      proposal is **rejected**.
-- [ ] Private lobbying happens before the vote (private messages between residents).
-
-### S4. Growth and departure
-
-**Tests:** bringing newcomers into the world, leaving, and the population limit.
-
-**Settings:** population 3, tick 20 s, max ticks 40.
-
-```text
-A new colony on Mars with three founders. The colony needs more people with specific skills
-(a doctor, an engineer, a botanist) and the founders can invite them. Life is hard, and anyone
-who loses hope may take the next ship home.
-```
-
-**Check:**
-- [ ] Founders **bring** newcomers, who appear with a dashed lineage line to whoever invited them.
-- [ ] Newcomers start with less energy than the founders.
-- [ ] If someone **leaves**, they appear under Departed as "left".
-- [ ] The population never exceeds the configured maximum.
-
-### S5. Lifecycle controls
-
-**Tests:** pause, resume, end, and reopening a finished world.
-
-**Check:**
-- [ ] Pausing stops ticks; resuming continues from the same tick.
-- [ ] The world ends at max ticks or max duration, and residents are retired.
-- [ ] Reloading the page (or `?world=<id>`) reopens the world with its full feed.
-
----
+- [ ] Another study doesn't see this study's datasets, documents or connections.
+- [ ] A connected tool that changes something asks for approval.
+- [ ] **Analytics → Studies** shows the runs, the analyses, the simulation and the evidence quality.
 
 ## Workspaces
 

@@ -196,6 +196,12 @@ public sealed class TaskChatApiTests(ApiTestHostFixture fixture, ITestOutputHelp
         Assert.Equal(HttpStatusCode.NoContent, (await api.PostAsJsonAsync("/api/memory", new { key = "Office hours", value = "9 to 5" })).StatusCode);
         var entries = await All(api);
         Assert.Equal(3, entries.Count(e => e.GetProperty("file_name").GetString() == "terms.md"));
+        // The summary counts a file once, however many passages it has.
+        var summary = await Json(await api.GetAsync("/api/memory/summary"));
+        Assert.Equal(4, summary.GetProperty("entries").GetInt32());
+        Assert.Equal(1, summary.GetProperty("files").GetInt32());
+        Assert.Equal(1, summary.GetProperty("facts").GetInt32());
+        Assert.Equal("terms.md", summary.GetProperty("file_names")[0].GetString());
 
         // Uploading a shorter version replaces the file: no stale third passage is left behind.
         var two = Encoding.UTF8.GetBytes(Paragraphs(4, "Revised"));

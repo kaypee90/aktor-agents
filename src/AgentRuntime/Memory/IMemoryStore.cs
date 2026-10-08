@@ -52,6 +52,25 @@ public interface IMemoryStore
     Task<IReadOnlyList<MemoryRecord>> DeleteSharedAsync(
         string tenantId, MemoryScope scope, IReadOnlyCollection<string>? memoryIds = null, string? fileName = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The keys and authors of every shared entry in exactly <paramref name="scope"/>, newest
+    /// first, for counting what a workspace or the organization knows (search is capped).</summary>
+    Task<IReadOnlyList<(string Key, string AgentId)>> ListSharedKeysAsync(
+        string tenantId, MemoryScope scope, CancellationToken cancellationToken = default);
+}
+
+/// <summary>What a scope's shared knowledge holds: files people added, facts people typed, and
+/// entries agents saved.</summary>
+public sealed record KnowledgeSummary(int Entries, int Files, int Facts, int FromAgents, IReadOnlyList<string> FileNames)
+{
+    public static KnowledgeSummary Of(IReadOnlyList<(string Key, string AgentId)> entries)
+    {
+        var byPeople = entries.Where(e => e.AgentId == "user").ToList();
+        var files = byPeople.Select(e => KnowledgeFiles.FileOf(e.Key) ?? (KnowledgeFiles.LooksLikeFile(e.Key) ? e.Key : null))
+            .Where(f => f is not null).Select(f => f!).Distinct().ToList();
+        var facts = byPeople.Count(e => KnowledgeFiles.FileOf(e.Key) is null && !KnowledgeFiles.LooksLikeFile(e.Key));
+        return new KnowledgeSummary(entries.Count, files.Count, facts, entries.Count - byPeople.Count, files);
+    }
 }
 
 /// <summary>
@@ -69,6 +88,12 @@ public static partial class KnowledgeFiles
 
     /// <summary>Whether the entry with this key is (a passage of) the file.</summary>
     public static bool IsPassageOf(string key, string fileName) => key == fileName || FileOf(key) == fileName;
+
+    /// <summary>A key that reads as a file name ("notes.md"): a file that fit in one passage.</summary>
+    public static bool LooksLikeFile(string key) => FileExtension().IsMatch(key);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\.[A-Za-z0-9]{1,5}$")]
+    private static partial System.Text.RegularExpressions.Regex FileExtension();
 
     [System.Text.RegularExpressions.GeneratedRegex(@" \(part \d+ of \d+\)$")]
     private static partial System.Text.RegularExpressions.Regex PartSuffix();

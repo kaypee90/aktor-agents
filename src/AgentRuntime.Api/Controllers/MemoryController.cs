@@ -67,6 +67,17 @@ public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider emb
         }));
     }
 
+    /// <summary>How much knowledge this scope holds: files, typed facts and agents' entries, with
+    /// the file names. For counts on the dashboard; search results are capped.</summary>
+    [HttpGet("summary")]
+    public async Task<IActionResult> Summary(CancellationToken ct)
+    {
+        var (ok, ws) = await ScopeAsync();
+        if (!ok) return NotFound();
+        var s = KnowledgeSummary.Of(await memory.ListSharedKeysAsync(access.TenantId, ScopeOf(ws), ct));
+        return Ok(new { entries = s.Entries, files = s.Files, facts = s.Facts, from_agents = s.FromAgents, file_names = s.FileNames.Take(50) });
+    }
+
     /// <summary>Deletes one knowledge entry. Agents stop finding it at once.</summary>
     [HttpDelete("{memoryId}")]
     [Authorize(Policies.Admin)]

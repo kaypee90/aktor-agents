@@ -74,6 +74,12 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             return Task.FromResult(MockWorldBehavior.Resident(request));
         }
 
+        // Studies: simulated participants decide; study agents follow the study flow.
+        if (MockStudyBehavior.IsParticipant(request))
+        {
+            return Task.FromResult(MockStudyBehavior.Participant(request));
+        }
+
         // Workspace pipelines: the natural-language editor, and the stages' agents.
         if (MockPipelineBehavior.IsDesignRequest(request))
         {
@@ -90,6 +96,11 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
         // The goal as written: the section goes on with attached files and follow-ups after a blank line.
         var goal = ExtractSection(systemText, "## GOAL")?.Split("\n\n", 2)[0].Trim() ?? "the assigned goal";
         var isRoot = role.Contains("Root", StringComparison.OrdinalIgnoreCase);
+
+        if (MockStudyBehavior.IsStudyAgent(request))
+        {
+            return Task.FromResult(MockStudyBehavior.Agent(request, systemText, isRoot, goal));
+        }
 
         var priorToolCalls = request.Messages
             .Where(m => m.Role == ChatRole.Assistant && m.ToolCalls is { Count: > 0 })

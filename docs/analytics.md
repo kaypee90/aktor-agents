@@ -1,8 +1,8 @@
 # Analytics
 
 **Analytics** in the dashboard sidebar (under Observe) shows where an organization's tokens and
-money go, which models and tools are worth it, and what takes long. It has two views: **Tasks** and
-**Workspaces**. Everything is per organization.
+money go, which models and tools are worth it, and what takes long. It has three views: **Tasks**,
+**Workspaces** and **Studies**. Everything is per organization.
 
 ## Tasks
 
@@ -31,6 +31,20 @@ money go, which models and tools are worth it, and what takes long. It has two v
 | **Runs to look at** | The most expensive and the slowest runs, with their workspace and who started them, linking to each run's agent graph. |
 | **What consumes the most** | Tokens or spend by agent role: pipeline stages and their helpers. |
 | **Usage**, **Tools** and **By model** | As for tasks. |
+
+## Studies
+
+| Panel | Answers |
+|---|---|
+| **Spend, runs, median run time, models fitted, simulated decisions, supported findings** | The headline figures for studies' runs ([studies.md](studies.md)). |
+| **Over time** and **Usage** | As for tasks; Usage also splits spend between agents and simulated participants, and shows the sandbox's compute time. |
+| **Analyses** | Models by method with their reviews (accepted, rejected) and holdout scores, and the study tools' calls. |
+| **Evidence quality** | Reports, reports the runtime refused, findings citing evidence vs. interpretation, findings resting on simulations, and evidence by kind. |
+| **Simulations** | Experiments, decisions and cost, how many were calibrated against real data, the average calibration gap and the warnings. |
+| **Data sources** | Datasets, rows and data added, and calls to the studies' connections. |
+| **By study**, **By user**, **By model**, **Runs to look at** | As for tasks. |
+
+Study runs are reported here, not under Tasks. A run's spend includes its simulated participants.
 
 ## Filters
 
@@ -61,7 +75,7 @@ workspace. Filters live in the page's URL, so a filtered view can be bookmarked 
 
 ## API
 
-`GET /api/analytics?range=7d` (or `from=…&to=…`), with optional `scope` (`tasks` or
-`workspaces`), `model` (a model id), `source`, `status` (`running`, `completed`, `failed`), `user` (a
+`GET /api/analytics?range=7d` (or `from=…&to=…`), with optional `scope` (`tasks`,
+`workspaces` or `studies`), `model` (a model id), `source`, `status` (`running`, `completed`, `failed`), `user` (a
 `by_user[].user` value: a user id, `key:<id>`, or `unknown`) and `q` (goal search) for tasks, `workspace` for workspaces, and `tz_offset_minutes` (as JavaScript's
 `getTimezoneOffset()`, for day boundaries). Any member of the organization can read it.

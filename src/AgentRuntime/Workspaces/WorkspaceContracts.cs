@@ -163,6 +163,29 @@ public sealed record WorkspaceActionResult
     public static WorkspaceActionResult Fail(string message) => new() { Success = false, Message = message };
 }
 
+/// <summary>
+/// What a workspace is made of, without anything it did (no chat, runs, files or history): enough
+/// to clone it or to export it as a template (docs/workspaces.md).
+/// </summary>
+[GenerateSerializer]
+public sealed record WorkspaceDefinition
+{
+    [Id(0)] public required string Name { get; init; }
+    [Id(1)] public string Goal { get; init; } = string.Empty;
+    [Id(2)] public string? TemplateId { get; init; }
+    [Id(3)] public Pipelines.PipelineDefinition? Pipeline { get; init; }
+    [Id(4)] public Safety.WorkspaceSafetyPolicy SafetyPolicy { get; init; } = new();
+    [Id(5)] public int DailyTokenLimit { get; init; }
+    [Id(6)] public decimal DailyCostLimitUsd { get; init; }
+    [Id(7)] public List<TriggerSpec> Triggers { get; init; } = [];
+    /// <summary>Each connection's plugin, name, settings and, only when asked for, its secrets.</summary>
+    [Id(8)] public List<Integrations.ConnectionRequest> Connections { get; init; } = [];
+    /// <summary>Connections that have secrets which weren't included.</summary>
+    [Id(9)] public List<string> ConnectionsWithoutSecrets { get; init; } = [];
+    /// <summary>Tools switched off per connection (by connection name), kept off in a copy.</summary>
+    [Id(10)] public Dictionary<string, List<string>> DisabledTools { get; init; } = [];
+}
+
 [GenerateSerializer]
 public sealed record BudgetDecision
 {

@@ -32,6 +32,24 @@ Common choices across them:
   ideal customer profile, a legal playbook, a brand voice or a role's requirements. Add them under
   **Skills & knowledge** and every run uses them.
 
+## Your organization's templates
+
+**Save as template** on a workspace adds it to **Templates** for everyone in the organization,
+marked *Yours*: its goal, pipeline, triggers, safety policy, daily budget and the list of
+integrations, without secrets, knowledge, runs or files. Creating a workspace from it works like a
+built-in template; integrations are added for Admins (an integration that needs a secret reports
+that it needs one, and is added again under **Integrations** with it).
+
+- **Download** saves a template as a JSON file; **Import template** adds one from such a file, e.g.
+  on another server. A file never carries secrets, whatever it contains.
+- Admins can delete the organization's templates; workspaces made from one aren't affected.
+
+API: `POST /api/workspaces/{id}/export-template` (`{name, description, category}`),
+`GET /api/workspace-templates/{id}/download`, `POST /api/workspace-templates/import` (the file as the
+body), `DELETE /api/workspace-templates/{id}` (Admin). `GET /api/workspace-templates` lists built-in
+templates, then the organization's (`custom: true`), and `POST /api/workspaces/from-template`
+takes either id.
+
 ## Adding a template
 
 Templates live in `src/AgentRuntime/Workspaces/WorkspaceTemplates.cs` (incident response) and

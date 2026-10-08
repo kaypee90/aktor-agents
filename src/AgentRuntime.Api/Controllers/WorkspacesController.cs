@@ -28,6 +28,8 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     public sealed record LayoutBody(Dictionary<string, StagePosition>? Layout);
     public sealed record RunBody(string Input);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
+    public sealed record CloneBody(string? Name, bool CopySkillsAndKnowledge = true);
+    public sealed record ExportTemplateBody(string? Name, string? Description, string? Category);
     public sealed record WatchConditionBody(string Field, string Op, string? Value);
     public sealed record TriggerBody(string Kind, string Name, string? Instruction, double? EveryMinutes, string? Cron,
         // Watches (kind "watch"): a read-only connection tool, where the items are, and the rule.
@@ -47,7 +49,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         var caller = HttpContext.Caller();
         var plan = await grains.GetGrain<AgentRuntime.Tenancy.ITenantGrain>(caller.TenantId).GetPlan();
         if (plan.MaxWorkspaces > 0 &&
-            await db.Workspaces.CountAsync(w => w.TenantId == caller.TenantId && w.Status != "Archived", ct) >= plan.MaxWorkspaces)
+            await db.Workspaces.CountAsync(w => w.TenantId == caller.TenantId && w.Status != "Archived" && w.Kind != "study", ct) >= plan.MaxWorkspaces)
         {
             return StatusCode(402, new { error = $"The {plan.Name} plan allows {plan.MaxWorkspaces} active workspaces. Archive one or upgrade." });
         }
@@ -85,7 +87,8 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct) =>
         Ok(await db.Workspaces.AsNoTracking()
-            .Where(w => w.TenantId == access.TenantId)
+            // A study's workspace belongs to the study (docs/studies.md), not to this list.
+            .Where(w => w.TenantId == access.TenantId && w.Kind != "study")
             .OrderByDescending(w => w.CreatedAt)
             .Take(100)
             .Select(w => new
@@ -300,6 +303,61 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [HttpPost("{id}/archive")]
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
     public async Task<IActionResult> Archive(string id) { await Workspace(id).Archive(); return NoContent(); }
+
+    // ---- Copies, templates and deletion (docs/workspaces.md) ----
+
+    /// <summary>A new workspace with this one's setup: goal, pipeline, safety policy, budget, triggers
+    /// (with new webhook URLs), skills and knowledge, and for an Admin its connections with their
+    /// secrets. Runs, files and chat are never copied.</summary>
+    [HttpPost("{id}/clone")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Clone(string id, [FromBody] CloneBody? body, [FromServices] AgentRuntime.Api.Platform.WorkspaceCopyService copies, CancellationToken ct)
+    {
+        var caller = HttpContext.Caller();
+        try
+        {
+            var admin = caller.Role >= AgentRuntime.Tenancy.TenantRole.Admin;
+            return Ok(await copies.CloneAsync(access.TenantId, id, body?.Name, admin, body?.CopySkillsAndKnowledge ?? true, caller.ActorId, ct));
+        }
+        catch (AgentRuntime.Api.Platform.WorkspaceCopyException ex)
+        {
+            return StatusCode(ex.Status, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>Saves the workspace as one of the organization's templates (no secrets, chat, runs or files).</summary>
+    [HttpPost("{id}/export-template")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> ExportTemplate(string id, [FromBody] ExportTemplateBody? body, [FromServices] AgentRuntime.Api.Platform.WorkspaceCopyService copies, CancellationToken ct)
+    {
+        try
+        {
+            var template = await copies.ExportTemplateAsync(access.TenantId, id, body?.Name, body?.Description, body?.Category, HttpContext.Caller().ActorId, ct);
+            return Ok(new { template_id = template.TemplateId, name = template.Name, category = template.Category });
+        }
+        catch (AgentRuntime.Api.Platform.WorkspaceCopyException ex)
+        {
+            return StatusCode(ex.Status, new { error = ex.Message });
+        }
+    }
+
+    /// <summary>Deletes an archived workspace with its connections, secrets, knowledge, skills and
+    /// files. Its runs' history and the audit log stay.</summary>
+    [HttpDelete("{id}")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Admin)]
+    public async Task<IActionResult> Delete(string id, [FromServices] AgentRuntime.Api.Platform.WorkspaceCopyService copies, CancellationToken ct)
+    {
+        var caller = HttpContext.Caller();
+        try
+        {
+            await copies.DeleteAsync(access.TenantId, id, caller.Email ?? caller.ActorId, ct);
+            return NoContent();
+        }
+        catch (AgentRuntime.Api.Platform.WorkspaceCopyException ex)
+        {
+            return StatusCode(ex.Status, new { error = ex.Message });
+        }
+    }
 
     // ---- Files: what the workspace's agents saved with filesystem_write ----
 

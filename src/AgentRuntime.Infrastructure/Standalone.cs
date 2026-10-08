@@ -65,6 +65,14 @@ public sealed class InMemoryMemoryStore : IMemoryStore
         return Task.FromResult<IReadOnlyList<MemoryRecord>>(results.OrderByDescending(r => r.CreatedAt).ToList());
     }
 
+    public Task<IReadOnlyList<(string Key, string AgentId)>> ListSharedKeysAsync(
+        string tenantId, MemoryScope scope, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<(string Key, string AgentId)>>(_records.Values
+            .Where(r => r.TenantId == tenantId && r.IsShared && r.WorkspaceId == scope.WorkspaceId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => (r.Key, r.AgentId))
+            .ToList());
+
     public Task<IReadOnlyList<MemoryRecord>> DeleteSharedAsync(
         string tenantId, MemoryScope scope, IReadOnlyCollection<string>? memoryIds = null, string? fileName = null,
         CancellationToken cancellationToken = default)

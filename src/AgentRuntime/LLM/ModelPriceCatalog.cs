@@ -35,6 +35,15 @@ public static partial class ModelPriceCatalog
     /// <summary>When the prices were copied from the providers' price lists.</summary>
     public const string AsOf = "2026-10-08";
 
+    /// <summary>The official source for standard API prices, in USD per 1 million tokens.</summary>
+    public static string? SourceUrl(string provider) => provider.ToLowerInvariant() switch
+    {
+        "anthropic" => "https://platform.claude.com/docs/en/about-claude/pricing",
+        "openai" => "https://developers.openai.com/api/docs/pricing",
+        "gemini" => "https://ai.google.dev/gemini-api/docs/pricing",
+        _ => null
+    };
+
     /// <summary>Every listed model, newest first within each provider (the order the model picker shows).</summary>
     public static IReadOnlyList<ModelPrice> All { get; } =
     [
@@ -59,11 +68,11 @@ public static partial class ModelPriceCatalog
         new("OpenAI", "gpt-6.1-sol", "GPT-6.1 Sol", 2m, 10m, 0.10m, "Prompts over 272k tokens: $4 in, $15 out."),
         new("OpenAI", "gpt-6-sol", "GPT-6 Sol", 2m, 10m, 0.20m, "Prompts over 272k tokens: $4 in, $15 out."),
         new("OpenAI", "gpt-6-luna", "GPT-6 Luna", 0.10m, 0.50m, 0.01m, "Prompts over 272k tokens: $0.20 in, $0.75 out."),
-        new("OpenAI", "gpt-5.6-sol", "GPT-5.6 Sol", 4m, 20m, 0.40m, "Prompts over 272k tokens: $8 in, $30 out."),
+        new("OpenAI", "gpt-5.6-sol", "GPT-5.6 Sol", 4m, 20m, 0.40m, "Prompts over 272k tokens: $8 in, $30 out. Promotional pricing available at least through November 21, 2026."),
         new("OpenAI", "gpt-5.6-terra", "GPT-5.6 Terra", 2m, 12m, 0.20m, "Prompts over 272k tokens: $4 in, $18 out."),
         new("OpenAI", "gpt-5.6-luna", "GPT-5.6 Luna", 0.20m, 1.20m, 0.02m, "Prompts over 272k tokens: $0.40 in, $1.80 out."),
         new("OpenAI", "gpt-5.5", "GPT-5.5", 5m, 30m, 0.50m, "Prompts over 272k tokens: $10 in, $45 out."),
-        new("OpenAI", "gpt-5.5-pro", "GPT-5.5 Pro", 30m, 180m),
+        new("OpenAI", "gpt-5.5-pro", "GPT-5.5 Pro", 30m, 180m, null, "Prompts over 272k tokens: $60 in, $270 out."),
         new("OpenAI", "gpt-5.4", "GPT-5.4", 2.50m, 15m, 0.25m, "Prompts over 272k tokens: $5 in, $22.50 out."),
         new("OpenAI", "gpt-5.4-mini", "GPT-5.4 mini", 0.75m, 4.50m, 0.075m),
         new("OpenAI", "gpt-5.4-nano", "GPT-5.4 nano", 0.20m, 1.25m, 0.02m),
@@ -89,17 +98,17 @@ public static partial class ModelPriceCatalog
         new("OpenAI", "o1", "o1", 15m, 60m, 7.50m),
 
         // https://ai.google.dev/gemini-api/docs/pricing
-        new("Gemini", "gemini-3.8-flash", "Gemini 3.8 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out on January 1, 2027."),
-        new("Gemini", "gemini-3.7-flash", "Gemini 3.7 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out on January 1, 2027."),
-        new("Gemini", "gemini-3.6-flash", "Gemini 3.6 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out on January 1, 2027."),
+        new("Gemini", "gemini-3.8-flash", "Gemini 3.8 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out and $0.15 cached input on January 1, 2027. Cache storage: $0.50 per million tokens per hour, rising to $1.00 on that date."),
+        new("Gemini", "gemini-3.7-flash", "Gemini 3.7 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out and $0.15 cached input on January 1, 2027. Cache storage: $0.50 per million tokens per hour, rising to $1.00 on that date."),
+        new("Gemini", "gemini-3.6-flash", "Gemini 3.6 Flash", 0.75m, 3.75m, 0.075m, "Rises to $1.50 in, $7.50 out and $0.15 cached input on January 1, 2027. Cache storage: $0.50 per million tokens per hour, rising to $1.00 on that date."),
         new("Gemini", "gemini-3.5-flash", "Gemini 3.5 Flash", 1.50m, 9m, 0.15m),
         new("Gemini", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", 0.30m, 2.50m, 0.03m),
-        new("Gemini", "gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", 2m, 12m, 0.20m, "Prompts over 200k tokens: $4 in, $18 out."),
-        new("Gemini", "gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", 0.25m, 1.50m, 0.025m),
-        new("Gemini", "gemini-3-flash-preview", "Gemini 3 Flash (preview)", 0.50m, 3m, 0.05m),
-        new("Gemini", "gemini-2.5-pro", "Gemini 2.5 Pro", 1.25m, 10m, 0.125m, "Prompts over 200k tokens: $2.50 in, $15 out."),
-        new("Gemini", "gemini-2.5-flash", "Gemini 2.5 Flash", 0.30m, 2.50m, 0.03m),
-        new("Gemini", "gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", 0.10m, 0.40m, 0.01m),
+        new("Gemini", "gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", 2m, 12m, 0.20m, "Prompts over 200k tokens: $4 in, $18 out, $0.40 cached input. Cache storage: $4.50 per million tokens per hour."),
+        new("Gemini", "gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", 0.25m, 1.50m, 0.025m, "Audio input: $0.50; cached audio input: $0.05."),
+        new("Gemini", "gemini-3-flash-preview", "Gemini 3 Flash (preview)", 0.50m, 3m, 0.05m, "Audio input: $1.00; cached audio input: $0.10."),
+        new("Gemini", "gemini-2.5-pro", "Gemini 2.5 Pro", 1.25m, 10m, 0.125m, "Prompts over 200k tokens: $2.50 in, $15 out, $0.25 cached input. Cache storage: $4.50 per million tokens per hour."),
+        new("Gemini", "gemini-2.5-flash", "Gemini 2.5 Flash", 0.30m, 2.50m, 0.03m, "Audio input: $1.00; cached audio input: $0.10."),
+        new("Gemini", "gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", 0.10m, 0.40m, 0.01m, "Audio input: $0.30; cached audio input: $0.03."),
     ];
 
     /// <summary>The listed models of one provider.</summary>

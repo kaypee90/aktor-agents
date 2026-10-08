@@ -266,7 +266,7 @@ public sealed class ListChildrenTool(IAgentOrchestrator orchestrator) : ITool
     private sealed record ChildrenArgs(string AgentId);
 }
 
-public sealed class CompleteTaskTool : ITool
+public sealed class CompleteTaskTool(IEnumerable<ICompletionGate> gates) : ITool
 {
     public ToolDefinition Definition { get; } = new()
     {
@@ -292,16 +292,21 @@ public sealed class CompleteTaskTool : ITool
         """
     };
 
-    public Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request)
+    public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request)
     {
         // Validation only; AgentGrain applies the actual state transition after this returns
         // successfully (CLAUDE.md section 25 — the runtime validates completion).
         var parsed = JsonSerializer.Deserialize<CompleteTaskRequest>(request.ArgumentsJson, ToolJson.Options);
         if (parsed is null || string.IsNullOrWhiteSpace(parsed.Summary))
         {
-            return Task.FromResult(ToolExecutionResult.Fail("complete_task requires at least a summary."));
+            return ToolExecutionResult.Fail("complete_task requires at least a summary.");
         }
 
-        return Task.FromResult(ToolExecutionResult.Ok(JsonSerializer.Serialize(new { acknowledged = true }, ToolJson.Options)));
+        foreach (var gate in gates)
+        {
+            if (await gate.CheckAsync(request) is { } refused) return ToolExecutionResult.Fail(refused);
+        }
+
+        return ToolExecutionResult.Ok(JsonSerializer.Serialize(new { acknowledged = true }, ToolJson.Options));
     }
 }

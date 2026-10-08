@@ -27,6 +27,15 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<JournalStepRecord> JournalSteps => Set<JournalStepRecord>();
     public DbSet<SkillRecord> Skills => Set<SkillRecord>();
     public DbSet<LlmCallRecord> LlmCalls => Set<LlmCallRecord>();
+    public DbSet<StudyRecord> Studies => Set<StudyRecord>();
+    public DbSet<StudyDatasetRecord> StudyDatasets => Set<StudyDatasetRecord>();
+    public DbSet<StudyEvidenceRecord> StudyEvidence => Set<StudyEvidenceRecord>();
+    public DbSet<StudyHypothesisRecord> StudyHypotheses => Set<StudyHypothesisRecord>();
+    public DbSet<StudyModelRecord> StudyModels => Set<StudyModelRecord>();
+    public DbSet<StudySourceRoleRecord> StudySourceRoles => Set<StudySourceRoleRecord>();
+    public DbSet<StudyReportRecord> StudyReports => Set<StudyReportRecord>();
+    public DbSet<StudySimulationRecord> StudySimulations => Set<StudySimulationRecord>();
+    public DbSet<OrganizationTemplateRecord> OrganizationTemplates => Set<OrganizationTemplateRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -189,6 +198,51 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         {
             b.HasKey(w => w.WorkspaceId);
             b.HasIndex(w => new { w.TenantId, w.CreatedAt });
+            b.Property(w => w.Kind).HasDefaultValue("pipeline");
+        });
+
+        // Studies (docs/studies.md).
+        modelBuilder.Entity<StudyRecord>(b =>
+        {
+            b.HasKey(x => x.StudyId);
+            b.HasIndex(x => new { x.TenantId, x.CreatedAt });
+            b.HasIndex(x => x.WorkspaceId).IsUnique();
+        });
+        modelBuilder.Entity<StudyDatasetRecord>(b =>
+        {
+            b.HasKey(x => x.DatasetId);
+            b.HasIndex(x => new { x.StudyId, x.Name, x.Version }).IsUnique();
+        });
+        modelBuilder.Entity<StudyEvidenceRecord>(b =>
+        {
+            b.HasKey(x => x.EvidenceId);
+            b.HasIndex(x => new { x.StudyId, x.CreatedAt });
+        });
+        modelBuilder.Entity<StudyHypothesisRecord>(b =>
+        {
+            b.HasKey(x => x.HypothesisId);
+            b.HasIndex(x => x.StudyId);
+        });
+        modelBuilder.Entity<StudyModelRecord>(b =>
+        {
+            b.HasKey(x => x.ModelId);
+            b.HasIndex(x => x.StudyId);
+        });
+        modelBuilder.Entity<StudySourceRoleRecord>(b => b.HasKey(x => new { x.StudyId, x.SourceKey }));
+        modelBuilder.Entity<StudyReportRecord>(b =>
+        {
+            b.HasKey(x => x.RunId);
+            b.HasIndex(x => x.StudyId);
+        });
+        modelBuilder.Entity<StudySimulationRecord>(b =>
+        {
+            b.HasKey(x => x.SimulationId);
+            b.HasIndex(x => x.StudyId);
+        });
+        modelBuilder.Entity<OrganizationTemplateRecord>(b =>
+        {
+            b.HasKey(x => x.TemplateId);
+            b.HasIndex(x => new { x.TenantId, x.CreatedAt });
         });
 
         modelBuilder.Entity<WorldRecord>(b =>

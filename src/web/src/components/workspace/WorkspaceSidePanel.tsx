@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { API_BASE, addWorkspaceTrigger, apiErrorMessage, deleteWorkspaceTrigger, getWorkspaceFiles } from "@/lib/api";
+import { API_BASE, addWorkspaceTrigger, apiErrorMessage, deleteWorkspaceTrigger, getKnowledgeSummary, getWorkspaceFiles, listSkills, type KnowledgeSummary, type SkillSummary } from "@/lib/api";
 import type { AgentStatus, RuntimeEvent } from "@/lib/types";
 import type { TriggerView, WorkspaceFile, WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { STATUS_STYLES } from "@/lib/status";
 import { useLiveList } from "@/lib/useLiveList";
 import { BotIcon } from "../BotIcon";
+import { Icons } from "@/components/ui/icons";
 import { MentionTextarea, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import { EventStream } from "../EventStream";
 import { FilesPanel } from "./FilesPanel";
@@ -41,13 +42,18 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
   const fileWrites = events.filter((e) => e.type === "ArtifactCreated").length;
   const workspaceId = workspace.workspace_id;
   const files: WorkspaceFile[] = useLiveList(workspaceId, fileWrites, () => getWorkspaceFiles(workspaceId)) ?? [];
+  // The workspace's own skills and knowledge; knowledge also grows when its agents save findings.
+  const memoryWrites = events.filter((e) => e.type === "AgentToolCompleted" && e.data?.tool === "write_memory").length;
+  const skills: SkillSummary[] = useLiveList(workspaceId, 0, () => listSkills(workspaceId)) ?? [];
+  const knowledge: KnowledgeSummary | null = useLiveList(workspaceId, memoryWrites, () => getKnowledgeSummary(workspaceId).then((s) => [s]))?.[0] ?? null;
+  const knowhowCount = skills.length + (knowledge ? knowledge.files + knowledge.facts + knowledge.from_agents : 0);
 
 
   const pendingApprovals = workspace.approvals?.filter((a) => a.status === "Pending").length ?? 0;
   const tabs: [Tab, string, number | null][] = [
     ["agents", "Agents", workspace.agents.length || null],
     ["files", "Files", files.length || null],
-    ["knowhow", "Skills & knowledge", null],
+    ["knowhow", "Skills & knowledge", knowhowCount || null],
     ["triggers", "Triggers", workspace.triggers.length || null],
     ["integrations", "Integrations", workspace.connections?.length || null],
     ["safety", "Safety", pendingApprovals || null],
@@ -112,16 +118,40 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
               Give this workspace its own skills and knowledge. Only its agents use them, on top of what your whole organization
               shares; no other workspace or task sees them.
             </p>
-            {[
-              ["/skills", "Skills", "How this workspace's agents should do particular work (a SKILL.md each)."],
-              ["/knowledge", "Knowledge", "Facts and documents (PDF, Word, Excel, slides…) its agents search."],
-            ].map(([href, label, text]) => (
-              <Link key={href} href={`${href}?workspace=${encodeURIComponent(workspace.workspace_id)}`}
-                className="block rounded-lg border border-zinc-200 p-3 hover:border-brand-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-brand-800 dark:hover:bg-zinc-900">
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100">{label} for this workspace →</span>
-                <span className="mt-0.5 block text-zinc-500">{text}</span>
-              </Link>
-            ))}
+            <KnowhowSection title="Skills" count={skills.length} href={`/skills?workspace=${encodeURIComponent(workspaceId)}`}
+              empty="No skills yet. A skill tells this workspace's agents how to do particular work (a SKILL.md each).">
+              {skills.map((s) => (
+                <li key={s.name} className="flex items-start gap-2 py-1.5">
+                  <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${s.enabled ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-600"}`} title={s.enabled ? "On" : "Off"} />
+                  <span className="min-w-0">
+                    <span className="font-mono font-medium text-zinc-900 dark:text-zinc-100">@skill:{s.name}</span>
+                    {!s.enabled && <span className="ml-1.5 text-zinc-400">off</span>}
+                    <span className="block truncate text-zinc-500">{s.description}</span>
+                  </span>
+                </li>
+              ))}
+            </KnowhowSection>
+            <KnowhowSection title="Knowledge" count={knowledge ? knowledge.files + knowledge.facts + knowledge.from_agents : 0}
+              href={`/knowledge?workspace=${encodeURIComponent(workspaceId)}`}
+              empty="No knowledge yet. Add facts and documents (PDF, Word, Excel, slides…) for its agents to search.">
+              {knowledge && (
+                <>
+                  <li className="py-1.5 text-zinc-600 dark:text-zinc-400">
+                    {[
+                      knowledge.files && `${knowledge.files} file${knowledge.files === 1 ? "" : "s"}`,
+                      knowledge.facts && `${knowledge.facts} fact${knowledge.facts === 1 ? "" : "s"}`,
+                      knowledge.from_agents && `${knowledge.from_agents} saved by agents`,
+                    ].filter(Boolean).join(" · ")}
+                  </li>
+                  {knowledge.file_names.slice(0, 8).map((f) => (
+                    <li key={f} className="flex items-center gap-1.5 truncate py-1 text-zinc-700 dark:text-zinc-300">
+                      <Icons.File className="h-3.5 w-3.5 shrink-0 text-zinc-400" /><span className="truncate">{f}</span>
+                    </li>
+                  ))}
+                  {knowledge.file_names.length > 8 && <li className="py-1 text-zinc-500">and {knowledge.file_names.length - 8} more files</li>}
+                </>
+              )}
+            </KnowhowSection>
           </div>
         )}
 
@@ -312,5 +342,22 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
         )}
       </form>
     </div>
+  );
+}
+
+/** One of the workspace's own skills or knowledge: what it holds, and a link to manage it. */
+function KnowhowSection({ title, count, href, empty, children }: {
+  title: string; count: number; href: string; empty: string; children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
+        <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+          {title} <span className="ml-1 rounded-full bg-zinc-100 px-1.5 text-[10px] tabular-nums text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{count}</span>
+        </span>
+        <Link href={href} className="text-brand-600 hover:underline dark:text-brand-400">{count ? "Manage" : "Add"} →</Link>
+      </div>
+      {count === 0 ? <p className="px-3 py-2.5 text-zinc-500">{empty}</p> : <ul className="divide-y divide-zinc-100 px-3 dark:divide-zinc-800">{children}</ul>}
+    </section>
   );
 }

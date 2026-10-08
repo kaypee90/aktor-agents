@@ -132,6 +132,26 @@ depending on the model) are higher than the listed ones, which each such model's
 Dated snapshots ("gpt-4o-mini-2024-07-18") are priced as their model. `GET /api/llm/providers`
 returns each provider's listed models with their prices.
 
+The dashboard's model dropdown shows input and output prices in **USD per 1 million tokens**.
+The selected model's price details also show cached input, preserving fractional-cent rates
+such as $0.075 and $0.005. Sources,
+verified on **2026-10-08**:
+
+- [Anthropic API pricing](https://platform.claude.com/docs/en/about-claude/pricing)
+- [OpenAI API pricing — Standard tier](https://developers.openai.com/api/docs/pricing)
+- [Gemini API pricing — Standard paid tier](https://ai.google.dev/gemini-api/docs/pricing)
+
+These are direct-provider text-token rates, not subscription fees or Batch/Flex/Fast rates.
+Output rates include billed reasoning/thinking tokens. Notes identify long-context premiums,
+audio input rates, and scheduled promotional changes. Cache writes, cache storage, provider
+tools and regional premiums are additional charges; see the official source for each provider.
+The listed base rates were confirmed against these sources; GPT-5.5 Pro's long-context rates
+and Gemini's long-context cached-input rates are now included in the notes.
+
+The API exposes the same per-million rates and a `pricing_url` for each paid provider.
+Runtime price settings and saved overrides remain per-token amounts internally, so the editor
+converts per-million entries by dividing by 1,000,000 when saving.
+
 The server's own model is priced from the list too, unless `Llm:PricePerInputTokenUsd` and the
 other price settings are set. Update the list (and `AsOf`) when providers change their prices.
 

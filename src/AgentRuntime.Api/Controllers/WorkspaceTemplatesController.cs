@@ -10,12 +10,13 @@ namespace AgentRuntime.Api.Controllers;
 
 /// <summary>Ready-made workspaces: real-world pipelines to start from (docs/templates.md).</summary>
 [ApiController]
-public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbContext db) : ControllerBase
+public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbContext db, WorkspaceCopyService copies) : ControllerBase
 {
     public sealed record FromTemplateBody(string Template, string? Name, bool UseDemoSystem = true);
 
+    /// <summary>The built-in templates, then the organization's own (made from its workspaces).</summary>
     [HttpGet("api/workspace-templates")]
-    public IActionResult List() => Ok(WorkspaceTemplates.All.Select(t => new
+    public async Task<IActionResult> List(CancellationToken ct) => Ok(WorkspaceTemplates.All.Select(t => (object)new
     {
         id = t.Id,
         name = t.Name,
@@ -28,8 +29,63 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
         stages = t.Pipeline.Stages.Select(s => new { stage_id = s.StageId, name = s.Name, inputs = s.Inputs }),
         connections = t.Connections.Select(c => new { plugin_id = c.PluginId, name = c.Name, demo_only = c.DemoOnly }),
         webhooks = t.Webhooks.Select(w => new { name = w.Name, sample_payload = w.SamplePayload }),
-        schedules = t.Schedules.Select(s => new { name = s.Name, cron = s.Cron })
-    }));
+        schedules = t.Schedules.Select(s => new { name = s.Name, cron = s.Cron }),
+        custom = false
+    }).Concat((await copies.ListTemplatesAsync(HttpContext.Caller().TenantId, ct)).Select(Custom)));
+
+    private static object Custom(Infrastructure.Persistence.OrganizationTemplateRecord t)
+    {
+        var d = WorkspaceCopyService.DefinitionOf(t);
+        return new
+        {
+            id = t.TemplateId,
+            name = t.Name,
+            category = t.Category,
+            description = t.Description,
+            goal = d.Goal,
+            autonomy = d.SafetyPolicy.Autonomy.ToString(),
+            sample_input = t.SampleInput,
+            stages = (d.Pipeline?.Stages ?? []).Select(s => new { stage_id = s.StageId, name = s.Name, inputs = s.Inputs }),
+            connections = d.Connections.Select(c => new { plugin_id = c.PluginId, name = c.Name, demo_only = false }),
+            webhooks = d.Triggers.Where(x => x.Kind == TriggerKind.Webhook).Select(x => new { name = x.Name, sample_payload = (string?)null }),
+            schedules = d.Triggers.Where(x => x.Kind == TriggerKind.Schedule).Select(x => new { name = x.Name, cron = x.Cron }),
+            custom = true,
+            created_by = t.CreatedBy,
+            created_at = t.CreatedAt
+        };
+    }
+
+    /// <summary>Removes one of the organization's templates (workspaces made from it are unaffected).</summary>
+    [HttpDelete("api/workspace-templates/{id}")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> Delete(string id, CancellationToken ct) =>
+        await copies.DeleteTemplateAsync(HttpContext.Caller().TenantId, id, ct) ? NoContent() : NotFound(new { error = $"No template '{id}' of yours." });
+
+    /// <summary>One of the organization's templates as a file, to keep or to import elsewhere.</summary>
+    [HttpGet("api/workspace-templates/{id}/download")]
+    public async Task<IActionResult> Download(string id, CancellationToken ct) =>
+        await copies.GetTemplateAsync(HttpContext.Caller().TenantId, id, ct) is { } t
+            ? File(System.Text.Encoding.UTF8.GetBytes(WorkspaceCopyService.ToFile(t)), "application/json", $"{ConnectionNames.Slug(t.Name)}.template.json")
+            : NotFound(new { error = $"No template '{id}' of yours." });
+
+    /// <summary>Adds a template from a downloaded template file (the file's JSON as the body).</summary>
+    [HttpPost("api/workspace-templates/import")]
+    [Authorize(Policies.Member)]
+    public async Task<IActionResult> Import(CancellationToken ct)
+    {
+        using var reader = new StreamReader(Request.Body);
+        var json = await reader.ReadToEndAsync(ct);
+        if (json.Length > 1_000_000) return BadRequest(new { error = "A template file is at most 1 MB." });
+        try
+        {
+            var t = await copies.ImportTemplateAsync(HttpContext.Caller().TenantId, json, HttpContext.Caller().ActorId, ct);
+            return Ok(Custom(t));
+        }
+        catch (WorkspaceCopyException ex)
+        {
+            return StatusCode(ex.Status, new { error = ex.Message });
+        }
+    }
 
     /// <summary>
     /// Creates a workspace from a template: its goal, its pipeline, its safety policy (in force
@@ -40,12 +96,29 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
     [Authorize(Policies.Member)]
     public async Task<IActionResult> Create([FromBody] FromTemplateBody body, CancellationToken ct)
     {
+        var caller = HttpContext.Caller();
+        // One of the organization's own templates.
+        if (body.Template.StartsWith(WorkspaceCopyService.TemplatePrefix, StringComparison.Ordinal))
+        {
+            if (await copies.GetTemplateAsync(caller.TenantId, body.Template, ct) is not { } own) return NotFound(new { error = $"No template '{body.Template}'." });
+            try
+            {
+                var (workspaceId, ownConnections, triggers) = await copies.CreateFromDefinitionAsync(caller.TenantId, caller.ActorId,
+                    WorkspaceCopyService.DefinitionOf(own), string.IsNullOrWhiteSpace(body.Name) ? own.Name : body.Name.Trim(), own.TemplateId,
+                    addConnections: caller.Role >= Tenancy.TenantRole.Admin, ct);
+                return Ok(new { workspace_id = workspaceId, template = own.TemplateId, connections = ownConnections, triggers, sample_input = own.SampleInput });
+            }
+            catch (WorkspaceCopyException ex)
+            {
+                return StatusCode(ex.Status, new { error = ex.Message });
+            }
+        }
+
         if (WorkspaceTemplates.Get(body.Template) is not { } template) return NotFound(new { error = $"No template '{body.Template}'." });
 
-        var caller = HttpContext.Caller();
         var plan = await grains.GetGrain<Tenancy.ITenantGrain>(caller.TenantId).GetPlan();
         if (plan.MaxWorkspaces > 0 &&
-            await db.Workspaces.CountAsync(w => w.TenantId == caller.TenantId && w.Status != "Archived", ct) >= plan.MaxWorkspaces)
+            await db.Workspaces.CountAsync(w => w.TenantId == caller.TenantId && w.Status != "Archived" && w.Kind != "study", ct) >= plan.MaxWorkspaces)
         {
             return StatusCode(402, new { error = $"The {plan.Name} plan allows {plan.MaxWorkspaces} active workspaces. Archive one or upgrade." });
         }

@@ -80,6 +80,14 @@ public static class AgentToolCatalog
     /// rather than "filesystem" shouldn't leave it unable to write the code it was asked for.</summary>
     public static readonly string[] WorkspaceTools = ["filesystem_read", "filesystem_write", "filesystem_list", "create_document"];
 
+    /// <summary>A study run's tools (docs/studies.md). Its root gets them, and every agent it starts
+    /// inherits them whatever its role, like <see cref="WorkspaceTools"/>.</summary>
+    public static readonly string[] StudyTools =
+    [
+        "study_sources", "query_dataset", "record_hypothesis", "fit_model", "run_analysis", "review_model",
+        "evaluate_on_holdout", "set_source_role", "run_simulation", "submit_report"
+    ];
+
     private static readonly Dictionary<string, string[]> CapabilityToolMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["web-search"] = ["web_search"],

@@ -32,6 +32,7 @@ import {
   type AnalyticsToolRow,
   type AnalyticsUserRow,
   type ModelChoice,
+  type StudyAnalytics,
   type WorkspaceAnalytics,
 } from "@/lib/api";
 import { Button, Card, CardHeader, EmptyState, ErrorBanner, PageHeader, StatusBadge, Tabs, ago, compact, cx, inlineInputClass, inputClass, money } from "@/components/ui";
@@ -454,7 +455,7 @@ function AnalyticsView() {
   const pathname = usePathname();
   const params = useSearchParams();
 
-  const scope = params.get("scope") === "workspaces" ? "workspaces" : "tasks";
+  const scope = params.get("scope") === "workspaces" ? "workspaces" : params.get("scope") === "studies" ? "studies" : "tasks";
   const range = params.get("range") ?? (params.get("from") ? "custom" : "7d");
   const filter: AnalyticsFilter = useMemo(() => {
     const preset = RANGES.some((r) => r.id === range);
@@ -472,7 +473,7 @@ function AnalyticsView() {
     };
   }, [params, range, scope]);
 
-  const [data, setData] = useState<{ key: string; value: Analytics | WorkspaceAnalytics } | null>(null);
+  const [data, setData] = useState<{ key: string; value: Analytics | WorkspaceAnalytics | StudyAnalytics } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [models, setModels] = useState<ModelChoice[]>([]);
@@ -533,7 +534,7 @@ function AnalyticsView() {
 
       <div className="mx-auto max-w-7xl space-y-5 px-6 py-6">
         <Tabs value={scope} onChange={(s) => update({ scope: s === "tasks" ? null : s, source: null, status: null, q: null, user: null, workspace: null })}
-          tabs={[{ id: "tasks", label: "Tasks" }, { id: "workspaces", label: "Workspaces" }]} />
+          tabs={[{ id: "tasks", label: "Tasks" }, { id: "workspaces", label: "Workspaces" }, { id: "studies", label: "Studies" }]} />
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2">
@@ -584,14 +585,14 @@ function AnalyticsView() {
                 </button>
               )}
             </>
-          ) : (
+          ) : scope === "workspaces" && (
             <select className={cx(inlineInputClass, "py-1.5 text-xs")} value={params.get("workspace") ?? ""} onChange={(e) => update({ workspace: e.target.value || null })}>
               <option value="">Every workspace</option>
               {workspaces.map((w) => <option key={w.workspace_id} value={w.workspace_id}>{w.name}</option>)}
             </select>
           )}
           {filtered && (
-            <Button size="sm" variant="ghost" onClick={() => { setQuery(""); router.replace(scope === "tasks" ? pathname : `${pathname}?scope=workspaces`); }}>Clear</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setQuery(""); router.replace(scope === "tasks" ? pathname : `${pathname}?scope=${scope}`); }}>Clear</Button>
           )}
         </div>
 
@@ -601,6 +602,8 @@ function AnalyticsView() {
           <div className="grid gap-4 md:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />)}</div>
         ) : current.scope === "tasks" ? (
           <TasksAnalytics a={current} loading={loading} onDrill={drillInto} update={update} />
+        ) : current.scope === "studies" ? (
+          <StudiesAnalytics s={current} loading={loading} onDrill={drillInto} update={update} />
         ) : (
           <WorkspacesAnalytics w={current} loading={loading} onDrill={drillInto} update={update} />
         )}
@@ -807,4 +810,161 @@ function label(t: string, bucket: "hour" | "day") {
   return bucket === "hour"
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** Studies (docs/studies.md): their runs and what they cost, the analyses and simulations they ran,
+ * the data they drew on, and how well their findings are supported. */
+function StudiesAnalytics({ s, loading, onDrill, update }: {
+  s: StudyAnalytics; loading: boolean; onDrill: (t: string) => void; update: (patch: Record<string, string | null>) => void;
+}) {
+  if (s.totals.runs === 0 && s.simulations.count === 0) {
+    return <EmptyState icon={<Icons.Analytics className="h-5 w-5" />} title="No study runs in this range"
+      description={s.totals.studies ? "Widen the date range, or run a study." : "Create a study under Studies, add its data and run it."} />;
+  }
+
+  const t = s.totals;
+  const findings = s.evidence.findings_supported + s.evidence.findings_interpretation;
+  const series = s.series.map((p) => ({ ...p, label: label(p.t, s.range.bucket) }));
+  return (
+    <div className={cx("space-y-5 transition-opacity", loading && "opacity-60")}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Kpi label="Spend" value={usd(t.cost_usd)} hint={`${usd(t.avg_cost_usd)} a run`} />
+        <Kpi label="Runs" value={t.runs} hint={`${t.active_studies} of ${t.studies} studies · ${t.completed} done · ${t.failed} failed`} />
+        <Kpi label="Median run time" value={duration(t.p50_duration_s)} hint={`p95 ${duration(t.p95_duration_s)}`} />
+        <Kpi label="Models fitted" value={s.analyses.models_by_method.reduce((n, m) => n + m.models, 0)}
+          hint={`${s.evidence.reviews_accepted} accepted · ${s.evidence.reviews_rejected} rejected`} />
+        <Kpi label="Simulated decisions" value={compact(s.simulations.decisions)} hint={`${s.simulations.count} experiment(s) · ${s.simulations.participants} participants`} />
+        <Kpi label="Supported findings" value={findings ? `${Math.round((s.evidence.findings_supported / findings) * 100)}%` : "—"}
+          hint={`${s.evidence.findings_supported} of ${findings} cite evidence`} />
+      </div>
+
+      <TrendCard series={series as unknown as SeriesPoint[]} bucket={s.range.bucket} onDrill={onDrill} countKey="runs" countLabel="Runs"
+        metrics={[
+          { id: "cost_usd", label: "Spend", format: (v) => usd(v ?? 0) },
+          { id: "tokens", label: "Tokens", format: (v) => compact(v ?? 0) },
+          { id: "runs", label: "Runs", format: (v) => String(v ?? 0) },
+          { id: "avg_duration_s", label: "Avg duration", format: (v) => duration(v) },
+        ]} />
+
+      <UsageCard usage={t.usage} stats={[
+        { label: "Runs", value: t.runs },
+        { label: "Model calls", value: compact(t.usage.calls) },
+        ...s.spend_by_stage.map((x) => ({ label: x.stage, value: usd(x.cost_usd) })),
+        { label: "Analysis compute", value: ms(s.analyses.compute_ms) },
+      ]} />
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Analyses" description="Models by method and how their reviews went, and the study tools' calls and compute time." />
+          <table className="w-full text-xs">
+            <thead className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
+              <tr><th className="px-5 py-2 font-medium">Method</th><th className="px-3 py-2 text-right font-medium">Models</th><th className="px-3 py-2 text-right font-medium">Accepted</th><th className="px-3 py-2 text-right font-medium">Rejected</th><th className="px-5 py-2 text-right font-medium">Holdout-scored</th></tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
+              {s.analyses.models_by_method.length === 0 && <tr><td colSpan={5} className="px-5 py-3 text-zinc-500">No models in this range.</td></tr>}
+              {s.analyses.models_by_method.map((m) => (
+                <tr key={m.method}>
+                  <td className="px-5 py-2 font-mono">{m.method}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{m.models}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{m.accepted}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{m.rejected}</td>
+                  <td className="px-5 py-2 text-right tabular-nums">{m.holdout_scored}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {s.analyses.by_tool.length > 0 && (
+            <RankedBars rows={s.analyses.by_tool as unknown as Row[]} nameKey="tool" valueKey="calls" nameWidth={150} color="#6366f1"
+              total={s.analyses.by_tool.reduce((n, x) => n + x.calls, 0)} format={(v) => String(v)} />
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="Evidence quality" description="Whether findings rest on evidence the runtime recorded, and how often reports and models didn't pass." />
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 p-5 text-sm">
+            {[
+              ["Reports", s.evidence.reports],
+              ["Reports refused by the runtime", s.evidence.reports_rejected],
+              ["Findings citing evidence", s.evidence.findings_supported],
+              ["Findings as interpretation", s.evidence.findings_interpretation],
+              ["Findings resting on simulations", s.evidence.findings_simulated],
+              ["Models accepted / rejected", `${s.evidence.reviews_accepted} / ${s.evidence.reviews_rejected}`],
+            ].map(([k, v]) => (
+              <div key={String(k)} className="contents">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="text-right tabular-nums text-zinc-900 dark:text-zinc-100">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          {s.evidence.by_kind.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 border-t border-zinc-100 px-5 py-3 text-xs dark:border-zinc-800">
+              {s.evidence.by_kind.map((k) => <span key={k.kind} className="rounded-md bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">{k.kind} · {k.count}</span>)}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Simulations" description="Simulated populations built from study data, and how far their baselines landed from the real rates." />
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 px-5 pt-4 text-sm">
+            {[
+              ["Experiments", s.simulations.count],
+              ["Decisions", compact(s.simulations.decisions)],
+              ["Cost", usd(s.simulations.cost_usd)],
+              ["Calibrated against real data", s.simulations.calibrated],
+              ["Average calibration gap", s.simulations.avg_calibration_gap === null ? "—" : `${(s.simulations.avg_calibration_gap * 100).toFixed(0)} pts`],
+              ["Warnings (low diversity, gaps)", s.simulations.warnings],
+            ].map(([k, v]) => (
+              <div key={String(k)} className="contents">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="text-right tabular-nums text-zinc-900 dark:text-zinc-100">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <ul className="mt-3 divide-y divide-zinc-100 border-t border-zinc-100 text-xs dark:divide-zinc-800 dark:border-zinc-800">
+            {s.simulations.recent.map((x, i) => (
+              <li key={i} className="flex items-center gap-3 px-5 py-2">
+                <span className="min-w-0 flex-1 truncate"><span className="font-medium">{x.name}</span> <span className="text-zinc-500">· {x.study ?? "Deleted study"}</span></span>
+                <span className="tabular-nums text-zinc-500">{x.decisions} decisions</span>
+                <span className={cx("w-20 text-right tabular-nums", x.calibration_gap !== null && Math.abs(x.calibration_gap) > 0.1 ? "text-amber-600" : "text-zinc-500")}>
+                  {x.calibration_gap === null ? "uncalibrated" : `gap ${(x.calibration_gap * 100).toFixed(0)} pts`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card>
+          <CardHeader title="Data sources" description="Datasets added in the range, and the calls agents made to the studies' connections." />
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 px-5 pt-4 text-sm">
+            {[
+              ["Datasets added", s.data_sources.datasets_added],
+              ["Rows added", compact(s.data_sources.rows_added)],
+              ["Data added", `${(s.data_sources.bytes_added / 1048576).toFixed(1)} MB`],
+              ["Connection calls", s.data_sources.connection_calls],
+              ["Connection failures", s.data_sources.connection_failures],
+            ].map(([k, v]) => (
+              <div key={String(k)} className="contents">
+                <dt className="text-zinc-500">{k}</dt>
+                <dd className="text-right tabular-nums text-zinc-900 dark:text-zinc-100">{v}</dd>
+              </div>
+            ))}
+          </dl>
+          {s.data_sources.by_connection.length > 0 && (
+            <RankedBars rows={s.data_sources.by_connection as unknown as Row[]} nameKey="connection" valueKey="calls" nameWidth={130} color="#14b8a6" format={(v) => String(v)} />
+          )}
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="By study" description="Spend and runs per study." />
+        <RankedBars rows={s.by_study as unknown as Row[]} nameKey="name" valueKey="cost_usd" nameWidth={180} total={t.cost_usd} format={(v) => usd(v)} />
+      </Card>
+
+      <UsersCard rows={s.by_user} total={t.cost_usd} description="Who started the study runs, with their spend." />
+      <ModelsCard rows={s.by_model} onPick={(id) => update({ model: id })} />
+      <RunsCard mostExpensive={s.top_by_cost} slowest={s.slowest} />
+    </div>
+  );
 }

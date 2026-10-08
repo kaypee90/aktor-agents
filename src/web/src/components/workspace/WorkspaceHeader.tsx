@@ -1,8 +1,23 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { simulateWorkspaceAlert, updateWorkspaceBudget, workspaceAction } from "@/lib/api";
+import {
+  API_BASE,
+  apiErrorMessage,
+  cloneWorkspace,
+  deleteWorkspace,
+  exportWorkspaceTemplate,
+  simulateWorkspaceAlert,
+  updateWorkspaceBudget,
+  workspaceAction,
+  type WorkspaceCopyResult,
+} from "@/lib/api";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
+import { useAuth } from "@/components/platform/AuthProvider";
+import { atLeast, type Role } from "@/lib/platformTypes";
+import { Button, ErrorBanner, Field, Modal, Toggle, inputClass } from "@/components/ui";
 
 function Meter({ label, used, limit, format }: { label: string; used: number; limit: number; format: (n: number) => string }) {
   const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
@@ -101,6 +116,10 @@ function BudgetBanner({ workspace, onChanged }: { workspace: WorkspaceSnapshot; 
 }
 
 export function WorkspaceHeader({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
+  const router = useRouter();
+  const { me } = useAuth();
+  const role = (me?.role ?? "Viewer") as Role;
+  const [dialog, setDialog] = useState<"clone" | "template" | null>(null);
   const tone: Record<string, string> = {
     Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
     Paused: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
@@ -136,6 +155,12 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
               {workspace.template_id === "incident-response" ? "Simulate alert" : "Send sample event"}
             </button>
           )}
+          {atLeast(role, "Member") && (
+            <>
+              <button onClick={() => setDialog("clone")} className={btn} title="A new workspace with this one's setup, without its runs or files">Clone</button>
+              <button onClick={() => setDialog("template")} className={btn} title="Save this setup as one of your organization's templates">Save as template</button>
+            </>
+          )}
           {workspace.status === "Active" && <button onClick={() => act("pause")} className={btn}>Pause</button>}
           {workspace.status === "Paused" && <button onClick={() => act("resume")} className={btn}>Resume</button>}
           {workspace.status !== "Archived" && (
@@ -144,10 +169,147 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
               Archive
             </button>
           )}
+          {workspace.status === "Archived" && atLeast(role, "Admin") && (
+            <button onClick={async () => {
+              if (!confirm(`Delete "${workspace.name}" for good? Its connections and their secrets, triggers, skills, knowledge and files are deleted. Its runs' history and the audit log stay.`)) return;
+              try {
+                await deleteWorkspace(workspace.workspace_id);
+                router.push("/workspaces");
+                onChanged();
+              } catch (e) {
+                alert(apiErrorMessage(e));
+              }
+            }}
+              className="rounded-lg border border-rose-200 px-2.5 py-1.5 font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/50">
+              Delete
+            </button>
+          )}
         </div>
       </div>
       <BudgetBanner key={`${workspace.daily_token_limit}:${workspace.daily_cost_limit_usd}`} workspace={workspace} onChanged={onChanged} />
+      {dialog === "clone" && <CloneDialog workspace={workspace} isAdmin={atLeast(role, "Admin")} onClose={() => setDialog(null)} />}
+      {dialog === "template" && <TemplateDialog workspace={workspace} onClose={() => setDialog(null)} />}
     </>
+  );
+}
+
+/** Clone: the setup is copied, the activity isn't. Shows what came across and what needs attention. */
+function CloneDialog({ workspace, isAdmin, onClose }: { workspace: WorkspaceSnapshot; isAdmin: boolean; onClose: () => void }) {
+  const router = useRouter();
+  const [name, setName] = useState(`${workspace.name} (copy)`);
+  const [knowhow, setKnowhow] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<WorkspaceCopyResult | null>(null);
+
+  async function clone() {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await cloneWorkspace(workspace.workspace_id, name.trim(), knowhow));
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const problems = result ? [...result.connections.filter((c) => !c.ok), ...result.triggers.filter((t) => !t.ok)] : [];
+  const hooks = result?.triggers.filter((t) => t.webhook_path) ?? [];
+  return (
+    <Modal open onClose={onClose} wide={result !== null} title={result ? `Created "${result.name}"` : `Clone "${workspace.name}"`}
+      description={result ? undefined : "A new workspace with the same setup, ready to run. Its runs, files and chat aren't copied."}
+      footer={result
+        ? <><Button onClick={onClose}>Close</Button><Button variant="primary" onClick={() => router.push(`/workspaces?id=${result.workspace_id}`)}>Open the copy</Button></>
+        : <><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !name.trim()} onClick={clone}>{busy ? "Cloning…" : "Clone"}</Button></>}>
+      <ErrorBanner error={error} onClose={() => setError(null)} />
+      {!result ? (
+        <div className="space-y-4 text-sm">
+          <Field label="Name"><input className={inputClass} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} /></Field>
+          <div className="grid gap-3 rounded-lg bg-zinc-50 p-3 text-xs dark:bg-zinc-900 sm:grid-cols-2">
+            <div>
+              <div className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">Copied</div>
+              <ul className="list-disc space-y-0.5 pl-4 text-zinc-600 dark:text-zinc-400">
+                <li>Goal, pipeline and stage settings</li>
+                <li>Triggers ({workspace.triggers.length}), with new webhook URLs</li>
+                <li>Integrations ({workspace.connections?.length ?? 0}){isAdmin ? " with their secrets" : ": an Admin adds them"}</li>
+                <li>Safety policy and daily budget</li>
+              </ul>
+            </div>
+            <div>
+              <div className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">Not copied</div>
+              <ul className="list-disc space-y-0.5 pl-4 text-zinc-600 dark:text-zinc-400">
+                <li>Runs and their results</li>
+                <li>Files</li>
+                <li>Chat and approvals</li>
+              </ul>
+            </div>
+          </div>
+          <Toggle checked={knowhow} onChange={setKnowhow} label="Copy its skills and knowledge"
+            description="The workspace's own skills, facts and documents. Your organization's shared ones apply to every workspace anyway." />
+        </div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <p className="text-zinc-600 dark:text-zinc-400">
+            {result.triggers.filter((t) => t.ok).length} trigger(s), {result.connections.filter((c) => c.ok).length} integration(s)
+            {result.skills !== undefined && <>, {result.skills} skill(s) and {result.knowledge} knowledge entr{result.knowledge === 1 ? "y" : "ies"}</>} copied.
+          </p>
+          {problems.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              <div className="mb-1 font-medium">Needs your attention</div>
+              {problems.map((p) => <div key={p.name}>{p.name}: {p.message}</div>)}
+            </div>
+          )}
+          {hooks.length > 0 && (
+            <div className="text-xs">
+              <div className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">New webhook URLs (keep them secret; point your services here)</div>
+              {hooks.map((h) => <code key={h.name} className="mb-1 block truncate rounded bg-zinc-100 px-2 py-1 dark:bg-zinc-800" title={h.name}>{API_BASE}{h.webhook_path}</code>)}
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+/** Saves the workspace's setup as an organization template, without secrets, runs or files. */
+function TemplateDialog({ workspace, onClose }: { workspace: WorkspaceSnapshot; onClose: () => void }) {
+  const [name, setName] = useState(workspace.name);
+  const [category, setCategory] = useState("Custom");
+  const [description, setDescription] = useState(withoutTemplateTag(workspace.goal));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      setSaved((await exportWorkspaceTemplate(workspace.workspace_id, { name: name.trim(), category: category.trim(), description: description.trim() })).name);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={saved ? "Template saved" : "Save as template"}
+      description={saved ? undefined : "Everyone in your organization can create a workspace from it under Templates. It holds the setup only: no secrets, runs, files or knowledge."}
+      footer={saved
+        ? <><Button onClick={onClose}>Close</Button><Link href="/templates"><Button variant="primary">Open Templates</Button></Link></>
+        : <><Button onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !name.trim()} onClick={save}>{busy ? "Saving…" : "Save template"}</Button></>}>
+      <ErrorBanner error={error} onClose={() => setError(null)} />
+      {saved ? (
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">&ldquo;{saved}&rdquo; is in your Templates. From there you can also download it as a file to use on another server.</p>
+      ) : (
+        <div className="space-y-4">
+          <Field label="Name"><input className={inputClass} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="Category" hint="Groups it in the gallery, e.g. Operations or Support."><input className={inputClass} value={category} maxLength={40} onChange={(e) => setCategory(e.target.value)} /></Field>
+          <Field label="Description"><textarea className={inputClass} rows={3} value={description} maxLength={600} onChange={(e) => setDescription(e.target.value)} /></Field>
+        </div>
+      )}
+    </Modal>
   );
 }
 

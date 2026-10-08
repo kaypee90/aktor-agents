@@ -682,6 +682,50 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Messages");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.OrganizationTemplateRecord", b =>
+                {
+                    b.Property<string>("TemplateId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DefinitionJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SampleInput")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceWorkspaceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TemplateId");
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.ToTable("OrganizationTemplates");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SecretRecord", b =>
                 {
                     b.Property<string>("Scope")
@@ -774,6 +818,389 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.HasKey("TenantId", "WorkspaceId", "Name");
 
                     b.ToTable("Skills");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyDatasetRecord", b =>
+                {
+                    b.Property<string>("DatasetId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Current")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("DictionaryJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double>("HoldoutFraction")
+                        .HasColumnType("double precision");
+
+                    b.Property<long>("HoldoutRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProfileJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Rows")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TimeColumn")
+                        .HasColumnType("text");
+
+                    b.Property<long>("TrainRows")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("DatasetId");
+
+                    b.HasIndex("StudyId", "Name", "Version")
+                        .IsUnique();
+
+                    b.ToTable("StudyDatasets");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyEvidenceRecord", b =>
+                {
+                    b.Property<string>("EvidenceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DetailJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceKey")
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("EvidenceId");
+
+                    b.HasIndex("StudyId", "CreatedAt");
+
+                    b.ToTable("StudyEvidence");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyHypothesisRecord", b =>
+                {
+                    b.Property<string>("HypothesisId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Rationale")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Statement")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("HypothesisId");
+
+                    b.HasIndex("StudyId");
+
+                    b.ToTable("StudyHypotheses");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyModelRecord", b =>
+                {
+                    b.Property<string>("ModelId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DatasetId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DatasetName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("DatasetVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EvidenceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FeaturesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HoldoutEvidenceId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("HoldoutJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("HypothesisId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("OptionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReviewNotes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewerAgentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("ModelId");
+
+                    b.HasIndex("StudyId");
+
+                    b.ToTable("StudyModels");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyRecord", b =>
+                {
+                    b.Property<string>("StudyId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastRunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Question")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("WorkspaceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("StudyId");
+
+                    b.HasIndex("WorkspaceId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "CreatedAt");
+
+                    b.ToTable("Studies");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyReportRecord", b =>
+                {
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("RunId");
+
+                    b.HasIndex("StudyId");
+
+                    b.ToTable("StudyReports");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudySimulationRecord", b =>
+                {
+                    b.Property<string>("SimulationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("CostUsd")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DatasetName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Decisions")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EvidenceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Participants")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SummaryJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Tokens")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("SimulationId");
+
+                    b.HasIndex("StudyId");
+
+                    b.ToTable("StudySimulations");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudySourceRoleRecord", b =>
+                {
+                    b.Property<string>("StudyId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceKey")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("StudyId", "SourceKey");
+
+                    b.ToTable("StudySourceRoles");
                 });
 
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.TaskPreviewRecord", b =>
@@ -1049,6 +1476,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<string>("Goal")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("pipeline");
 
                     b.Property<string>("Name")
                         .IsRequired()

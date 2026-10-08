@@ -21,15 +21,15 @@ import {
 } from "@/lib/api";
 import { Badge, Button, Card, CardHeader, ErrorBanner, Field, Modal, Toggle, ago, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { formatTokenPrice } from "@/lib/tokenPricing";
 
 /** Prices are entered per million tokens, as providers publish them, and stored per token. */
 const PER_MILLION = 1_000_000;
 const toPerToken = (perMillion: string) => (perMillion.trim() === "" ? null : Number(perMillion) / PER_MILLION);
 const toPerMillion = (perToken: number | null | undefined) =>
   perToken === null || perToken === undefined ? "" : String(Math.round(perToken * PER_MILLION * 10_000) / 10_000);
-const money = (n: number) => (n === 0 ? "free" : `$${n.toFixed(2).replace(/\.00$/, "")}`);
-/** A per-million price as providers write it: "$2", "$2.50", "$0.075". */
-const listPrice = (n: number) => `$${n.toFixed(4).replace(/0{1,2}$/, "").replace(/\.00$/, "")}`;
+const money = (n: number) => (n === 0 ? "free" : formatTokenPrice(n));
+const listPrice = formatTokenPrice;
 
 /** The list price of a model, as the server finds it: snapshots ("gpt-4o-2024-08-06") are priced as
  * their model. None at a custom base URL, which is another service with its own prices. */
@@ -183,7 +183,7 @@ export function ModelSettings({ canEdit }: { canEdit: boolean }) {
               </div>
               <div className="w-40 text-xs text-zinc-500">
                 <div className="tabular-nums text-zinc-800 dark:text-zinc-200">{money(r.inM)} in · {money(r.outM)} out</div>
-                <div>per million tokens</div>
+                <div>USD per 1 million tokens</div>
                 {r.unpriced && <div className="text-amber-700 dark:text-amber-400">Not priced: using the server&apos;s. Edit to set its price.</div>}
               </div>
               {editable && (
@@ -501,7 +501,7 @@ function ModelSelect({ provider, extra, value, custom, optional = false, onPick,
         {listed.length > 0 && (
           <optgroup label="On the price list">
             {listed.map((m) => (
-              <option key={m.id} value={m.id}>{m.name} · {listPrice(m.input_per_million_usd)} in / {listPrice(m.output_per_million_usd)} out</option>
+              <option key={m.id} value={m.id}>{m.name} · {listPrice(m.input_per_million_usd)} in / {listPrice(m.output_per_million_usd)} out per 1M tokens</option>
             ))}
           </optgroup>
         )}
@@ -540,7 +540,7 @@ function PriceRow({ label, model, listed, asOf, provider, customUrl, overriding,
           <button type="button" className={`text-xs ${link}`} onClick={() => onOverride(true)}>Use a different price</button>
         </div>
         <div className="mt-0.5 text-xs text-zinc-500">
-          {provider}&apos;s list price{asOf && <> as of {new Date(asOf + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</>}.
+          USD per 1 million tokens · {provider}&apos;s standard API list price{asOf && <> as of {new Date(asOf + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</>}.
           {listed.note && <> {listed.note}</>}
         </div>
       </div>
@@ -560,7 +560,7 @@ function PriceRow({ label, model, listed, asOf, provider, customUrl, overriding,
       </div>
       <div className="grid grid-cols-2 gap-3">
         {(["Input", "Output"] as const).map((name, i) => (
-          <Field key={name} label={`${name} per million`}>
+          <Field key={name} label={`${name} · USD per 1 million tokens`}>
             <input type="number" min={0} step="any" required className={inputClass} value={values[i]} placeholder="e.g. 2.50"
               onChange={(e) => onChange(i === 0 ? [e.target.value, values[1]] : [values[0], e.target.value])} />
           </Field>

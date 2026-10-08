@@ -3,8 +3,9 @@
 import { modelChoices, type LlmSettingsView } from "@/lib/api";
 import { cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { formatTokenPrice } from "@/lib/tokenPricing";
 
-const price = (n: number) => (n === 0 ? "free" : `$${n.toFixed(2).replace(/\.00$/, "")}`);
+const price = (n: number) => (n === 0 ? "free" : formatTokenPrice(n));
 
 /**
  * Picks the model a task runs on (docs/llm-settings.md): the organization's default, the server's,
@@ -25,7 +26,7 @@ export function ModelPicker({ view, value, onChange, allowDefault = true, defaul
 }) {
   const choices = modelChoices(view);
   const label = (c: (typeof choices)[number]) =>
-    `${c.name}${c.provider === "Mock" ? " (demo)" : c.name === c.model ? "" : ` · ${c.model}`} — ${price(c.in_per_million)} / ${price(c.out_per_million)} per M`;
+    `${c.name}${c.provider === "Mock" ? " (demo)" : c.name === c.model ? "" : ` · ${c.model}`} — ${price(c.in_per_million)} in / ${price(c.out_per_million)} out · USD per 1M tokens`;
   const defaultChoice = choices.find((c) => c.is_default) ?? choices[0];
 
   return (

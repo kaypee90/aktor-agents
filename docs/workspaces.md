@@ -197,13 +197,30 @@ resets it). Sizes are remembered per browser.
   Both tabs stay loaded, so switching loses neither an unapplied change nor the live history.
 - **Center bottom:** **Run** with an input, and the runs, newest first, with pause, resume and
   cancel for runs in progress and a link to each run's full page.
-- **Right:** Agents (of recent runs), Files, Skills & knowledge, Triggers (schedules,
+- **Right:** Agents (of recent runs), Files, Skills & knowledge (the workspace's own skills and
+  knowledge files and facts, counted on the tab like files), Triggers (schedules,
   webhooks, watches), Integrations, Safety and Events. Clicking an agent, on either canvas or in
   the list, opens its details beside the canvas.
 - **Chat:** a button in the bottom-right corner opens the conversation over the page and hides it
   again; whether it's open is remembered. While it's hidden, the button counts new messages since
   you last had it open (pending approvals show in amber when nothing is unread), and a new message
   shows as a short preview beside it. Your own messages never count as new.
+
+## Cloning, templates and deleting
+
+- **Clone** (header) makes a new workspace with this one's setup, ready to run: goal, pipeline and
+  stage settings, triggers (webhooks get new secret URLs), safety policy, daily budget, and the
+  workspace's own skills and knowledge (unless turned off). Integrations are copied with their
+  secrets for Admins: the secrets are copied inside the server and never sent to the browser.
+  Adding integrations needs the Admin role, so for anyone else they're listed for an Admin to add.
+  A tool switched off on an integration stays off in the copy. **Runs, their results, files, chat
+  and approvals are never copied.**
+- **Save as template** saves the setup as one of the organization's templates
+  ([templates.md](templates.md)): no secrets, knowledge, runs or files.
+- **Delete** (Admins, archived workspaces only) removes the workspace with its integrations and
+  their secrets, triggers, skills, knowledge and its own files. Its runs' history (with their files)
+  and the audit log are kept as the record of what happened. A study's workspace is deleted with
+  its study.
 
 ## Workspaces made before pipelines
 
@@ -234,6 +251,9 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 | `DELETE` | `/api/workspaces/{id}/triggers/{triggerId}` | |
 | `PUT` | `/api/workspaces/{id}/budget` | `{daily_token_limit?, daily_cost_limit_usd?}` |
 | `POST` | `/api/workspaces/{id}/pause` \| `resume` \| `archive` | |
+| `POST` | `/api/workspaces/{id}/clone` | `{name, copy_skills_and_knowledge}`: the setup, not the activity. Reports each integration and trigger, and the new webhook URLs. |
+| `POST` | `/api/workspaces/{id}/export-template` | `{name, description, category}`: an organization template. |
+| `DELETE` | `/api/workspaces/{id}` | Admin; archived workspaces only. |
 | `GET` | `/api/workspaces/{id}/files` | Every run's files (under `run-<number>/`), one entry per file, newest first |
 | `GET` | `/api/workspaces/{id}/files/{artifactId}/content` | Download one file |
 | `GET` | `/api/workspaces/{id}/files.zip` | Every file as one zip, keeping folders |

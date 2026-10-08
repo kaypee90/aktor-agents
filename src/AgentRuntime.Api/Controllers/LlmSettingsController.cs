@@ -354,6 +354,7 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
                 note = m.Note
             }),
             prices_as_of = listed.Count > 0 ? ModelPriceCatalog.AsOf : null,
+            pricing_url = ModelPriceCatalog.SourceUrl(id),
             get_key_url = keyUrl
         };
     }

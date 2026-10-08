@@ -89,6 +89,14 @@ services:
       # Drop third-party plugin DLLs here (trusted code only).
       - ./plugins:/app/plugins:ro
 
+  # The sandbox study analyses run in (docs/studies.md). Nothing runs here: it's built so the API
+  # can start one short-lived, network-less container from it per analysis.
+  analysis-image:
+    build: ./docker/analysis
+    image: aktor-analysis:1
+    entrypoint: ["true"]
+    restart: "no"
+
   web:
     build:
       context: .

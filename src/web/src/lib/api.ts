@@ -136,6 +136,19 @@ export function addKnowledge(key: string, value: string, workspace?: string | nu
   return apiFetch<void>(`/api/memory${scopeQuery(workspace)}`, { method: "POST", body: JSON.stringify({ key, value }) });
 }
 
+/** How much knowledge a scope holds (search results are capped, so counts come from here). */
+export interface KnowledgeSummary {
+  entries: number;
+  files: number;
+  facts: number;
+  from_agents: number;
+  file_names: string[];
+}
+
+export function getKnowledgeSummary(workspace?: string | null) {
+  return apiFetch<KnowledgeSummary>(`/api/memory/summary${scopeQuery(workspace)}`);
+}
+
 /** Deletes one knowledge entry (Admin). */
 export function deleteKnowledge(memoryId: string, workspace?: string | null) {
   return apiFetch<{ deleted: number }>(`/api/memory/${encodeURIComponent(memoryId)}${scopeQuery(workspace)}`, { method: "DELETE" });
@@ -415,10 +428,52 @@ export function listWorkspaceTemplates() {
 /** A workspace from a template: its instructions, safety policy, webhooks and (with the demo
  * system) simulated connections. Returns the webhook paths, which hold a secret. */
 export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true) {
-  return apiFetch<{ workspace_id: string; webhooks: { name: string; path: string | null }[]; sample_input: string | null }>("/api/workspaces/from-template", {
+  return apiFetch<{ workspace_id: string; webhooks?: { name: string; path: string | null }[]; sample_input: string | null }>("/api/workspaces/from-template", {
     method: "POST",
     body: JSON.stringify({ template, name, use_demo_system: useDemoSystem }),
   });
+}
+
+/** What a copy (or a workspace from one of your templates) got: each connection and trigger. */
+export interface WorkspaceCopyResult {
+  workspace_id: string;
+  name?: string;
+  connections: { name: string; plugin_id: string; ok: boolean; message: string }[];
+  triggers: { name: string; kind: string; ok: boolean; message: string; webhook_path: string | null }[];
+  connections_without_secrets?: string[];
+  skills?: number;
+  knowledge?: number;
+}
+
+/** A new workspace with this one's setup (pipeline, triggers, connections, skills, knowledge);
+ * never its runs, files or chat. Connections are copied (with their secrets) for Admins only. */
+export function cloneWorkspace(id: string, name: string, copySkillsAndKnowledge = true) {
+  return apiFetch<WorkspaceCopyResult>(`/api/workspaces/${id}/clone`, {
+    method: "POST", body: JSON.stringify({ name: name || null, copy_skills_and_knowledge: copySkillsAndKnowledge }),
+  });
+}
+
+/** Saves the workspace as one of the organization's templates (no secrets, runs or files). */
+export function exportWorkspaceTemplate(id: string, template: { name?: string; description?: string; category?: string }) {
+  return apiFetch<{ template_id: string; name: string; category: string }>(`/api/workspaces/${id}/export-template`, { method: "POST", body: JSON.stringify(template) });
+}
+
+/** Deletes an archived workspace (Admin). Its runs' history and the audit log stay. */
+export function deleteWorkspace(id: string) {
+  return apiFetch<void>(`/api/workspaces/${id}`, { method: "DELETE" });
+}
+
+export function deleteWorkspaceTemplate(id: string) {
+  return apiFetch<void>(`/api/workspace-templates/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function workspaceTemplateDownloadUrl(id: string) {
+  return `${API_BASE}/api/workspace-templates/${encodeURIComponent(id)}/download`;
+}
+
+/** Adds a template from a downloaded template file's contents. */
+export function importWorkspaceTemplate(json: string) {
+  return apiFetch<import("./workspaceTypes").WorkspaceTemplate>("/api/workspace-templates/import", { method: "POST", body: json });
 }
 
 /** Sends the template's sample event through the workspace's own webhook (starting a run). */
@@ -839,6 +894,8 @@ export type LlmProviderInfo = {
   models: ListedModel[];
   /** When the list prices were copied from the provider; null without any. */
   prices_as_of: string | null;
+  /** Official standard API pricing source; null for local and demo providers. */
+  pricing_url: string | null;
   get_key_url: string | null;
 };
 
@@ -992,8 +1049,8 @@ export type AnalyticsFilter = {
   source?: string | null;
   status?: "running" | "completed" | "failed" | null;
   q?: string | null;
-  /** "tasks" (default) or "workspaces". */
-  scope?: "tasks" | "workspaces" | null;
+  /** "tasks" (default), "workspaces" or "studies". */
+  scope?: "tasks" | "workspaces" | "studies" | null;
   workspace?: string | null;
   /** A model profile id: only what ran on it. */
   model?: string | null;
@@ -1141,5 +1198,287 @@ export function getAnalytics(filter: AnalyticsFilter) {
   for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
   // Days are counted in the viewer's timezone.
   params.set("tz_offset_minutes", String(new Date().getTimezoneOffset()));
-  return apiFetch<Analytics | WorkspaceAnalytics>(`/api/analytics?${params.toString()}`);
+  return apiFetch<Analytics | WorkspaceAnalytics | StudyAnalytics>(`/api/analytics?${params.toString()}`);
 }
+
+// ---- Studies (docs/studies.md) ----
+
+export type StudyStatus = "Draft" | "Running" | "Completed" | "Failed";
+
+export interface StudySummary {
+  study_id: string;
+  name: string;
+  question: string;
+  status: StudyStatus;
+  datasets: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StudyColumn {
+  name: string;
+  original: string;
+  kind: "numeric" | "categorical" | "datetime" | "text" | "boolean";
+  dtype: string;
+  missing: number;
+  distinct: number;
+  min?: number | string | null;
+  max?: number | string | null;
+  mean?: number | null;
+  std?: number | null;
+  median?: number | null;
+  top_values?: { value: string; count: number }[];
+}
+
+export interface StudyDataset {
+  dataset_id: string;
+  name: string;
+  file_name: string;
+  version: number;
+  kind: "uploaded" | "simulated";
+  rows: number;
+  train_rows: number;
+  holdout_rows: number;
+  holdout_fraction: number;
+  time_column: string | null;
+  size_bytes: number;
+  profile: { columns?: StudyColumn[]; sample?: Record<string, unknown>[]; notes?: string[] };
+  dictionary: Record<string, string>;
+  created_at: string;
+}
+
+export interface StudyCoefficient {
+  term: string;
+  coef: number;
+  std_err?: number | null;
+  p_value?: number | null;
+  ci_low?: number | null;
+  ci_high?: number | null;
+  odds_ratio?: number | null;
+}
+
+export interface StudyFit {
+  method: string;
+  n: number;
+  coefficients: StudyCoefficient[];
+  metrics: Record<string, number | null>;
+  cross_validation?: Record<string, number> | null;
+  diagnostics?: Record<string, unknown>;
+  warnings?: string[];
+  forecast?: { step: number; mean: number; ci_low: number; ci_high: number }[];
+  backtest?: { holdout_steps: number; rmse: number; mape: number | null };
+  order?: number[];
+}
+
+export interface StudyModel {
+  model_id: string;
+  method: "linear_regression" | "logistic_regression" | "arima";
+  dataset: string;
+  dataset_version: number;
+  target: string;
+  features: string[];
+  hypothesis_id: string | null;
+  author: string;
+  status: "candidate" | "accepted" | "rejected";
+  reviewer: string | null;
+  review_notes: string | null;
+  result: StudyFit;
+  holdout: { method: string; n: number; metrics: Record<string, number | null> } | null;
+  evidence_id: string;
+  holdout_evidence_id: string | null;
+  created_at: string;
+}
+
+export interface SimulationSummary {
+  shares: { condition: string; round: number; n: number; shares: Record<string, number> }[];
+  effects: { condition: string; versus: string; difference: Record<string, number> }[];
+  warnings: string[];
+  calibration?: { option: string; real_rate: number; simulated_rate: number; gap: number; calibrated: boolean; evidence_id: string | null };
+  participants: number;
+  decisions: number;
+  unanswered: number;
+  stopped_for_cost: boolean;
+  cost_usd: number;
+  model: string;
+}
+
+export interface StudySimulation {
+  simulation_id: string;
+  name: string;
+  dataset: string;
+  participants: number;
+  decisions: number;
+  cost_usd: number;
+  summary: SimulationSummary;
+  evidence_id: string;
+  created_at: string;
+}
+
+export interface StudyFinding {
+  claim: string;
+  evidence: string[];
+  models?: string[];
+  confidence: "high" | "medium" | "low";
+  status: "supported" | "interpretation";
+  simulated: boolean;
+  evidence_kinds: string[];
+}
+
+export interface StudyReportContent {
+  summary: string;
+  findings: StudyFinding[];
+  limitations: string[];
+  open_questions?: string[];
+  recommendations?: string[];
+  data_coverage: { source: string; role: string; reason: string | null; evidence_count: number }[];
+  warnings: string[];
+  checked_at: string;
+}
+
+export interface StudyDetail {
+  study_id: string;
+  name: string;
+  question: string;
+  workspace_id: string;
+  status: StudyStatus;
+  created_at: string;
+  updated_at: string;
+  datasets: StudyDataset[];
+  simulated_datasets: StudyDataset[];
+  documents: { files: string[]; facts: number };
+  connections: { connection_id: string; name: string; tools: number; error: string | null }[];
+  data_use_plan: { source: string; role: string; reason: string | null; evidence_count: number }[];
+  runs: { task_id: string; status: string; instructions: string; created_at: string; completed_at: string | null; summary: string | null; has_report: boolean }[];
+  models: StudyModel[];
+  hypotheses: { hypothesis_id: string; statement: string; rationale: string | null; agent_id: string; created_at: string }[];
+  simulations: StudySimulation[];
+  report: { run_id: string; created_at: string; content: StudyReportContent } | null;
+  evidence_count: number;
+}
+
+export interface StudyEvidence {
+  evidence_id: string;
+  kind: "query" | "model" | "analysis" | "holdout" | "passage" | "connection" | "simulation";
+  run_id: string | null;
+  agent_id: string;
+  sources: string[];
+  summary: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export function listStudies() {
+  return apiFetch<StudySummary[]>("/api/studies");
+}
+
+export function createStudy(name: string, question: string) {
+  return apiFetch<StudyDetail>("/api/studies", { method: "POST", body: JSON.stringify({ name, question }) });
+}
+
+export function getStudy(id: string) {
+  return apiFetch<StudyDetail>(`/api/studies/${encodeURIComponent(id)}`);
+}
+
+export function updateStudy(id: string, patch: { name?: string; question?: string }) {
+  return apiFetch<StudyDetail>(`/api/studies/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteStudy(id: string) {
+  return apiFetch<void>(`/api/studies/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Each file becomes a dataset (or a new version of one), profiled and split; the result says which didn't. */
+export function addStudyDatasets(id: string, files: File[]) {
+  return postFiles<{ file_name: string; error: string | null; dataset?: StudyDataset }[]>(`/api/studies/${encodeURIComponent(id)}/datasets`, files);
+}
+
+export function updateStudyDataset(id: string, datasetId: string, patch: { dictionary?: Record<string, string>; time_column?: string; holdout_fraction?: number }) {
+  return apiFetch<StudyDataset>(`/api/studies/${encodeURIComponent(id)}/datasets/${encodeURIComponent(datasetId)}`, { method: "PUT", body: JSON.stringify(patch) });
+}
+
+export function deleteStudyDataset(id: string, datasetId: string) {
+  return apiFetch<void>(`/api/studies/${encodeURIComponent(id)}/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+}
+
+export function studyDatasetUrl(id: string, datasetId: string) {
+  return `${API_BASE}/api/studies/${encodeURIComponent(id)}/datasets/${encodeURIComponent(datasetId)}/download`;
+}
+
+export function startStudyRun(id: string, instructions?: string, model?: string | null) {
+  return apiFetch<{ task_id: string }>(`/api/studies/${encodeURIComponent(id)}/runs`, { method: "POST", body: JSON.stringify({ instructions: instructions || null, model: model || null }) });
+}
+
+export function listStudyEvidence(id: string) {
+  return apiFetch<StudyEvidence[]>(`/api/studies/${encodeURIComponent(id)}/evidence`);
+}
+
+export function getStudyEvidence(id: string, evidenceId: string) {
+  return apiFetch<StudyEvidence>(`/api/studies/${encodeURIComponent(id)}/evidence/${encodeURIComponent(evidenceId)}`);
+}
+
+export function studyFileUrl(id: string, name: string) {
+  return `${API_BASE}/api/studies/${encodeURIComponent(id)}/files/${encodeURIComponent(name)}`;
+}
+
+export function studyNotebookUrl(id: string) {
+  return `${API_BASE}/api/studies/${encodeURIComponent(id)}/notebook`;
+}
+
+export type StudyAnalytics = {
+  scope: "studies";
+  range: { from: string; to: string; bucket: "hour" | "day" };
+  totals: {
+    studies: number;
+    active_studies: number;
+    runs: number;
+    completed: number;
+    failed: number;
+    running: number;
+    tokens: number;
+    cost_usd: number;
+    avg_cost_usd: number;
+    p50_duration_s: number | null;
+    p95_duration_s: number | null;
+    usage: AnalyticsTokenUsage;
+  };
+  spend_by_stage: { stage: string; cost_usd: number; tokens: number }[];
+  analyses: {
+    by_tool: { tool: string; calls: number; failures: number; avg_duration_ms: number | null; total_duration_ms: number }[];
+    models_by_method: { method: string; models: number; accepted: number; rejected: number; candidates: number; holdout_scored: number }[];
+    compute_ms: number;
+  };
+  simulations: {
+    count: number;
+    participants: number;
+    decisions: number;
+    cost_usd: number;
+    calibrated: number;
+    avg_calibration_gap: number | null;
+    warnings: number;
+    recent: { study: string | null; name: string; participants: number; decisions: number; cost_usd: number; calibration_gap: number | null; created_at: string }[];
+  };
+  data_sources: {
+    datasets_added: number;
+    bytes_added: number;
+    rows_added: number;
+    connection_calls: number;
+    connection_failures: number;
+    by_connection: { connection: string; calls: number; failures: number; avg_duration_ms: number | null }[];
+  };
+  evidence: {
+    by_kind: { kind: string; count: number }[];
+    reports: number;
+    findings_supported: number;
+    findings_interpretation: number;
+    findings_simulated: number;
+    reports_rejected: number;
+    reviews_accepted: number;
+    reviews_rejected: number;
+  };
+  series: { t: string; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];
+  by_model: AnalyticsModelRow[];
+  by_user: AnalyticsUserRow[];
+  by_study: { study_id: string | null; name: string; runs: number; cost_usd: number; tokens: number }[];
+  top_by_cost: AnalyticsTaskRow[];
+  slowest: AnalyticsTaskRow[];
+};
