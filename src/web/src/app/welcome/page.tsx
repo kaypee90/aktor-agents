@@ -35,12 +35,46 @@ const features = [
   {
     icon: Icons.Connect,
     title: "Works with your stack",
-    body: "Start runs from the dashboard, the REST API, or over MCP, A2A and ACP from Claude Code, n8n, CrewAI and more.",
+    body: "Start runs from the dashboard, the REST API, or over MCP, A2A and ACP from Claude Code, n8n, CrewAI and more. Results arrive by Slack, SMS, email or Telegram.",
+  },
+];
+
+// What people do with it: the product's areas, as they appear in the dashboard.
+const products = [
+  {
+    icon: Icons.Tasks,
+    title: "Tasks",
+    body: "Chat with a team like you would with an assistant. Detailed answers with copyable commands, follow-ups that keep every step, files in, and Word, PDF, Excel and slide decks out.",
+  },
+  {
+    icon: Icons.Workspaces,
+    title: "Workspaces",
+    body: "Reusable pipelines of agents you edit in plain language or on a canvas. Run them on schedules, webhooks and watches; clone them or share them as templates.",
+  },
+  {
+    icon: Icons.Simulation,
+    title: "Studies",
+    body: "Research a question with your own data. Statistics run in a sandbox, a second agent reviews every model, simulated experiments are calibrated against real data, and every finding cites its evidence.",
+  },
+  {
+    icon: Icons.Knowledge,
+    title: "Knowledge and skills",
+    body: "Upload documents and facts, teach your ways of working as skills, and point agents at either with an @mention.",
+  },
+  {
+    icon: Icons.Connect,
+    title: "Your APIs as tools and MCP servers",
+    body: "Connect MCP servers and REST APIs, add endpoints by hand or from OpenAPI, and serve them to Claude Code or n8n as an MCP server. The credential never leaves the vault.",
+  },
+  {
+    icon: Icons.Analytics,
+    title: "Any model, every token counted",
+    body: "Anthropic, OpenAI, Gemini or local Ollama models with list prices built in. Switch a task's model at any time and see spend by model, role, tool and token kind.",
   },
 ];
 
 const steps = [
-  { title: "Describe the outcome", body: "A report, an analysis, a code change. Attach files for context." },
+  { title: "Describe the outcome", body: "A report, an analysis, a code change. Attach files, @mention knowledge, and see the cost estimate first." },
   { title: "Watch the team form", body: "The live graph shows agents spawning, working and messaging each other." },
   { title: "Get the result", body: "The root agent checks the work, assembles the final artifacts and reports." },
 ];
@@ -83,6 +117,7 @@ export default function WelcomePage() {
             <span className="text-base font-semibold tracking-tight">Aktor</span>
           </Link>
           <nav className="ml-6 hidden gap-5 text-sm text-zinc-600 md:flex dark:text-zinc-400">
+            <a href="#products" className="hover:text-zinc-900 dark:hover:text-zinc-100">Product</a>
             <a href="#features" className="hover:text-zinc-900 dark:hover:text-zinc-100">Features</a>
             <a href="#how" className="hover:text-zinc-900 dark:hover:text-zinc-100">How it works</a>
           </nav>
@@ -155,6 +190,24 @@ export default function WelcomePage() {
               competitor-research → market-research · InformationRequest
             </div>
           </div>
+        </div>
+      </section>
+
+      <section id="products" className="mx-auto max-w-6xl scroll-mt-16 px-4 pt-20 sm:px-6">
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">One workspace for work done by agent teams.</h2>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
+          Ask once, run it every day, or research it properly: the same governed teams behind each.
+        </p>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {products.map((f) => (
+            <div key={f.title} className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
+                <f.icon className="h-4 w-4" />
+              </span>
+              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{f.title}</h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{f.body}</p>
+            </div>
+          ))}
         </div>
       </section>
 
