@@ -19,6 +19,8 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     public sealed record UpdateBody(string? Name, string? Question, string? Model);
     public sealed record DatasetBody(Dictionary<string, string>? Dictionary, string? TimeColumn, double? HoldoutFraction);
     public sealed record RunBody(string? Instructions, string? Model);
+    /// <summary>spec: run_simulation's arguments (docs/studies.md); model: a profile id, left out the study's.</summary>
+    public sealed record ExperimentBody(System.Text.Json.Nodes.JsonObject? Spec, string? Model);
 
     private async Task<IActionResult> Handle(Func<Task<IActionResult>> action)
     {
@@ -104,6 +106,21 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     [Authorize(Policies.Member)]
     public Task<IActionResult> Run(string id, [FromBody] RunBody? body, CancellationToken ct) => Handle(async () =>
         Ok(await studies.StartRunAsync(access.TenantId, id, body?.Instructions, HttpContext.Caller().ActorId, body?.Model, ct)));
+
+    /// <summary>Starts an experiment set up by hand; it runs in the background and shows on the study.</summary>
+    [HttpPost("{id}/experiments")]
+    [Authorize(Policies.Member)]
+    public Task<IActionResult> Experiment(string id, [FromBody] ExperimentBody body, CancellationToken ct) => Handle(async () =>
+        Accepted(await studies.StartExperimentAsync(access.TenantId, id, body.Spec, body.Model, Who(), ct)));
+
+    /// <summary>Dismisses an experiment that failed.</summary>
+    [HttpDelete("{id}/experiments/{experimentId}")]
+    [Authorize(Policies.Member)]
+    public Task<IActionResult> DismissExperiment(string id, string experimentId, CancellationToken ct) => Handle(async () =>
+    {
+        await studies.DismissExperimentAsync(access.TenantId, id, experimentId, ct);
+        return NoContent();
+    });
 
     [HttpGet("{id}/evidence")]
     public Task<IActionResult> Evidence(string id, CancellationToken ct) => Handle(async () => Ok(await studies.ListEvidenceAsync(access.TenantId, id, ct)));

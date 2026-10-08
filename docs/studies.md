@@ -87,6 +87,28 @@ structured decision with the run's model (its fast model, if it has one), and sa
 condition and round, the calibration gap, and a **low diversity** warning when nearly everyone
 chose the same.
 
+### Running an experiment yourself
+
+Once no run of the study is in progress, **Run experiment** on the Experiments tab sets one up by
+hand, and **Run again with changes** on an experiment fills the form with its population,
+conditions, decision, facts and calibration. You choose:
+
+- the **participants**, **rounds**, **repeated runs** (each with new people) and the **seed**
+  (same seed, same people), within the same caps as an agent's experiment;
+- **word of mouth** (with more than one round);
+- the **decision**: its question, options, and an optional number with its range;
+- up to three **conditions**, the first being the control;
+- the **population**: segments with their share, description, fixed attributes and numeric
+  attributes drawn per participant;
+- **facts** everyone knows, a **calibration** rate, and the **model** participants decide with.
+
+The experiment runs in the background (one at a time per study) with a progress bar, and is saved
+like an agent's: a simulated dataset, evidence, and a card marked *set up by hand* (agent `person`,
+no run). Its cost counts against the study's daily budget, and it stops at the same cost limit. A
+population an agent built cites its evidence; one you set up from scratch may cite none, and is
+recorded as set up by you. If the server restarts or the experiment fails, it shows as failed with
+the reason until you dismiss it.
+
 Simulated people are not real people: they are more alike and more agreeable than real
 populations. The report always labels simulated findings separately from findings based on real
 data, and agents are told to treat them as directional evidence.
@@ -111,13 +133,15 @@ reviews).
 |---|---|---|
 | GET | `/api/studies` | The organization's studies. |
 | POST | `/api/studies` | `{name, question, model}` (a model profile id; left out, the organization's default). Member. |
-| GET | `/api/studies/{id}` | The study with its sources, plan, runs, models, hypotheses and latest report. |
+| GET | `/api/studies/{id}` | The study with its sources, plan, runs, models, hypotheses, experiments (and those in progress, `pending_experiments`), `experiment_limits` and latest report. |
 | PATCH | `/api/studies/{id}` | `{name, question, model}` (`""` for the organization's default). Member. |
 | DELETE | `/api/studies/{id}` | Deletes the study and everything in it. Admin. |
 | POST | `/api/studies/{id}/datasets` | Multipart `files`: adds datasets (a file with the same name adds a new version). |
 | PUT | `/api/studies/{id}/datasets/{datasetId}` | `{dictionary, time_column, holdout_fraction}`; re-splits when the holdout changes. |
 | DELETE | `/api/studies/{id}/datasets/{datasetId}` | Removes a dataset. |
 | POST | `/api/studies/{id}/runs` | Starts a run; `{instructions, model}` optional (model: for this run only). Returns the task. |
+| POST | `/api/studies/{id}/experiments` | `{spec, model}`: starts an experiment by hand (`spec` as `run_simulation`'s arguments; population evidence optional). 409 while a run or another experiment is in progress. Member. |
+| DELETE | `/api/studies/{id}/experiments/{experimentId}` | Dismisses a failed experiment. Member. |
 | GET | `/api/studies/{id}/evidence/{evidenceId}` | One piece of evidence: what was run and what came back. |
 | GET | `/api/studies/{id}/files/{name}` | A chart an analysis saved. |
 | GET | `/api/studies/{id}/notebook` | The notebook export. |

@@ -1,10 +1,12 @@
 "use client";
 
-import type { StudyDetail, StudyModel, StudySimulation } from "@/lib/api";
+import { useState } from "react";
+import { apiErrorMessage, dismissStudyExperiment, type ExperimentSpec, type ModelChoice, type StudyDetail, type StudyModel, type StudySimulation } from "@/lib/api";
 import { Markdown } from "@/components/files/Markdown";
-import { Badge, Card, CardHeader, EmptyState, ago, cx } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, EmptyState, ErrorBanner, ago, cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 import { EvidenceChip, ROLE_LABEL, num, pct } from "./StudyEvidence";
+import { ExperimentForm } from "./ExperimentForm";
 
 const METHOD_LABEL: Record<string, string> = { linear_regression: "Linear regression", logistic_regression: "Logistic regression", arima: "ARIMA" };
 const METRIC_LABEL: Record<string, string> = {
@@ -220,25 +222,88 @@ function Metrics({ title, metrics, highlight }: { title: string; metrics: Record
 }
 
 /** Simulated experiments: choice shares per condition, effects against the control, calibration. */
-export function StudyExperiments({ study }: { study: StudyDetail }) {
-  if (study.simulations.length === 0) {
-    return <EmptyState icon={<Icons.Simulation className="h-5 w-5" />} title="No experiments yet"
-      description="When agents run a simulation, a population built from your data reacts to the scenario under control and treatment conditions. Every decision becomes a dataset, and the results show here." />;
+/**
+ * The study's experiments: the agents' and the ones people ran by hand. Once no run is in
+ * progress, people can start one, from scratch or from an earlier one with changes.
+ */
+export function StudyExperiments({ study, canEdit, models, onChanged }: {
+  study: StudyDetail; canEdit: boolean; models: ModelChoice[]; onChanged: () => void;
+}) {
+  // The experiment the form starts from: null for a blank one; undefined while closed.
+  const [form, setForm] = useState<ExperimentSpec | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const runInProgress = study.status === "Running";
+  const experimentRunning = study.pending_experiments.some((p) => p.status === "running");
+  const blockedReason = runInProgress ? "A run of this study is in progress; run an experiment once it's done."
+    : experimentRunning ? "An experiment is running; start another once it's done." : null;
+
+  async function dismiss(experimentId: string) {
+    try {
+      await dismissStudyExperiment(study.study_id, experimentId);
+      onChanged();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    }
   }
 
+  const empty = study.simulations.length === 0 && study.pending_experiments.length === 0;
   return (
     <div className="space-y-5">
-      <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-        Simulated people are not real people: they tend to be more alike and more agreeable. Treat these results as directional, and trust them more when the calibration gap is small.
-      </p>
-      {study.simulations.map((s) => <SimulationCard key={s.simulation_id} simulation={s} />)}
+      <ErrorBanner error={error} onClose={() => setError(null)} />
+      {canEdit && (
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {blockedReason && <span className="text-xs text-zinc-500">{blockedReason}</span>}
+          <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} disabled={!!blockedReason} onClick={() => setForm(null)}>Run experiment</Button>
+        </div>
+      )}
+      {empty ? (
+        <EmptyState icon={<Icons.Simulation className="h-5 w-5" />} title="No experiments yet"
+          description="When agents run a simulation, a population built from your data reacts to the scenario under control and treatment conditions. Every decision becomes a dataset, and the results show here. You can also set one up yourself with Run experiment." />
+      ) : (
+        <>
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            Simulated people are not real people: they tend to be more alike and more agreeable. Treat these results as directional, and trust them more when the calibration gap is small.
+          </p>
+          {study.pending_experiments.map((p) => (
+            <Card key={p.experiment_id} className="px-5 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-zinc-900 dark:text-zinc-100">{p.name}</div>
+                  <div className="mt-0.5 text-xs text-zinc-500">Started by {p.started_by} · {ago(p.started_at)}</div>
+                </div>
+                {p.status === "running"
+                  ? <Badge tone="blue">running</Badge>
+                  : <Button size="sm" variant="ghost" onClick={() => dismiss(p.experiment_id)}>Dismiss</Button>}
+              </div>
+              {p.status === "running" ? (
+                <div className="mt-3">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                    <div className="h-full rounded-full bg-brand-500 transition-[width]" style={{ width: `${p.planned ? Math.min(100, (p.done / p.planned) * 100) : 0}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] tabular-nums text-zinc-500">{p.done} of up to {p.planned} decisions</div>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-red-700 dark:text-red-400">Failed: {p.error}</p>
+              )}
+            </Card>
+          ))}
+          {study.simulations.map((s) => (
+            <SimulationCard key={s.simulation_id} simulation={s}
+              onRerun={canEdit && !blockedReason ? () => setForm(s.spec) : undefined} />
+          ))}
+        </>
+      )}
+      {form !== undefined && (
+        <ExperimentForm study={study} models={models} from={form} onClose={() => setForm(undefined)}
+          onStarted={() => { setForm(undefined); onChanged(); }} />
+      )}
     </div>
   );
 }
 
 const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16", "#a855f7", "#ef4444"];
 
-function SimulationCard({ simulation: s }: { simulation: StudySimulation }) {
+function SimulationCard({ simulation: s, onRerun }: { simulation: StudySimulation; onRerun?: () => void }) {
   const summary = s.summary;
   const lastRound = Math.max(1, ...summary.shares.map((x) => x.round));
   const final = summary.shares.filter((x) => x.round === lastRound);
@@ -246,13 +311,19 @@ function SimulationCard({ simulation: s }: { simulation: StudySimulation }) {
   return (
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4 dark:border-zinc-800">
-        <div>
-          <div className="font-semibold text-zinc-900 dark:text-zinc-100">{s.name}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 font-semibold text-zinc-900 dark:text-zinc-100">
+            {s.name}
+            {s.manual ? <Badge tone="neutral">set up by hand</Badge> : <Badge tone="blue">by an agent</Badge>}
+          </div>
           <div className="mt-0.5 text-xs text-zinc-500">
             {s.participants} participants · {s.decisions} decisions · ${s.cost_usd.toFixed(2)} · dataset <span className="font-mono">{s.dataset}</span> · {ago(s.created_at)}
           </div>
         </div>
-        <EvidenceChip id={s.evidence_id} />
+        <div className="flex items-center gap-2">
+          {onRerun && <Button size="sm" icon={<Icons.Play className="h-3.5 w-3.5" />} onClick={onRerun}>Run again with changes</Button>}
+          <EvidenceChip id={s.evidence_id} />
+        </div>
       </div>
       <div className="space-y-4 p-5">
         <div className="space-y-2">

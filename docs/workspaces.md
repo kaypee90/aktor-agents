@@ -184,6 +184,13 @@ is marked **in progress** while its author is still running, **unfinished** if i
 Every section is resizable: drag a divider (or focus it and use the arrow keys; double-click
 resets it). Sizes are remembered per browser.
 
+Every section can also be hidden, to give the canvas the room on a smaller screen. The buttons at
+the right of the canvas tabs show or hide the workspace list, the header (page title and the
+workspace's goal, triggers and budget), the runs and the side panel; **Focus** (or Shift+F) hides
+all of them at once, and again brings back what was shown. Hidden sections keep their state, and
+the layout is remembered per browser. On a first visit from a screen under 1280 pixels wide, the
+list and the side panel start hidden. Pending approvals still show when the header is hidden.
+
 - **Left:** your workspaces.
 - **Center top, Live agents:** the team at work. You sit at the top, each
   recent run below you, its stage agents below the run, and their helpers below them, joined by

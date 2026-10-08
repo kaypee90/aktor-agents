@@ -27,6 +27,7 @@ import { Icons } from "@/components/ui/icons";
 import { StudySources } from "@/components/studies/StudySources";
 import { StudyExperiments, StudyModels, StudyReport } from "@/components/studies/StudyFindings";
 import { EvidenceChip, EvidenceProvider, KIND_TONE, ROLE_LABEL } from "@/components/studies/StudyEvidence";
+import { ModelField, modelName } from "@/components/studies/ModelField";
 
 /**
  * Studies (docs/studies.md): research projects with their own data, documents and connections.
@@ -147,12 +148,13 @@ function StudyView({ id }: { id: string }) {
   useEffect(() => {
     getLlmSettings().then((v) => setModels(modelChoices(v))).catch(() => { /* the default model is used */ });
   }, []);
-  // While a run is in progress, its models, experiments and report fill in.
+  // While a run or an experiment is in progress, its models, experiments and report fill in.
+  const busyNow = study?.status === "Running" || !!study?.pending_experiments.some((p) => p.status === "running");
   useEffect(() => {
-    if (study?.status !== "Running") return;
-    const timer = setInterval(load, 4000);
+    if (!busyNow) return;
+    const timer = setInterval(load, 3000);
     return () => clearInterval(timer);
-  }, [study?.status, load]);
+  }, [busyNow, load]);
 
   function setTab(t: StudyTab) {
     router.replace(`/studies?id=${encodeURIComponent(id)}${t === "overview" ? "" : `&tab=${t}`}`, { scroll: false });
@@ -227,7 +229,7 @@ function StudyView({ id }: { id: string }) {
           { id: "overview", label: "Overview" },
           { id: "sources", label: "Sources", count: study.datasets.length + study.documents.files.length + study.connections.length },
           { id: "models", label: "Models", count: study.models.length },
-          { id: "experiments", label: "Experiments", count: study.simulations.length },
+          { id: "experiments", label: "Experiments", count: study.simulations.length + study.pending_experiments.filter((p) => p.status === "running").length },
           { id: "evidence", label: "Evidence", count: study.evidence_count },
           { id: "report", label: "Report" },
         ]} />
@@ -294,7 +296,7 @@ function StudyView({ id }: { id: string }) {
         )}
         {tab === "sources" && <StudySources study={study} canEdit={canEdit} onChanged={load} />}
         {tab === "models" && <StudyModels study={study} />}
-        {tab === "experiments" && <StudyExperiments study={study} />}
+        {tab === "experiments" && <StudyExperiments study={study} canEdit={canEdit} models={models} onChanged={load} />}
         {tab === "evidence" && <EvidenceList studyId={id} refreshKey={study.evidence_count} />}
         {tab === "report" && <StudyReport study={study} />}
       </div>
@@ -378,27 +380,5 @@ function EvidenceList({ studyId, refreshKey }: { studyId: string; refreshKey: nu
         ))}
       </ul>
     </Card>
-  );
-}
-
-function modelName(models: ModelChoice[], id: string | null) {
-  if (!id) return "Organization default";
-  const m = models.find((x) => x.id === id);
-  return m ? (m.provider === "Mock" ? "Mock (demo)" : `${m.name} · ${m.provider}`) : id;
-}
-
-/** The provider and model a study (or one run of it) uses. */
-function ModelField({ models, value, onChange, hint }: { models: ModelChoice[]; value: string; onChange: (id: string) => void; hint?: string }) {
-  return (
-    <Field label="Model" hint={hint ?? "Its runs and simulated participants use this model. Add models under Settings → AI model."}>
-      <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Organization default</option>
-        {models.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name} · {m.provider === "Mock" ? "demo" : `${m.provider} ${m.model}`}{m.in_per_million ? ` · $${m.in_per_million} in / $${m.out_per_million} out` : ""}
-          </option>
-        ))}
-      </select>
-    </Field>
   );
 }

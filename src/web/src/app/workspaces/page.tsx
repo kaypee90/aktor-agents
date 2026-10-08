@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Button, PageHeader, StatusBadge, cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { getPipelineRun, getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
 import type { PipelineRunView } from "@/lib/pipelineTypes";
 import type { RuntimeEvent } from "@/lib/types";
@@ -26,6 +26,35 @@ const LAST_KEY = "aktor:lastWorkspaceId";
 const VIEW_KEY = "aktor:workspaceView";
 
 type CenterView = "live" | "pipeline";
+
+const LAYOUT_KEY = "aktor:workspaceLayout";
+
+/** Which sections around the canvas are shown; hiding them gives the canvas the room. */
+interface Layout {
+  /** The list of workspaces. */
+  list: boolean;
+  /** The page title and the workspace's header (goal, triggers, budget). */
+  header: boolean;
+  /** Chat, events, files, integrations and safety, on the right. */
+  side: boolean;
+  /** The runs under the canvas. */
+  runs: boolean;
+}
+
+const ALL_SHOWN: Layout = { list: true, header: true, side: true, runs: true };
+const ALL_HIDDEN: Layout = { list: false, header: false, side: false, runs: false };
+
+/** The viewer's last layout; on a first visit from a small screen, the side sections start hidden. */
+function readLayout(): Layout {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (raw) return { ...ALL_SHOWN, ...JSON.parse(raw) };
+    if (window.innerWidth < 1280) return { ...ALL_SHOWN, list: false, side: false };
+  } catch {
+    // Storage or window unavailable: everything shows.
+  }
+  return ALL_SHOWN;
+}
 
 function readView(): CenterView {
   try {
@@ -80,6 +109,36 @@ function Workspaces() {
     setSelectedRunId(runId);
     if (runId) changeView("pipeline");
   }, [changeView]);
+  const [layout, setLayout] = useState<Layout>(readLayout);
+  // The layout before "Focus the canvas", to bring it back.
+  const beforeFocus = useRef<Layout | null>(null);
+  const changeLayout = useCallback((next: Layout) => {
+    setLayout(next);
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(next)); } catch { /* only costs the remembered layout */ }
+  }, []);
+  const focused = !layout.list && !layout.header && !layout.side && !layout.runs;
+  const toggleFocus = useCallback(() => {
+    if (focused) {
+      changeLayout(beforeFocus.current && Object.values(beforeFocus.current).some(Boolean) ? beforeFocus.current : ALL_SHOWN);
+    } else {
+      beforeFocus.current = layout;
+      changeLayout(ALL_HIDDEN);
+    }
+  }, [focused, layout, changeLayout]);
+
+  // Shift+F focuses the canvas and back, unless typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        toggleFocus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleFocus]);
 
   const reloadList = useCallback(() => listWorkspaces().then(setWorkspaces).catch(() => {}), []);
 
@@ -249,11 +308,40 @@ function Workspaces() {
         {label}
       </button>
     );
+    const toggle = (key: keyof Layout, label: string, icon: React.ReactNode) => (
+      <button type="button" aria-pressed={layout[key]} onClick={() => changeLayout({ ...layout, [key]: !layout[key] })}
+        title={`${layout[key] ? "Hide" : "Show"} ${label}`} aria-label={`${layout[key] ? "Hide" : "Show"} ${label}`}
+        className={cx("rounded-md p-1.5 transition-colors",
+          layout[key]
+            ? "text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300")}>
+        {icon}
+      </button>
+    );
+    // Show or hide the sections around the canvas, or hide them all at once (Shift+F).
+    const layoutControls = (
+      <div role="group" aria-label="Sections" className="ml-auto flex shrink-0 items-center gap-0.5 py-1 pl-2">
+        {toggle("list", "the workspace list", <Icons.PanelLeft className="h-3.5 w-3.5" />)}
+        {toggle("header", "the header", <Icons.PanelTop className="h-3.5 w-3.5" />)}
+        {toggle("runs", "the runs", <Icons.PanelBottom className="h-3.5 w-3.5" />)}
+        {toggle("side", "the side panel", <Icons.PanelRight className="h-3.5 w-3.5" />)}
+        <span className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-800" />
+        <button type="button" onClick={toggleFocus} aria-pressed={focused}
+          title={focused ? "Show the sections again (Shift+F)" : "Focus the canvas: hide every section (Shift+F)"}
+          className={cx("inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs transition-colors",
+            focused ? "bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800")}>
+          {focused ? <Icons.Minimize className="h-3.5 w-3.5" /> : <Icons.Maximize className="h-3.5 w-3.5" />}
+          <span className="hidden sm:inline">{focused ? "Exit focus" : "Focus"}</span>
+        </button>
+      </div>
+    );
     // Both views stay mounted, so switching keeps an unapplied change and the live history.
     const center = (
-      <Split direction="vertical" sized="second" initial={260} min={120} minOther={220} storageKey="workspace-runs" label="Resize the runs panel">
+      <Split direction="vertical" sized="second" initial={260} min={120} minOther={220} storageKey="workspace-runs" label="Resize the runs panel"
+        collapse={layout.runs ? null : "second"}>
         <div className="flex h-full flex-col">
-          <div role="tablist" className="flex shrink-0 items-center border-b border-zinc-200 px-2 dark:border-zinc-800">
+          <div className="flex shrink-0 items-center border-b border-zinc-200 px-2 dark:border-zinc-800">
+          <div role="tablist" className="flex min-w-0 items-center overflow-x-auto">
             {tab("live", <>
               <Icons.Graph className="h-3.5 w-3.5" /> Live agents
               {working > 0 && (
@@ -263,6 +351,8 @@ function Workspaces() {
               )}
             </>)}
             {tab("pipeline", <><Icons.Workspaces className="h-3.5 w-3.5" /> Pipeline{shownRun && <span className="text-zinc-400">· run #{shownRun.number}</span>}</>)}
+          </div>
+          {layoutControls}
           </div>
           <div className="relative min-h-0 flex-1">
             {/* Hidden by opacity, not visibility: React Flow sets its nodes visible itself. */}
@@ -280,9 +370,11 @@ function Workspaces() {
     const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onChanged={refresh} />;
     main = (
       <div className="relative flex h-full min-w-0 flex-col">
-        <WorkspaceHeader workspace={workspace} onChanged={refresh} />
+        {/* Hidden, not unmounted, so an edit in progress survives hiding the header. */}
+        <div className={cx("shrink-0", !layout.header && "hidden")}><WorkspaceHeader workspace={workspace} onChanged={refresh} /></div>
         <ApprovalBanner workspace={workspace} onDecided={refresh} />
-        <Split className="min-h-0 flex-1" sized="second" initial={380} min={280} max={900} minOther={420} storageKey="workspace-side" label="Resize the side panel">
+        <Split className="min-h-0 flex-1" sized="second" initial={380} min={280} max={900} minOther={420} storageKey="workspace-side" label="Resize the side panel"
+          collapse={layout.side ? null : "second"}>
           <Split sized="second" initial={360} min={260} max={720} minOther={360} storageKey="workspace-agent" label="Resize the agent details">
             {center}
             {selectedAgent ? <AgentDetailsPanel agentId={selectedAgent} onClose={() => setSelectedAgent(null)} /> : null}
@@ -294,9 +386,11 @@ function Workspaces() {
     );
   }
 
+  // The layout applies once a workspace is open: without one, the list and title are how to get to one.
+  const showingWorkspace = !creating && !!workspace?.pipeline;
   return (
     <div className="flex h-full flex-col">
-      <PageHeader
+      {(!showingWorkspace || layout.header) && <PageHeader
         title="Workspaces"
         description="Reusable agent pipelines: describe what you need, adjust the stages in plain language or on the canvas, and run them by hand or from schedules, webhooks and watches."
         actions={
@@ -307,8 +401,9 @@ function Workspaces() {
             </Button>
           </>
         }
-      />
-      <Split className="min-h-0 flex-1" initial={240} min={180} max={480} minOther={600} storageKey="workspace-list" label="Resize the workspace list">
+      />}
+      <Split className="min-h-0 flex-1" initial={240} min={180} max={480} minOther={600} storageKey="workspace-list" label="Resize the workspace list"
+        collapse={!showingWorkspace || layout.list ? null : "first"}>
         {list}
         {main}
       </Split>

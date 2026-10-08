@@ -65,8 +65,10 @@ public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmS
 {
     public const string DecideTool = "decide";
 
-    /// <summary>Parses run_simulation's arguments, clamped to the limits; errors are for the agent.</summary>
-    public static (ExperimentSpec? Spec, List<string> Errors, List<string> Notes) Parse(JsonObject args, StudyOptions limits)
+    /// <summary>Parses run_simulation's arguments, clamped to the limits; errors are for the agent.
+    /// An experiment a person sets up by hand (<paramref name="requireEvidence"/> false) may leave
+    /// the population uncited: the person vouches for it, and the evidence records who ran it.</summary>
+    public static (ExperimentSpec? Spec, List<string> Errors, List<string> Notes) Parse(JsonObject args, StudyOptions limits, bool requireEvidence = true)
     {
         var errors = new List<string>();
         var notes = new List<string>();
@@ -101,7 +103,7 @@ public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmS
         if (segments.Count == 0) errors.Add("population.segments needs at least one segment (name, share, description, attributes).");
         if (segments.Count > 0 && segments.Sum(s => s.Share) <= 0) errors.Add("Segment shares must add up to more than 0.");
         var populationEvidence = StudyReportValidator.Strings(population?["evidence"]);
-        if (populationEvidence.Count == 0)
+        if (populationEvidence.Count == 0 && requireEvidence)
         {
             errors.Add("population.evidence must cite the evidence (from query_dataset, fit_model or documents) the segments " +
                        "and their shares come from: a simulated population has to be built from the study's data.");
@@ -199,12 +201,20 @@ public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmS
         return people;
     }
 
-    public async Task<ExperimentOutcome> RunAsync(ExperimentSpec spec, string tenantId, string runId, string workspaceId, string agentId, CancellationToken ct)
+    /// <summary>The decisions an experiment asks for at most: every participant, in every condition,
+    /// round and replication.</summary>
+    public static int PlannedDecisions(ExperimentSpec spec) => spec.Size * spec.Conditions.Count * spec.Rounds * spec.Replications;
+
+    /// <param name="runId">The study run that started it; null for an experiment a person started.</param>
+    /// <param name="profileId">The model profile when there is no run (null: the organization's default).</param>
+    /// <param name="progress">Decisions asked so far, as they come in.</param>
+    public async Task<ExperimentOutcome> RunAsync(ExperimentSpec spec, string tenantId, string? runId, string workspaceId, string agentId, CancellationToken ct,
+        string? profileId = null, IProgress<int>? progress = null)
     {
         var limits = options.Value;
         var started = System.Diagnostics.Stopwatch.StartNew();
         // The run's model (the study's, or the one picked for the run), so participants decide on it too.
-        var settings = await llmSettings.ResolveAsync(tenantId, await taskModels.GetAsync(runId, ct), ct);
+        var settings = await llmSettings.ResolveAsync(tenantId, runId is null ? profileId : await taskModels.GetAsync(runId, ct), ct);
         var useFast = !string.IsNullOrWhiteSpace(settings.FastModel);
         var model = settings.ModelFor(useFast);
         var tool = DecisionTool(spec);
@@ -270,6 +280,7 @@ public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmS
                                 tokens += response.InputTokens + response.OutputTokens;
                                 cost += callCost;
                                 calls++;
+                                progress?.Report(calls);
                             }
 
                             await events.PublishAsync(new RuntimeEvent

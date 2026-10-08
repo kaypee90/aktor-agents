@@ -56,19 +56,24 @@ public sealed class StudyToolSupport(IStudyStore store, IAnalysisSandbox sandbox
         return keys.Count == 0 ? null : string.Join(",", keys);
     }
 
-    public async Task<StudyEvidence> RecordAsync(StudyInfo study, ToolExecutionRequest request, string kind, string summary, object detail, string? sourceKey)
+    public Task<StudyEvidence> RecordAsync(StudyInfo study, ToolExecutionRequest request, string kind, string summary, object detail, string? sourceKey) =>
+        RecordAsync(study, request.TaskId, request.AgentId, kind, summary, detail, sourceKey, request.CancellationToken);
+
+    /// <summary>Records evidence of a run's agent, or (no run) of a person.</summary>
+    public async Task<StudyEvidence> RecordAsync(StudyInfo study, string? runId, string agentId, string kind, string summary, object detail, string? sourceKey,
+        CancellationToken ct)
     {
         var evidence = new StudyEvidence
         {
             StudyId = study.StudyId,
-            RunId = request.TaskId,
-            AgentId = request.AgentId,
+            RunId = runId,
+            AgentId = agentId,
             Kind = kind,
             SourceKey = sourceKey,
             Summary = summary.Length > 300 ? summary[..300] : summary,
             DetailJson = detail as string ?? JsonSerializer.Serialize(detail, ToolJson.Options)
         };
-        await store.AddEvidenceAsync(evidence, request.CancellationToken);
+        await store.AddEvidenceAsync(evidence, ct);
         return evidence;
     }
 
@@ -541,7 +546,7 @@ public sealed class SetSourceRoleTool(StudyToolSupport support) : ITool
 }
 
 /// <summary>A simulated experiment whose decisions become a dataset.</summary>
-public sealed class RunSimulationTool(StudyToolSupport support, ExperimentRunner runner, IGrainFactory grains) : ITool
+public sealed class RunSimulationTool(StudyToolSupport support, StudyExperiments experiments) : ITool
 {
     public ToolDefinition Definition { get; } = new()
     {
@@ -588,68 +593,17 @@ public sealed class RunSimulationTool(StudyToolSupport support, ExperimentRunner
         var (spec, errors, notes) = ExperimentRunner.Parse(args, support.Options);
         if (spec is null) return ToolExecutionResult.Fail(string.Join(" ", errors));
 
-        // The population and facts must come from this study's evidence.
-        var cited = spec.CitedEvidence.ToList();
-        var known = (await support.Store.GetEvidenceAsync(study.StudyId, cited, ct)).ToDictionary(e => e.EvidenceId);
-        var missing = cited.Where(id => !known.ContainsKey(id)).ToList();
-        if (missing.Count > 0) return ToolExecutionResult.Fail($"These evidence ids don't exist in this study: {string.Join(", ", missing)}.");
-
-        var budget = await grains.GetGrain<IWorkspaceGrain>(study.WorkspaceId).CheckBudget();
-        if (!budget.Allowed) return ToolExecutionResult.Fail($"The study's daily budget doesn't allow a simulation now: {budget.Reason}");
-
-        var outcome = await runner.RunAsync(spec, study.TenantId, request.TaskId, study.WorkspaceId, request.AgentId, ct);
-        // Charged like any model call: to the study's daily budget and the organization's plan.
-        await grains.GetGrain<IWorkspaceGrain>(study.WorkspaceId).RecordUsage(request.AgentId, outcome.Tokens, outcome.CostUsd);
-        await grains.GetGrain<Tenancy.ITenantGrain>(Tenancy.TenantIds.Normalize(study.TenantId)).RecordUsage(new Tenancy.UsageDelta
-        {
-            Tokens = outcome.Tokens, CostUsd = outcome.CostUsd, LlmCalls = outcome.Calls
-        });
-        if (outcome.Rows.Count == 0) return ToolExecutionResult.Fail("No participant made a decision; the simulation produced no data.");
-
-        // The decisions become a dataset like any other (no holdout: it's the experiment's output).
-        var existing = await support.Store.ListDatasetsAsync(study.StudyId, currentOnly: false, ct);
-        var tableName = UniqueTable(existing, "sim_" + ExperimentRunner.ColumnName(spec.Name));
-        var dataset = await StudyIngest.IngestRowsAsync(support, study, tableName, $"{spec.Name} (simulated)", outcome.Rows, ct);
-        if (dataset is null) return ToolExecutionResult.Fail("The simulation ran, but its decisions couldn't be saved as a dataset.");
-
-        var sources = known.Values.Select(e => e.SourceKey).OfType<string>().SelectMany(k => k.Split(',')).Append(StudyRefs.DatasetKey(dataset.Name)).Distinct();
-        var evidence = await support.RecordAsync(study, request, EvidenceKinds.Simulation,
-            $"Simulation '{spec.Name}': {outcome.Participants} participants, {outcome.Rows.Count} decisions",
-            new { spec = args, summary = outcome.Summary, dataset = dataset.Name, notes }, string.Join(",", sources));
-        await support.Store.AddSimulationAsync(new StudySimulation
-        {
-            SimulationId = StudyIds.Short("sim"),
-            StudyId = study.StudyId,
-            RunId = request.TaskId,
-            AgentId = request.AgentId,
-            Name = spec.Name,
-            SpecJson = args.ToJsonString(),
-            SummaryJson = outcome.Summary.ToJsonString(),
-            DatasetName = dataset.Name,
-            EvidenceId = evidence.EvidenceId,
-            Participants = outcome.Participants,
-            Decisions = outcome.Rows.Count,
-            Tokens = outcome.Tokens,
-            CostUsd = outcome.CostUsd,
-            DurationMs = outcome.DurationMs
-        }, ct);
+        var record = await experiments.RunAsync(study, args, spec, notes, request.TaskId, request.AgentId, ct);
+        if (record.Error is not null) return ToolExecutionResult.Fail(record.Error);
 
         return StudyToolSupport.Ok(new
         {
-            evidence_id = evidence.EvidenceId,
-            dataset = dataset.Name,
-            summary = outcome.Summary,
+            evidence_id = record.Simulation!.EvidenceId,
+            dataset = record.Simulation.DatasetName,
+            summary = record.Summary,
             notes,
             reminder = "Simulated people are not real: label findings from this as simulated and directional."
         });
-    }
-
-    private static string UniqueTable(IReadOnlyList<StudyDataset> existing, string name)
-    {
-        name = name.Length > 40 ? name[..40].TrimEnd('_') : name;
-        var candidate = name;
-        for (var i = 2; existing.Any(d => d.Name == candidate); i++) candidate = $"{name}_{i}";
-        return candidate;
     }
 }
 

@@ -1322,9 +1322,32 @@ export interface SimulationSummary {
   model: string;
 }
 
+/** run_simulation's arguments (docs/studies.md, "Experiments"); people set up the same by hand. */
+export interface ExperimentSpec {
+  name: string;
+  population: {
+    size?: number;
+    evidence?: string[];
+    segments: { name: string; share: number; description: string; attributes?: Record<string, string>; ranges?: Record<string, [number, number]> }[];
+  };
+  conditions: { name?: string; scenario: string }[];
+  decision: { question: string; options: string[]; value?: { name: string; min: number; max: number } };
+  facts?: { fact: string; evidence_id?: string }[];
+  rounds?: number;
+  word_of_mouth?: boolean;
+  replications?: number;
+  calibration?: { option: string; rate: number; evidence_id?: string };
+  seed?: number;
+}
+
 export interface StudySimulation {
   simulation_id: string;
   name: string;
+  /** The study run that ran it; null when a person did. */
+  run_id: string | null;
+  agent_id: string;
+  manual: boolean;
+  spec: ExperimentSpec;
   dataset: string;
   participants: number;
   decisions: number;
@@ -1374,6 +1397,9 @@ export interface StudyDetail {
   models: StudyModel[];
   hypotheses: { hypothesis_id: string; statement: string; rationale: string | null; agent_id: string; created_at: string }[];
   simulations: StudySimulation[];
+  /** Experiments people started that aren't saved yet. */
+  pending_experiments: { experiment_id: string; name: string; status: "running" | "failed"; done: number; planned: number; error: string | null; started_by: string; started_at: string }[];
+  experiment_limits: { max_participants: number; max_rounds: number; max_conditions: number; max_replications: number; max_cost_usd: number };
   report: { run_id: string; created_at: string; content: StudyReportContent } | null;
   evidence_count: number;
 }
@@ -1429,6 +1455,15 @@ export function studyDatasetUrl(id: string, datasetId: string) {
 
 export function startStudyRun(id: string, instructions?: string, model?: string | null) {
   return apiFetch<{ task_id: string }>(`/api/studies/${encodeURIComponent(id)}/runs`, { method: "POST", body: JSON.stringify({ instructions: instructions || null, model: model || null }) });
+}
+
+/** Starts an experiment set up by hand; it runs in the background (model: this experiment only). */
+export function startStudyExperiment(id: string, spec: ExperimentSpec, model?: string | null) {
+  return apiFetch<{ experiment_id: string; name: string; planned: number; notes: string[] }>(`/api/studies/${encodeURIComponent(id)}/experiments`, { method: "POST", body: JSON.stringify({ spec, model: model || null }) });
+}
+
+export function dismissStudyExperiment(id: string, experimentId: string) {
+  return apiFetch<void>(`/api/studies/${encodeURIComponent(id)}/experiments/${encodeURIComponent(experimentId)}`, { method: "DELETE" });
 }
 
 export function listStudyEvidence(id: string) {

@@ -58,6 +58,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Studies.StudySources>();
         services.AddSingleton<Studies.StudyToolSupport>();
         services.AddSingleton<Studies.ExperimentRunner>();
+        services.AddSingleton<Studies.StudyExperiments>();
         services.AddSingleton<ITool, Studies.StudySourcesTool>();
         services.AddSingleton<ITool, Studies.QueryDatasetTool>();
         services.AddSingleton<ITool, Studies.RecordHypothesisTool>();

@@ -31,7 +31,9 @@ function writeSize(key: string | undefined, size: number) {
  * pane's `minOther`; the other takes the rest. Drag the divider, or focus it and use the arrow
  * keys (Shift for bigger steps); double-click resets it. With `storageKey` the size is remembered
  * per viewer. A missing second pane (null) hides it and the divider; the first pane keeps its
- * place in the tree, so showing the second again doesn't remount the first.
+ * place in the tree, so showing the second again doesn't remount the first. `collapse` hides
+ * either pane (and the divider) while keeping both mounted, so hiding and showing it again keeps
+ * its state (a canvas's viewport, an unsent message).
  */
 export function Split({
   direction = "horizontal",
@@ -43,6 +45,7 @@ export function Split({
   storageKey,
   className,
   label,
+  collapse,
   children,
 }: {
   /** "horizontal": side by side; "vertical": stacked. */
@@ -56,6 +59,8 @@ export function Split({
   className?: string;
   /** What the divider resizes, for screen readers ("Resize the workspace list"). */
   label?: string;
+  /** Hides this pane and the divider; the other takes all the space. Both stay mounted. */
+  collapse?: "first" | "second" | null;
   children: [React.ReactNode, React.ReactNode | null];
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -106,15 +111,17 @@ export function Split({
 
   const sizedStyle = horizontal ? { width: size } : { height: size };
   const [first, second] = children;
-  const single = second === null || second === undefined || second === false;
+  const missing = second === null || second === undefined || second === false;
+  const single = missing || !!collapse;
 
   return (
     <div ref={container} className={cx("flex h-full min-h-0 w-full min-w-0", horizontal ? "flex-row" : "flex-col", className)}>
-      <div className={cx("min-h-0 min-w-0 overflow-hidden", sized === "first" && !single ? "shrink-0" : "flex-1")} style={sized === "first" && !single ? sizedStyle : undefined}>
+      <div className={cx("min-h-0 min-w-0 overflow-hidden", sized === "first" && !single ? "shrink-0" : "flex-1", collapse === "first" && "hidden")}
+        style={sized === "first" && !single ? sizedStyle : undefined}>
         {first}
       </div>
-      {!single && <>
-      <div
+      {!missing && <>
+      {!single && <div
         role="separator"
         aria-orientation={horizontal ? "vertical" : "horizontal"}
         aria-label={label}
@@ -138,8 +145,9 @@ export function Split({
       >
         {/* A wider invisible grab area than the visible line. */}
         <span className={cx("absolute", horizontal ? "inset-y-0 -left-1.5 -right-1.5" : "inset-x-0 -top-1.5 -bottom-1.5")} />
-      </div>
-      <div className={cx("min-h-0 min-w-0 overflow-hidden", sized === "second" ? "shrink-0" : "flex-1")} style={sized === "second" ? sizedStyle : undefined}>
+      </div>}
+      <div className={cx("min-h-0 min-w-0 overflow-hidden", sized === "second" && !single ? "shrink-0" : "flex-1", collapse === "second" && "hidden")}
+        style={sized === "second" && !single ? sizedStyle : undefined}>
         {second}
       </div>
       </>}

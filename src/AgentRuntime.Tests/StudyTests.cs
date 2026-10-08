@@ -119,6 +119,10 @@ public sealed class StudyTests
         var uncited = Experiment();
         uncited["population"]!["evidence"] = new JsonArray();
         Assert.Contains(ExperimentRunner.Parse(uncited, limits).Errors, e => e.Contains("built from the study's data"));
+        // A person setting one up by hand may leave the population uncited.
+        var (manual, manualErrors, _) = ExperimentRunner.Parse(uncited, limits, requireEvidence: false);
+        Assert.Empty(manualErrors);
+        Assert.Equal(spec.Size * spec.Conditions.Count * spec.Rounds * spec.Replications, ExperimentRunner.PlannedDecisions(manual!));
 
         var badCalibration = Experiment();
         badCalibration["calibration"]!["option"] = "move";

@@ -125,6 +125,15 @@ public sealed class StudiesApiTests(ApiTestHostFixture fixture, ITestOutputHelpe
         var runId = run.GetProperty("task_id").GetString()!;
         Assert.StartsWith("srun-", runId);
         Assert.Equal(HttpStatusCode.Conflict, (await api.PostAsJsonAsync($"/api/studies/{id}/runs", new { })).StatusCode);
+        // Experiments by hand wait for the run to be done.
+        Assert.Equal(HttpStatusCode.Conflict, (await api.PostAsJsonAsync($"/api/studies/{id}/experiments", new
+        {
+            spec = new
+            {
+                name = "early", population = new { size = 2, segments = new[] { new { name = "all", share = 1, description = "You rent." } } },
+                conditions = new[] { new { scenario = "Rent stays." } }, decision = new { question = "Renew?", options = new[] { "renew", "leave" } }
+            }
+        })).StatusCode);
         var done = await Json(await api.GetAsync($"/api/tasks/{runId}/wait?timeout_seconds=240"));
         output.WriteLine(done.ToString());
         Assert.True(done.GetProperty("done").GetBoolean(), "the study run finished");
@@ -152,6 +161,28 @@ public sealed class StudiesApiTests(ApiTestHostFixture fixture, ITestOutputHelpe
         var simulated = detail.GetProperty("simulated_datasets").EnumerateArray().Single();
         Assert.Equal("simulated", simulated.GetProperty("kind").GetString());
         Assert.Equal(0, simulated.GetProperty("holdout_rows").GetInt32());
+        Assert.False(simulation.GetProperty("manual").GetBoolean());
+
+        // Once the run is done, a person runs the agents' experiment again with fewer participants.
+        var spec = System.Text.Json.Nodes.JsonNode.Parse(simulation.GetProperty("spec").GetRawText())!.AsObject();
+        spec["name"] = "by hand";
+        spec["population"]!["size"] = 4;
+        var started = await Json(await api.PostAsJsonAsync($"/api/studies/{id}/experiments", new { spec }));
+        Assert.True(started.GetProperty("planned").GetInt32() > 0);
+        for (var i = 0; i < 120; i++)
+        {
+            detail = await Json(await api.GetAsync($"/api/studies/{id}"));
+            if (!detail.GetProperty("pending_experiments").EnumerateArray().Any()) break;
+            await Task.Delay(500);
+        }
+
+        Assert.Empty(detail.GetProperty("pending_experiments").EnumerateArray());
+        var manual = detail.GetProperty("simulations").EnumerateArray().Single(s => s.GetProperty("name").GetString() == "by hand");
+        Assert.True(manual.GetProperty("manual").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, manual.GetProperty("run_id").ValueKind);
+        Assert.Equal(4, manual.GetProperty("participants").GetInt32());
+        Assert.Equal(2, detail.GetProperty("simulated_datasets").GetArrayLength());
+        Assert.Equal(40, detail.GetProperty("experiment_limits").GetProperty("max_participants").GetInt32());
 
         // The report: checked by the runtime, with the data coverage table.
         var report = detail.GetProperty("report").GetProperty("content");
@@ -170,7 +201,7 @@ public sealed class StudiesApiTests(ApiTestHostFixture fixture, ITestOutputHelpe
         // Analytics has the run under Studies, not under Tasks.
         var analytics = await Json(await api.GetAsync("/api/analytics?range=24h&scope=studies"));
         Assert.Equal(1, analytics.GetProperty("totals").GetProperty("runs").GetInt32());
-        Assert.Equal(1, analytics.GetProperty("simulations").GetProperty("count").GetInt32());
+        Assert.Equal(2, analytics.GetProperty("simulations").GetProperty("count").GetInt32());
         Assert.True(analytics.GetProperty("evidence").GetProperty("findings_supported").GetInt32() >= 1);
         Assert.Equal(0, (await Json(await api.GetAsync("/api/analytics?range=24h"))).GetProperty("totals").GetProperty("runs").GetInt32());
 

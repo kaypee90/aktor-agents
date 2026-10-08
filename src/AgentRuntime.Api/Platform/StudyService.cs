@@ -30,6 +30,8 @@ public sealed class StudyService(
     IGrainFactory grains,
     TaskService tasks,
     LLM.LlmSettingsService modelSettings,
+    StudyExperiments experiments,
+    IHostApplicationLifetime lifetime,
     IOptions<StudyOptions> options,
     ILogger<StudyService> logger)
 {
@@ -148,6 +150,12 @@ public sealed class StudyService(
     public async Task DeleteAsync(string tenantId, string studyId, CancellationToken ct)
     {
         var study = await RequireAsync(tenantId, studyId, ct);
+        if (experiments.Pending(studyId).Any(p => p.Status == "running"))
+        {
+            throw new StudyServiceException("An experiment of this study is still running; delete the study once it's done.", StatusCodes.Status409Conflict);
+        }
+
+        experiments.Forget(studyId);
         var workspace = grains.GetGrain<IWorkspaceGrain>(study.WorkspaceId);
         foreach (var connection in await workspace.ListConnections()) await workspace.RemoveConnection(connection.ConnectionId);
         await workspace.Archive();
@@ -398,6 +406,11 @@ public sealed class StudyService(
             {
                 simulation_id = s.SimulationId,
                 name = s.Name,
+                // Who ran it: a run's agent, or a person (agent "person", no run).
+                run_id = s.RunId,
+                agent_id = s.AgentId,
+                manual = s.AgentId == StudyExperiments.ManualAgentId,
+                spec = JsonNode.Parse(s.SpecJson),
                 dataset = s.DatasetName,
                 participants = s.Participants,
                 decisions = s.Decisions,
@@ -406,6 +419,27 @@ public sealed class StudyService(
                 evidence_id = s.EvidenceId,
                 created_at = s.CreatedAt
             }),
+            // Experiments people started that aren't saved yet (running, or failed with a reason).
+            pending_experiments = experiments.Pending(studyId).Select(p => new
+            {
+                experiment_id = p.ExperimentId,
+                name = p.Name,
+                status = p.Status,
+                done = p.Done,
+                planned = p.Planned,
+                error = p.Error,
+                started_by = p.StartedBy,
+                started_at = p.StartedAt
+            }),
+            // What the runtime allows an experiment, whoever sets it up.
+            experiment_limits = new
+            {
+                max_participants = O.MaxParticipants,
+                max_rounds = O.MaxRounds,
+                max_conditions = O.MaxConditions,
+                max_replications = O.MaxReplications,
+                max_cost_usd = O.MaxSimulationCostUsd
+            },
             report = latest is null ? null : new { run_id = latest.RunId, created_at = latest.CreatedAt, content = JsonNode.Parse(latest.Json) },
             evidence_count = evidenceCount
         };
@@ -501,6 +535,41 @@ public sealed class StudyService(
         }
 
         return task;
+    }
+
+    // ---------------------------------------------------------------- experiments
+
+    /// <summary>
+    /// Starts an experiment a person set up (the same spec as run_simulation; the population may be
+    /// uncited). It runs in the background once no study run is in progress, one at a time, within
+    /// the same limits and budget as an agent's; the result is saved like an agent's experiment.
+    /// </summary>
+    public async Task<object> StartExperimentAsync(string tenantId, string studyId, JsonObject? spec, string? model, string startedBy, CancellationToken ct)
+    {
+        var study = await RequireAsync(tenantId, studyId, ct);
+        if (spec is null) throw new StudyServiceException("Describe the experiment: name, population, conditions and decision.");
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            if (study.LastRunId is { } last && await db.Tasks.AnyAsync(t => t.TaskId == last && t.CompletedAt == null, ct))
+            {
+                throw new StudyServiceException("A run of this study is in progress; run an experiment once it's done.", StatusCodes.Status409Conflict);
+            }
+        }
+
+        var (parsed, errors, notes) = ExperimentRunner.Parse(spec, O, requireEvidence: false);
+        if (parsed is null) throw new StudyServiceException(string.Join(" ", errors));
+        var profileId = await CheckModelAsync(tenantId, model, ct) ?? study.ModelProfileId;
+        var (pending, error) = await experiments.StartManualAsync(Info(study), spec, parsed, notes, profileId, startedBy, lifetime.ApplicationStopping);
+        if (pending is null) throw new StudyServiceException(error ?? "The experiment couldn't start.", StatusCodes.Status409Conflict);
+        await TouchAsync(studyId, ct);
+        return new { experiment_id = pending.ExperimentId, name = pending.Name, planned = pending.Planned, notes };
+    }
+
+    /// <summary>Dismisses an experiment that failed.</summary>
+    public async Task DismissExperimentAsync(string tenantId, string studyId, string experimentId, CancellationToken ct)
+    {
+        await RequireAsync(tenantId, studyId, ct);
+        if (!experiments.Dismiss(studyId, experimentId)) throw new StudyServiceException("No failed experiment with that id.", StatusCodes.Status404NotFound);
     }
 
     private async Task TouchAsync(string studyId, CancellationToken ct)
