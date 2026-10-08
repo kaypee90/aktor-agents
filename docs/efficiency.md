@@ -83,7 +83,7 @@ all the checks.
 ## 3. Model routing
 
 Set `LLM_FAST_MODEL` (e.g. `claude-haiku-4-5-20251001` or `gpt-4o-mini`) and routine work moves to
-it: simulation residents and history summaries. Routine calls also get a smaller output cap
+it: world residents, a study's simulated participants and history summaries. Routine calls also get a smaller output cap
 (`FastMaxOutputTokens`). Task agents and pipeline stages, which do the substantive work, stay on
 `LLM_MODEL` (or the model a stage names). Costs are tracked at each tier's own
 price (`FastPricePerInputTokenUsd`, `FastPricePerOutputTokenUsd`).

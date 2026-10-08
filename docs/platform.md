@@ -1,7 +1,7 @@
 # The platform: organizations, access, API and billing
 
 One server hosts many **organizations** (tenants). Each one has its own members, API keys,
-workspaces, tasks, worlds, agents, memory, scratch database and plan, and none of them can see
+workspaces, tasks, studies, worlds, agents, memory, scratch database and plan, and none of them can see
 another's. The same build runs self-hosted for one team or as a multi-tenant service.
 
 ```mermaid
@@ -19,7 +19,7 @@ flowchart LR
 ## Organizations and isolation
 
 The tenant is stamped by the runtime and inherited, never chosen by an agent.
-- An organization's id is set on every workspace, task and world when it's created, from whoever
+- An organization's id is set on every workspace, task, study and world when it's created, from whoever
   made the request.
 - Every agent those create, and every agent *they* create, inherits the same id.
 - Nothing in a prompt, message or tool call can change it.
@@ -47,8 +47,8 @@ and the first account created on a server takes it over.
 | Role | Can |
 |---|---|
 | Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. |
-| Member | Also create workspaces, tasks and worlds, pick or switch a task's model, instruct agents, add triggers, and decide approvals. |
-| Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys. |
+| Member | Also create workspaces, tasks, studies and worlds, pick or switch a task's or study's model, clone workspaces and save them as templates, add knowledge and datasets, instruct agents, add triggers, and decide approvals. |
+| Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys, and delete knowledge, archived workspaces, studies and organization templates. |
 | Owner | Also manage billing and who is an owner. An organization always keeps at least one owner. |
 
 **Accounts** are email and password.
@@ -217,7 +217,7 @@ only ones who can use **Reset all**, which wipes every organization's work but k
 | `PUT` | `/api/admin/tenants/{id}/plan` | operator | |
 | `GET` | `/openapi/v1.json` | anyone | |
 
-Everything else (`/api/workspaces`, `/api/tasks`, `/api/agents`, `/api/events`, `/api/worlds`,
+Everything else (`/api/workspaces`, `/api/tasks`, `/api/studies`, `/api/agents`, `/api/events`, `/api/worlds`,
 `/ws/events`) needs a signed-in session or a key. Reading needs Viewer or above; changing things
 needs Member, or Admin where noted in [workspaces.md](workspaces.md), [plugins.md](plugins.md) and
 [safety.md](safety.md).

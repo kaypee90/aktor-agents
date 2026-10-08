@@ -66,8 +66,9 @@ never loosen the organization's:
 
 **Tasks** have no policy of their own, but the organization's applies to them too. Nobody is there
 to approve a call in a task, so a call the organization says needs approval doesn't run: the agent
-gets an error saying it needs approval and that a workspace can ask for it. Simulations (Worlds)
-aren't affected.
+gets an error saying it needs approval and that a workspace can ask for it. Worlds (`/api/worlds`)
+aren't affected. A study is a workspace of its own, so its policy and approvals work as for any
+workspace ([studies.md](studies.md)).
 
 In a workspace, the **Safety** tab shows the organization's rules above the workspace's own, and
 autonomy levels below the organization's minimum are marked as overridden. Changes are read live,
@@ -153,9 +154,13 @@ When a call needs approval:
 
 Every action that matters is appended to the workspace's audit log:
 - **Every agent tool call**, with its outcome (`ok`, `failed`, or `unknown` for a call cut off by a
-  crash), arguments, a truncated result and the agent's stated reason. Simulation moves and
+  crash), arguments, a truncated result and the agent's stated reason. World moves and
   `end_turn` aren't recorded.
 - **Blocked calls**, and approvals requested, approved, rejected and expired.
+- **Calls through a connection's MCP gateway** (`gateway.call`), by API key or person, refused ones
+  included ([plugins.md](plugins.md#mcp-gateway-a-connection-as-an-mcp-server)). The workspace's
+  policy applies to them too; one that needs approval is refused, since no one can approve it while
+  the caller waits.
 - **Your commands**, from the chat or channels.
 - **Configuration changes:** policy updates, connections added, changed or removed, triggers added
   and removed, and pause, resume and archive.

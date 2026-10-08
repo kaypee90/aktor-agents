@@ -319,7 +319,12 @@ public sealed class TaskService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct)
                    ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
-        if (task.CompletedAt is not null) throw new TaskServiceException("The task has finished; fork it to continue on another model.", StatusCodes.Status409Conflict);
+        // A finished task takes follow-ups, which run on the model chosen now. Pipeline and study
+        // runs take none (they run again from their workspace or study), so for them it's moot.
+        if (task.CompletedAt is not null && task.Source is "pipeline" or "study")
+        {
+            throw new TaskServiceException("This run has finished; run it again from its workspace or study to use another model.", StatusCodes.Status409Conflict);
+        }
 
         var next = await CheckModelAsync(tenantId, profileId, ct) ?? LLM.ModelProfiles.ServerId;
         var before = await models.ResolveAsync(tenantId, task.ModelProfileId, ct);
@@ -332,7 +337,8 @@ public sealed class TaskService(
             TaskId = taskId,
             TenantId = tenantId,
             AgentId = task.RootAgentId,
-            Summary = $"Model switched from {ModelLabel(before)} to {ModelLabel(after)}{(by is null ? "" : $" by {by}")}. Agents use it from their next step.",
+            Summary = $"Model switched from {ModelLabel(before)} to {ModelLabel(after)}{(by is null ? "" : $" by {by}")}. " +
+                      (task.CompletedAt is null ? "Agents use it from their next step." : "Follow-ups run on it."),
             Data = new Dictionary<string, string>
             {
                 ["from_profile_id"] = before.ProfileId ?? LLM.ModelProfiles.ServerId,

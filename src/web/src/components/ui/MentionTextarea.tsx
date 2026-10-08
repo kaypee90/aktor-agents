@@ -2,17 +2,18 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getLlmSettings, listSkills, modelChoices, type ModelChoice, type SkillSummary } from "@/lib/api";
+import { getKnowledgeSummary, getLlmSettings, listSkills, modelChoices, type ModelChoice, type SkillSummary } from "@/lib/api";
 import { cx } from "./index";
 
 /**
  * Something you can @mention in a text box (docs/workspaces.md#mentions): an agent (a pipeline
  * stage, by its id), a model (an organization's profile, by its id), a provider, or a skill
- * (`@skill:name`). The server explains each mention to the model that reads the text, so
- * "@claude-fast for @diagnose" means exactly that, however capable the model is, and an agent
- * whose instructions name a skill loads it first.
+ * (`@skill:name`), or knowledge (`@knowledge:refund-policy.docx`). The server explains each mention
+ * to the model that reads the text, so "@claude-fast for @diagnose" means exactly that, however
+ * capable the model is; an agent whose instructions name a skill loads it first, and one whose
+ * instructions name knowledge reads it first.
  */
-export type Mentionable = { kind: "agent" | "model" | "provider" | "skill"; handle: string; label: string; detail?: string };
+export type Mentionable = { kind: "agent" | "model" | "provider" | "skill" | "knowledge"; handle: string; label: string; detail?: string };
 
 /** The handle the server's own model goes by (Mentions.DefaultModelHandle). */
 export const DEFAULT_MODEL_HANDLE = "default-model";
@@ -22,7 +23,42 @@ const KIND_STYLE: Record<Mentionable["kind"], { label: string; className: string
   model: { label: "Model", className: "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" },
   provider: { label: "Provider", className: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300" },
   skill: { label: "Skill", className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
+  knowledge: { label: "Knowledge", className: "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" },
 };
+
+/** How knowledge is mentioned: a file name or a fact's key as one handle (KnowledgeFiles.Handle on the server). */
+export function knowledgeHandle(nameOrKey: string) {
+  return nameOrKey.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/-{2,}/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+}
+
+// Knowledge names, per scope (a workspace's own plus the organization's), for a minute.
+const knowledgeCache = new Map<string, { at: number; promise: Promise<Mentionable[]> }>();
+function loadKnowledge(workspaceId: string | null): Promise<Mentionable[]> {
+  const key = workspaceId ?? "";
+  const hit = knowledgeCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.promise;
+  const asMentionables = (s: { file_names: string[]; fact_keys?: string[] }, where: string): Mentionable[] => [
+    ...s.file_names.map((f) => ({ kind: "knowledge" as const, handle: `knowledge:${knowledgeHandle(f)}`, label: f, detail: `Document · ${where}` })),
+    ...(s.fact_keys ?? []).map((k) => ({ kind: "knowledge" as const, handle: `knowledge:${knowledgeHandle(k)}`, label: k, detail: `Fact · ${where}` })),
+  ];
+  const promise = Promise.all([
+    workspaceId ? getKnowledgeSummary(workspaceId).then((s) => asMentionables(s, "this workspace")).catch(() => []) : Promise.resolve([]),
+    getKnowledgeSummary().then((s) => asMentionables(s, "organization")).catch(() => []),
+  ]).then(([own, org]) => [...own, ...org.filter((o) => !own.some((m) => m.handle === o.handle))]);
+  knowledgeCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+/** The documents and facts agents here can read, as mentionables: a workspace's own and its organization's. */
+export function useKnowledgeMentionables(workspaceId?: string | null): Mentionable[] {
+  const [knowledge, setKnowledge] = useState<Mentionable[]>([]);
+  useEffect(() => {
+    let live = true;
+    loadKnowledge(workspaceId ?? null).then((k) => { if (live) setKnowledge(k); });
+    return () => { live = false; };
+  }, [workspaceId]);
+  return knowledge;
+}
 
 // The organization's models change rarely: one request serves every text box for a minute.
 let modelsCache: { at: number; promise: Promise<ModelChoice[]> } | null = null;
@@ -92,11 +128,12 @@ export function stageMentionables(stages: { stage_id: string; name: string; role
   return stages.map((s) => ({ kind: "agent", handle: s.stage_id, label: s.name, detail: s.role && s.role !== s.name ? s.role : undefined }));
 }
 
-/** What a workspace's text boxes can mention: its pipeline's stages and the skills its agents use. */
+/** What a workspace's text boxes can mention: its pipeline's stages, and the skills and knowledge its agents use. */
 export function useWorkspaceMentionables(workspace: { workspace_id: string; pipeline?: { stages: { stage_id: string; name: string; role?: string }[] } | null }): Mentionable[] {
   const skills = useSkillMentionables(workspace.workspace_id);
+  const knowledge = useKnowledgeMentionables(workspace.workspace_id);
   const stages = workspace.pipeline?.stages;
-  return useMemo(() => [...stageMentionables(stages ?? []), ...skills], [stages, skills]);
+  return useMemo(() => [...stageMentionables(stages ?? []), ...skills, ...knowledge], [stages, skills, knowledge]);
 }
 
 /** The handles mentioned in a text (without the @). */
@@ -144,7 +181,7 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
     const q = query.text.toLowerCase();
     // Just "@": a few of each kind, so every kind shows up.
     if (q === "") {
-      const kinds = ["agent", "skill", "model", "provider"] as const;
+      const kinds = ["agent", "skill", "knowledge", "model", "provider"] as const;
       return kinds.flatMap((k) => mentionables.filter((m) => m.kind === k).slice(0, 4)).slice(0, 12);
     }
     return mentionables

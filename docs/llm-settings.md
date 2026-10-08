@@ -41,13 +41,16 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
 - **When starting:** the task composer has a model picker showing each model's price. The cost
   estimate uses the chosen model's prices. Over the API, pass `"model": "<model id>"` (or
   `"server"`) to `POST /api/tasks` and `POST /api/tasks/preview`.
-- **While it runs:** the run page shows the model in use; choosing another switches the whole
-  team. Every agent, including ones spawned later, uses it from its next step. Work already done is
+- **While it runs:** the run page shows the model in use, in the Agents view's header and next to
+  the chat's message box; choosing another switches the whole team. Every agent, including ones spawned later, uses it from its next step. Work already done is
   kept, and the switch appears in the run's Activity. Over the API: `POST /api/tasks/{id}/model`
   with `{"model": "<model id>"}`.
-- **After it finishes:** fork it from any step onto another model (**Journal & replay → Fork after
-  step**, with the model picker next to it). The steps before the fork are copied, so both runs share
-  the same start and the diff shows how the models differ.
+- **After it finishes:** the model picker stays (in the header and next to the chat's message
+  box): the task's next follow-up runs on the model chosen there (same API). A pipeline or study run takes no follow-ups, so it's run again
+  from its workspace or study instead. To compare models on the same work, fork it from any step
+  onto another model (**Journal & replay → Fork after step**, with the model picker next to it):
+  the steps before the fork are copied, so both runs share the same start and the diff shows how
+  the models differ.
 
 Workspaces use the organization's default model, and each pipeline stage can run on another one:
 pick it in the stage's settings (**Model**), or say so in plain language with mentions ("use
@@ -87,7 +90,7 @@ reasoning), or leave it out.
 ## Who can do what
 
 - Everyone in the organization sees the models and can pick one for the tasks they start, or
-  switch a running task (Member role).
+  switch a task's model, running or finished (Member role).
 - Only Admins add, edit, delete, test or set the default model.
 - Keys are encrypted with the secrets master key (`SECRETS_MASTER_KEY`), kept per model, and
   never returned by the API or shown to agents.
@@ -118,7 +121,7 @@ reasoning), or leave it out.
 | POST | `/api/llm/models` | Admin | `{provider, base_url, api_key, profile_id}`: the provider's model ids. |
 | GET | `/api/llm/providers` | any | The providers, what each needs, and suggested models. |
 | POST | `/api/tasks`, `/api/tasks/preview` | Member | `model`: the model to run on. |
-| POST | `/api/tasks/{id}/model` | Member | Switch a running task. `409` once it has finished: fork it instead. |
+| POST | `/api/tasks/{id}/model` | Member | Switch a task's model, running or finished (its next follow-up uses it). `409` for a finished pipeline or study run. |
 | POST | `/api/tasks/{id}/replay` | Member | `model`: for a fork, the model the live part runs on. |
 | GET | `/api/tasks/{id}` | any | Includes `model`: the model the task runs on now. |
 

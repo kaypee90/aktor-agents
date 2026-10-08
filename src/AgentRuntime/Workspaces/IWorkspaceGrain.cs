@@ -147,6 +147,9 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task<Integrations.ConnectionToolTarget?> ResolveConnectionTool(string exposedName);
 
+    /// <summary>The connection, when it's served as an MCP gateway in an active workspace; else null.</summary>
+    Task<Integrations.ConnectionDefinition?> GetGatewayConnection(string connectionId);
+
     /// <summary>A message arriving through a connection (an SMS reply, a Telegram message).</summary>
     Task<Integrations.InboundResponseDto> HandleInbound(string connectionId, string token, Integrations.InboundRequestDto request);
 

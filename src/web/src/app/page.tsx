@@ -262,6 +262,16 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
     if (confirm("Stop the team? What it has done so far is kept, and you can follow up later.")) cancelTask(taskId);
   };
 
+  // The task's model: switchable while it runs and, for a task (not a pipeline or study run),
+  // after it finishes too, so its follow-ups run on the new one.
+  const modelPicker = task?.model && models && (running || (task.kind ?? "task") === "task") ? (
+    <ModelPicker view={models} value={switching ?? task.model.profile_id} allowDefault={false} disabled={switching !== null}
+      title={running
+        ? "Switch the task to another model: agents use it from their next step (agents given their own model keep it)"
+        : "The model follow-ups run on: switch it before sending one"}
+      onChange={(id) => id !== task.model?.profile_id && switchModel(id)} />
+  ) : null;
+
   if (view === "chat") {
     return (
       <div className="flex h-full flex-col">
@@ -271,6 +281,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </button>
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900 dark:text-zinc-100" title={task?.goal}>{task?.goal ?? "Loading…"}</span>
           {task && <StatusBadge status={task.status} />}
+          {switchError && <span className="truncate text-xs text-rose-600 dark:text-rose-400" title={switchError}>{switchError}</span>}
           {activity}
           <span className="hidden text-xs text-zinc-500 md:inline">{agents.length} agents · {money(totalCost)}</span>
           <TaskToolsButton taskId={taskId} />
@@ -280,7 +291,8 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </Button>
         </header>
         <div className="min-h-0 flex-1">
-          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id}
+          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id} studyId={task?.study_id}
+            modelPicker={modelPicker}
             budget={task?.budget} ceiling={task?.budget_ceiling}
             onShowAgents={(id) => { if (id) setSelected(id); onView("agents"); }} />
         </div>
@@ -332,12 +344,8 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           {task && <span>Started {ago(task.created_at)}</span>}
           {task?.correlation_id && <span className="font-mono">corr {task.correlation_id}</span>}
           {task?.replay_of_task_id && <Badge tone="blue">{task.replay_mode} replay</Badge>}
-          {task?.model && models && running && (
-            <ModelPicker view={models} value={switching ?? task.model.profile_id} allowDefault={false} disabled={switching !== null}
-              title="Switch the task to another model: agents use it from their next step (agents given their own model keep it)"
-              onChange={(id) => id !== task.model?.profile_id && switchModel(id)} />
-          )}
-          {task?.model && !running && (
+          {modelPicker}
+          {task?.model && !running && (task.kind ?? "task") !== "task" && (
             <span title="The model this task ran on last">
               Model <span className="font-medium text-zinc-700 dark:text-zinc-300">{task.model.provider === "Mock" ? "Mock (demo)" : task.model.name}</span>
               {task.model.provider !== "Mock" && task.model.name !== task.model.model && <span className="font-mono"> · {task.model.model}</span>}

@@ -110,7 +110,9 @@ public static class AgentToolCatalog
     {
         var tools = new HashSet<string>(GovernanceTools, StringComparer.OrdinalIgnoreCase)
         {
-            "search_knowledge"
+            "search_knowledge",
+            // Reads a document or fact a person mentioned (@knowledge:name) in full.
+            "read_knowledge"
         };
 
         foreach (var capability in capabilities)

@@ -13,8 +13,10 @@ namespace AgentRuntime.Api.Controllers;
 [Route("api/studies")]
 public sealed class StudiesController(StudyService studies, TenantAccess access) : ControllerBase
 {
-    public sealed record CreateBody(string Name, string? Question);
-    public sealed record UpdateBody(string? Name, string? Question);
+    /// <summary>model: an organization model profile id ("server" for the server's); left out, the organization's default.</summary>
+    public sealed record CreateBody(string Name, string? Question, string? Model);
+    /// <summary>model: a profile id, or "" for the organization's default; left out, unchanged.</summary>
+    public sealed record UpdateBody(string? Name, string? Question, string? Model);
     public sealed record DatasetBody(Dictionary<string, string>? Dictionary, string? TimeColumn, double? HoldoutFraction);
     public sealed record RunBody(string? Instructions, string? Model);
 
@@ -43,7 +45,7 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     [Authorize(Policies.Member)]
     public Task<IActionResult> Create([FromBody] CreateBody body, CancellationToken ct) => Handle(async () =>
     {
-        var study = await studies.CreateAsync(access.TenantId, body.Name ?? string.Empty, body.Question, Who(), ct);
+        var study = await studies.CreateAsync(access.TenantId, body.Name ?? string.Empty, body.Question, Who(), ct, body.Model);
         return Ok(await studies.GetDetailAsync(access.TenantId, study.StudyId, ct));
     });
 
@@ -54,7 +56,7 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     [Authorize(Policies.Member)]
     public Task<IActionResult> Update(string id, [FromBody] UpdateBody body, CancellationToken ct) => Handle(async () =>
     {
-        await studies.UpdateAsync(access.TenantId, id, body.Name, body.Question, ct);
+        await studies.UpdateAsync(access.TenantId, id, body.Name, body.Question, ct, body.Model);
         return Ok(await studies.GetDetailAsync(access.TenantId, id, ct));
     });
 

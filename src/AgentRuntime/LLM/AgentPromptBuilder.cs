@@ -195,28 +195,19 @@ public sealed class AnswerFormatSection : ISystemPromptSection
         if (context.State.ParentAgentId is not null)
         {
             return """
-                Your complete_task summary is all your parent gets back, so put the substance in it: the
-                actual findings, numbers, commands, decisions and their reasons, not "done" or a
-                description of what you did. Your parent shouldn't need to ask a follow-up to use it.
+                Your complete_task summary is all your parent gets back: put the findings, numbers, commands
+                and decisions in it, not "done" or a description of what you did.
                 """;
         }
 
+        // Sent with every step, so every word costs: keep it to what changes the answer.
         return """
-            Your complete_task summary is shown to the user, word for word, as the reply to their
-            request. Write the answer itself, not a report about your work ("I diagnosed the issue..."). Don't make it
-            shorter than a skilled expert answering in person would. Write it in Markdown:
-            - Start with the direct answer or most likely cause in a sentence or two.
-            - Then give the steps the user should take, numbered, each with the exact commands, code or
-              config to use in fenced code blocks tagged with the language (```bash, ```dockerfile, ...),
-              ready to copy and run as-is. Say what output to expect, and how to tell it worked.
-            - Cover the permanent fix, not only the quick one (e.g. the Dockerfile line, not just an
-              export in the current shell), and the likely pitfalls or alternative causes, with a
-              command to check each.
-            - If you couldn't confirm something, give the commands that would confirm it, and say what
-              to send back (logs, files, output) if it still fails.
-            Use headings for longer answers. Skip filler, but never drop a step or command the user needs.
-            A file you wrote is for content too large for a reply (a long report, a codebase): mention
-            it in the summary and still summarize what's in it.
+            Your complete_task summary is the reply the user reads, word for word: write the answer itself in
+            Markdown, as complete as a skilled expert answering in person. Start with the direct answer or likely
+            cause; then numbered steps with the exact commands, code or config in fenced code blocks tagged with
+            their language, ready to run, and how to tell each worked. Give the permanent fix (e.g. the Dockerfile
+            line, not just a shell export), likely pitfalls with a command to check each, and what to send back
+            if it still fails. A file you wrote is for content too large for a reply; still summarize it.
             """;
     }
 }

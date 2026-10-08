@@ -172,8 +172,9 @@ export function ApprovalToasts({ state }: { state: ApprovalsState }) {
             </div>
             <div className="p-2">
               <ApprovalCard workspaceId={p.workspace_id} approval={p.approval} onDecided={refresh} compact />
-              <Link href={`/workspaces?id=${p.workspace_id}`} className="mt-1.5 inline-block text-[11px] text-zinc-500 hover:text-brand-600 hover:underline">
-                Open the workspace
+              <Link href={p.study_id ? `/studies?id=${encodeURIComponent(p.study_id)}` : `/workspaces?id=${p.workspace_id}`}
+                className="mt-1.5 inline-block text-[11px] text-zinc-500 hover:text-brand-600 hover:underline">
+                {p.study_id ? "Open the study" : "Open the workspace"}
               </Link>
             </div>
           </div>

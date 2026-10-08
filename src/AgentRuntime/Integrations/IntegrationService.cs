@@ -29,6 +29,40 @@ public sealed class PluginCatalog(IEnumerable<IAgentPlugin> plugins, ILogger<Plu
     }
 }
 
+/// <summary>Changing a connection's settings after it was made: only the plugin's declared,
+/// non-secret fields (secrets are set once, when connecting).</summary>
+public static class ConnectionSettings
+{
+    public static Dictionary<string, string> Merge(Plugins.PluginManifest manifest, IReadOnlyDictionary<string, string> current,
+        IReadOnlyDictionary<string, string> changes, out string? error)
+    {
+        error = null;
+        var merged = new Dictionary<string, string>(current);
+        foreach (var field in manifest.Settings.Where(f => !f.Secret))
+        {
+            if (!changes.TryGetValue(field.Key, out var value)) continue;
+            value = value?.Trim();
+            if (string.IsNullOrEmpty(value)) value = field.DefaultValue;
+            if (string.IsNullOrEmpty(value))
+            {
+                if (field.Required)
+                {
+                    error = $"'{field.Label}' is required.";
+                    return merged;
+                }
+
+                merged.Remove(field.Key);
+            }
+            else
+            {
+                merged[field.Key] = value;
+            }
+        }
+
+        return merged;
+    }
+}
+
 /// <summary>
 /// Runs plugin code on behalf of the runtime: builds a <see cref="PluginConnection"/> with its
 /// secrets decrypted just for the call, and applies the runtime's limits around it (result size,

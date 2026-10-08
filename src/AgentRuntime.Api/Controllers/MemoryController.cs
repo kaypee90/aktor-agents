@@ -75,7 +75,7 @@ public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider emb
         var (ok, ws) = await ScopeAsync();
         if (!ok) return NotFound();
         var s = KnowledgeSummary.Of(await memory.ListSharedKeysAsync(access.TenantId, ScopeOf(ws), ct));
-        return Ok(new { entries = s.Entries, files = s.Files, facts = s.Facts, from_agents = s.FromAgents, file_names = s.FileNames.Take(50) });
+        return Ok(new { entries = s.Entries, files = s.Files, facts = s.Facts, from_agents = s.FromAgents, file_names = s.FileNames.Take(50), fact_keys = s.FactKeys.Take(50) });
     }
 
     /// <summary>Deletes one knowledge entry. Agents stop finding it at once.</summary>

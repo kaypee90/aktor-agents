@@ -56,11 +56,12 @@ public sealed record ExperimentOutcome
 /// <summary>
 /// Runs a simulated experiment (docs/studies.md, "Experiments"): generates a population from the
 /// segments (seeded, so it can be reproduced), and asks every participant, in every condition,
-/// round and replication, for one structured decision with the organization's fast model. The
+/// round and replication, for one structured decision with the run's model (its fast model, if it has one). The
 /// participants are not agents with tools: they can only decide, so the output is a table, not a
 /// conversation. The runtime enforces the caps and the cost limit, whatever the spec asks for.
 /// </summary>
-public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmSettings, IEventPublisher events, IOptions<StudyOptions> options)
+public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmSettings, ITaskModelSelection taskModels, IEventPublisher events,
+    IOptions<StudyOptions> options)
 {
     public const string DecideTool = "decide";
 
@@ -202,7 +203,8 @@ public sealed class ExperimentRunner(ILLMProvider llm, ILlmSettingsResolver llmS
     {
         var limits = options.Value;
         var started = System.Diagnostics.Stopwatch.StartNew();
-        var settings = await llmSettings.ResolveAsync(tenantId, cancellationToken: ct);
+        // The run's model (the study's, or the one picked for the run), so participants decide on it too.
+        var settings = await llmSettings.ResolveAsync(tenantId, await taskModels.GetAsync(runId, ct), ct);
         var useFast = !string.IsNullOrWhiteSpace(settings.FastModel);
         var model = settings.ModelFor(useFast);
         var tool = DecisionTool(spec);

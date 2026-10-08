@@ -23,6 +23,9 @@ public sealed class IntegrationsOptions
     /// <summary>Tool results are truncated to this before they enter an agent's transcript.</summary>
     public int MaxToolResultChars { get; set; } = 8000;
 
+    /// <summary>Calls per minute to one connection's MCP gateway, from all callers together.</summary>
+    public int GatewayCallsPerMinute { get; set; } = 60;
+
     public int NotificationMaxAttempts { get; set; } = 6;
     /// <summary>First retry delay for a failed notification; doubles each attempt (max 30 min).</summary>
     public int NotificationRetryBaseSeconds { get; set; } = 30;
@@ -77,6 +80,19 @@ public sealed class ConnectionDefinition
     [Id(11)] public bool SupportsTools { get; set; }
     [Id(12)] public bool SupportsNotifications { get; set; }
     [Id(13)] public bool SupportsInbound { get; set; }
+    /// <summary>Whether the connection is also served as an MCP server to callers outside (docs/plugins.md, "MCP gateway").</summary>
+    [Id(14)] public McpGatewaySettings Gateway { get; set; } = new();
+}
+
+/// <summary>A connection served as its own MCP server at /mcp/gateway/{workspace}/{connection}:
+/// only the tools listed here, called with an organization's API key, under the workspace's
+/// safety policy and audit log.</summary>
+[GenerateSerializer]
+public sealed record McpGatewaySettings
+{
+    [Id(0)] public bool Enabled { get; init; }
+    /// <summary>The plugin's own tool names offered to callers (independent of what agents have enabled).</summary>
+    [Id(1)] public List<string> Tools { get; init; } = [];
 }
 
 [GenerateSerializer]
@@ -98,6 +114,10 @@ public sealed record ConnectionUpdate
     /// <summary>Exposed or local tool names to enable; everything else is disabled. Null leaves tools unchanged.</summary>
     [Id(1)] public List<string>? EnabledTools { get; init; }
     [Id(2)] public List<string>? AllowedSenders { get; init; }
+    /// <summary>New values for the plugin's non-secret settings (e.g. an HTTP API's endpoints); the
+    /// connection is checked again and its tools re-listed. Null leaves settings unchanged.</summary>
+    [Id(3)] public Dictionary<string, string>? Settings { get; init; }
+    [Id(4)] public McpGatewaySettings? Gateway { get; init; }
 }
 
 [GenerateSerializer]
@@ -128,6 +148,9 @@ public sealed record ConnectionView
     [Id(11)] public bool SupportsTools { get; init; }
     [Id(12)] public bool SupportsNotifications { get; init; }
     [Id(13)] public bool SupportsInbound { get; init; }
+    [Id(14)] public McpGatewaySettings? Gateway { get; init; }
+    /// <summary>Relative path of the connection's MCP gateway (workspace connections only).</summary>
+    [Id(15)] public string? GatewayPath { get; init; }
 }
 
 [GenerateSerializer]

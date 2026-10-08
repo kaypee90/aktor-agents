@@ -12,6 +12,8 @@ public sealed class StudyRecord
     /// <summary>"Draft" until the first run, then the last run's: "Running", "Completed", "Failed".</summary>
     public string Status { get; set; } = "Draft";
     public string? LastRunId { get; set; }
+    /// <summary>The organization model profile runs use unless one is picked for a run; null for the default.</summary>
+    public string? ModelProfileId { get; set; }
     public string? CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

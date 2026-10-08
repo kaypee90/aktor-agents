@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { ScopePicker, useScope } from "@/components/platform/ScopePicker";
 import { addKnowledge, addKnowledgeFiles, apiErrorMessage, deleteKnowledge, deleteKnowledgeFile, getMemoryStatus, searchKnowledge, type KnowledgeEntry } from "@/lib/api";
-import { AttachButton, DropZone } from "@/components/files/Attachments";
+import { FilePickArea } from "@/components/files/Attachments";
 import { FileChip } from "@/components/files/FilePreview";
 import { atLeast, type Role } from "@/lib/platformTypes";
 import { Badge, Button, Card, EmptyState, ErrorBanner, Field, Modal, PageHeader, ago, inputClass } from "@/components/ui";
@@ -35,6 +35,8 @@ function Knowledge() {
   const [mode, setMode] = useState<"write" | "files">("write");
   const [files, setFiles] = useState<File[]>([]);
   const [fileResults, setFileResults] = useState<{ file_name: string; entries: number; error: string | null }[] | null>(null);
+  // Shown inside the modal: the page's own banner is hidden behind it.
+  const [addError, setAddError] = useState<string | null>(null);
 
   useEffect(() => {
     getMemoryStatus().then(setStatus).catch(() => setStatus(null));
@@ -68,12 +70,14 @@ function Knowledge() {
     setAdding(null);
     setFiles([]);
     setFileResults(null);
+    setAddError(null);
     setMode("write");
   }
 
   async function add() {
     if (!adding) return;
     setBusy(true);
+    setAddError(null);
     try {
       if (mode === "files") {
         // Their text becomes searchable passages; files with no text are reported, not added.
@@ -91,7 +95,7 @@ function Knowledge() {
       close();
       setResults(await searchKnowledge(query, 50, scope));
     } catch (e) {
-      setError(apiErrorMessage(e));
+      setAddError(apiErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -182,9 +186,10 @@ function Knowledge() {
           </>
         }
       >
+        {addError && <div className="mb-3"><ErrorBanner error={addError} onClose={() => setAddError(null)} /></div>}
         <div className="mb-4 flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs dark:border-zinc-700 dark:bg-zinc-900">
           {([["write", "Write"], ["files", "From files"]] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setMode(id)}
+            <button key={id} onClick={() => { setMode(id); setAddError(null); }}
               className={`flex-1 rounded-md px-3 py-1.5 font-medium ${mode === id ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100" : "text-zinc-500"}`}>
               {label}
             </button>
@@ -192,17 +197,9 @@ function Knowledge() {
         </div>
         {mode === "files" && (
           <div className="space-y-3">
-            <DropZone onFiles={(f) => setFiles((prev) => [...prev, ...f])} label="Drop files to add them">
-              <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-200 px-6 py-10 text-center dark:border-zinc-700">
-                <Icons.Upload className="h-6 w-6 text-zinc-400" />
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">Drag files here, or</p>
-                <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white text-sm font-medium dark:border-zinc-700 dark:bg-zinc-900">
-                  <AttachButton onFiles={(f) => setFiles((prev) => [...prev, ...f])} />
-                  <span className="pr-3">Choose files</span>
-                </span>
-                <p className="text-[11px] text-zinc-400">Up to 10 files, 25 MB each. Images and scanned PDFs have no text to add.</p>
-              </div>
-            </DropZone>
+            <FilePickArea onFiles={(f) => { setAddError(null); setFiles((prev) => [...prev, ...f]); }} disabled={busy}
+              title="Drag files here, or click to choose them"
+              hint="Up to 10 files, 25 MB each. Images and scanned PDFs have no text to add." />
             {files.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {files.map((f, i) => (

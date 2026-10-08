@@ -131,6 +131,22 @@ public sealed class TaskConnectionsGrain(
             foreach (var t in c.Tools) t.Enabled = set.Contains(t.ExposedName) || set.Contains(t.LocalName);
         }
 
+        if (update.Settings is { } changes)
+        {
+            if (plugins.Get(c.PluginId) is not { } plugin) return ConnectionResult.Fail($"The plugin '{c.PluginId}' isn't installed.");
+            var merged = ConnectionSettings.Merge(plugin.Manifest, c.Settings, changes, out var invalid);
+            if (invalid is not null) return ConnectionResult.Fail(invalid);
+            var candidate = new ConnectionDefinition
+            {
+                ConnectionId = c.ConnectionId, PluginId = c.PluginId, Name = c.Name, Settings = merged, SecretKeys = c.SecretKeys, Tools = c.Tools
+            };
+            var (check, tools) = await integrations.InspectAsync(TaskId, candidate);
+            if (!check.Ok) return ConnectionResult.Fail(check.Message);
+            c.Settings = merged;
+            c.Tools = tools;
+            c.LastError = null;
+        }
+
         await state.WriteStateAsync();
         return ConnectionResult.Ok(ToView(c), "Updated.");
     }

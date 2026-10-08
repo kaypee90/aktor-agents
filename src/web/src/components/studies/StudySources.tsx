@@ -13,7 +13,7 @@ import {
   type StudyDataset,
   type StudyDetail,
 } from "@/lib/api";
-import { AttachButton, DropZone } from "@/components/files/Attachments";
+import { ChooseFilesButton, FilePickArea } from "@/components/files/Attachments";
 import { IntegrationsPanel } from "@/components/workspace/IntegrationsPanel";
 import { Badge, Button, Card, CardHeader, ErrorBanner, Field, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
@@ -70,19 +70,18 @@ export function StudySources({ study, canEdit, onChanged }: { study: StudyDetail
         <CardHeader title="Datasets"
           description="Tables the agents query and model: CSV, Excel, Parquet or JSON. Each is profiled, and a share is sealed as holdout that no agent sees until a reviewed model is scored on it."
           actions={canEdit && (
-            <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white text-sm font-medium dark:border-zinc-700 dark:bg-zinc-900">
-              <AttachButton onFiles={addDatasets} />
-              <span className="pr-3">{busy === "datasets" ? "Profiling…" : "Add dataset"}</span>
-            </span>
+            <ChooseFilesButton onFiles={addDatasets} disabled={busy !== null} accept=".csv,.tsv,.txt,.xlsx,.xlsm,.parquet,.json,.jsonl,.ndjson">
+              {busy === "datasets" ? "Profiling…" : "Add dataset"}
+            </ChooseFilesButton>
           )} />
         {study.datasets.length === 0 ? (
           canEdit ? (
-            <DropZone onFiles={addDatasets} label="Drop data files to add them">
-              <div className="m-5 flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-zinc-200 px-6 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700">
-                <Icons.Upload className="h-6 w-6 text-zinc-400" />
-                {busy === "datasets" ? "Profiling…" : "Drop CSV, Excel, Parquet or JSON files here."}
-              </div>
-            </DropZone>
+            <div className="p-5">
+              <FilePickArea onFiles={addDatasets} disabled={busy !== null} label="Drop data files to add them"
+                accept=".csv,.tsv,.txt,.xlsx,.xlsm,.parquet,.json,.jsonl,.ndjson"
+                title={busy === "datasets" ? "Profiling…" : "Drag CSV, Excel, Parquet or JSON files here, or click to choose them"}
+                hint="Each is profiled, and a share is sealed as holdout." />
+            </div>
           ) : <p className="p-5 text-sm text-zinc-500">No datasets yet.</p>
         ) : (
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -107,10 +106,9 @@ export function StudySources({ study, canEdit, onChanged }: { study: StudyDetail
             <div className="flex items-center gap-2">
               <Link href={`/knowledge?workspace=${encodeURIComponent(study.workspace_id)}`} className="text-xs text-brand-600 hover:underline dark:text-brand-400">Manage →</Link>
               {canEdit && (
-                <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white text-sm font-medium dark:border-zinc-700 dark:bg-zinc-900">
-                  <AttachButton onFiles={addDocuments} />
-                  <span className="pr-3">{busy === "documents" ? "Reading…" : "Add documents"}</span>
-                </span>
+                <ChooseFilesButton onFiles={addDocuments} disabled={busy !== null}>
+                  {busy === "documents" ? "Reading…" : "Add documents"}
+                </ChooseFilesButton>
               )}
             </div>
           } />

@@ -200,8 +200,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
         }
     }
 
-    /// <summary>Moves a running task to another model (docs/llm-settings.md): every agent uses it from
-    /// its next step, including agents spawned later. Finished work is kept.</summary>
+    /// <summary>Moves a task to another model (docs/llm-settings.md): every agent uses it from its
+    /// next step, including agents spawned later; for a finished task, its follow-ups run on it.
+    /// Finished work is kept.</summary>
     [HttpPost("{id}/model")]
     [Microsoft.AspNetCore.Authorization.Authorize(Policies.Member)]
     public async Task<IActionResult> SwitchModel(string id, [FromBody] SwitchModelRequest request, CancellationToken ct)
@@ -420,9 +421,12 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             result_summary = task.ResultSummary,
             correlation_id = task.CorrelationId,
             source = task.Source,
-            // A run of a workspace's pipeline: it takes no follow-ups (a new run does).
-            kind = task.Source == "pipeline" ? "pipeline_run" : "task",
-            workspace_id = task.WorkspaceId,
+            // A run of a workspace's pipeline or of a study: neither takes follow-ups (a new run does).
+            kind = task.Source switch { "pipeline" => "pipeline_run", "study" => "study_run", _ => "task" },
+            workspace_id = task.Source == "study" ? null : task.WorkspaceId,
+            study_id = task.Source == "study" && task.WorkspaceId is { } studyWorkspace
+                ? await db.Studies.AsNoTracking().Where(s => s.WorkspaceId == studyWorkspace).Select(s => s.StudyId).FirstOrDefaultAsync(ct)
+                : null,
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
             fork_after_step = task.ForkAfterStep,

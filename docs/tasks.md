@@ -11,7 +11,9 @@ Every task opens as a chat (the default; `?view=agents` opens the agent graph in
 
 - **Your messages**, with the files you attached shown as cards.
 - **The team's answers**, rendered as Markdown, with a card for each file the agents wrote in
-  that round. Each answer has **Copy**, **Show work** (the steps behind it, by agent: spawns, tool
+  that round. Root agents are told to answer like an expert in person: the direct answer first,
+  then steps with the exact commands, code and settings. Every code block has its own copy button.
+  Each answer has **Copy** (the whole answer), **Show work** (the steps behind it, by agent: spawns, tool
   calls, messages, files) and **Agents** (jump to the graph).
 - **A working card** while the team is busy: how many agents are working, their latest steps, and
   **Stop**.
@@ -27,8 +29,9 @@ activity, result and estimate panels. Both views show the same task.
 
 The home page composer takes a goal, files (button, drag and drop, or paste), the model, and
 **Options** for budget, team shape and delivery. Enter runs it; Shift+Enter adds a new line.
-Type `@` to mention a model (`@claude-fast`, which also picks it for the task), a provider, or a
-skill (`@skill:report-style`, which the root agent loads before anything else); see
+Type `@` to mention a model (`@claude-fast`, which also picks it for the task), a provider, a
+skill (`@skill:report-style`, which the root agent loads before anything else), or a knowledge
+file or fact (`@knowledge:pricing-faq`, which the root reads first); see
 [workspaces.md](workspaces.md#mentions).
 **Estimate cost** previews the team and cost first ([preview.md](preview.md)).
 
@@ -197,6 +200,8 @@ finished root took one up). Both show in the Activity stream.
 - **Each agent can start at most `MaxChildrenPerAgent` agents (default 10) over its whole life**,
   finished ones included. After several rounds of follow-ups, the root may have to do more of the
   work itself.
-- **A finished task can't be moved to another model**; follow-ups use the model it ran on. Fork it
-  to change models ([llm-settings.md](llm-settings.md)).
+- **A finished pipeline or study run can't be moved to another model** (it takes no follow-ups);
+  run it again from its workspace or study. Any other task can switch models at any time with the
+  picker next to the chat's message box: its next follow-up uses the new one
+  ([llm-settings.md](llm-settings.md)).
 - **Generated PowerPoint decks are plain**: titles and bullets, no images, charts or speaker notes.

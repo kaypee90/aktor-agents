@@ -117,6 +117,17 @@ workspace, that `organization_wide` shares it with everyone, and that `?workspac
 organization's and the workspace's apart. `PipelineTests` checks it end to end: a stage shares a
 fact during a run, the workspace's next run finds it, and another workspace's run doesn't.
 
+## Pointing agents at knowledge
+
+In a workspace's text boxes (the chat, a run's input, stage instructions, triggers), typing `@`
+offers its knowledge and the organization's: `@knowledge:refund-policy.docx` for a document,
+`@knowledge:on-call-rota` for a fact (a file name or a fact's key, lowercased, with anything but
+letters, digits, `.`, `-` and `_` turned into `-`). An agent whose instructions mention one is
+told to read it first, with **`read_knowledge`**: every agent has it next to `search_knowledge`, and
+it returns a whole document (all its passages, in order, up to 60,000 characters) or a fact, by
+name. It reads only what the agent could search anyway: its workspace's knowledge first, then its
+organization's. Inside a study, what it returns is recorded as evidence like a search.
+
 ## Knowledge from files
 
 Shared memory → **Add knowledge → From files** (or `POST /api/memory/files`, multipart `files`)

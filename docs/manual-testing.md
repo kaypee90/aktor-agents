@@ -179,6 +179,11 @@ Now add a section on pricing for small landlords.
       back to running.
 - [ ] The second answer builds on the first (it doesn't start the research over). The root
       agent's details list the follow-up under its goal.
+- [ ] Ask a how-to question ("How do I find which process is using port 5432 on Linux?"): the
+      answer leads with the direct answer, then numbered steps with the exact commands in code
+      blocks. Each code block's copy button copies only that block; **Copy** copies the whole answer.
+- [ ] Once the task has finished, the model picker beside the message box switches it to another
+      model; the next follow-up's "Model" entries name it.
 
 ### T9. Files in, documents out
 
@@ -209,6 +214,12 @@ knowledge → **From files**: add a policy document (`.docx` or `.pdf`) and an i
       as having no text.
 - [ ] Searching for a phrase from the document finds its passage.
 - [ ] A task asked about the policy finds it with `search_knowledge`.
+- [ ] Clicking anywhere on the drop area opens the file picker (not only drag and drop).
+- [ ] A file that can't be added (e.g. too large) shows its error inside the dialog.
+- [ ] As an Admin, delete one entry, then a whole file: they go from the list and from search, and
+      the audit log records it. A Member sees no delete buttons.
+- [ ] In the task composer, `@knowledge:` suggests the document; a task mentioning it reads it
+      (`read_knowledge`) before anything else.
 
 ### T11. Continue a partial result with more budget
 
@@ -374,6 +385,8 @@ Remove the fact checker
 - [ ] In the task composer, `@` suggests models; picking one switches the model picker to it.
 - [ ] With a skill set up (Skills), `@` in a stage's instructions suggests it as `@skill:<name>`; once
       saved, the stage on the canvas shows the skill's name. The task composer suggests skills too.
+- [ ] With knowledge added (W9), `@` suggests it as `@knowledge:<file or key>`, the workspace's
+      own and the organization's.
 - [ ] An email address such as `ops@example.com` opens no suggestions.
 
 ### W5. Triggers start runs
@@ -486,6 +499,7 @@ and a skill under **Skills** with the scope set to the workspace.
 - [ ] A task (or another workspace) asked the same doesn't find it.
 - [ ] The workspace's stage agents list the skill under SKILLS; a task's agents don't.
 - [ ] With the scope set to **Whole organization**, neither the fact nor the skill is listed.
+- [ ] The workspace header counts the skills and knowledge, as it counts files.
 
 ### W10. The workspace screen
 
@@ -505,6 +519,42 @@ and a skill under **Skills** with the scope set to the workspace.
       preview.
 - [ ] At a narrow window the canvas still fits (the controls zoom), and no section collapses to nothing.
 - [ ] Reloading the page keeps the selected workspace; the runs list and chat are as they were.
+- [ ] The chat is a floating widget: hide it and show it again; a message arriving while it's
+      hidden puts an unread marker on its button.
+
+### W10c. Your REST API's endpoints, served as an MCP server
+
+**Tests:** HTTP API endpoints and the MCP gateway ([plugins.md](plugins.md#endpoints-for-an-http-api)).
+Use any REST API you have a token for (or `python3 -m http.server` for reads only).
+
+**Check:**
+- [ ] **Integrations → Add connection → HTTP API**: **+ Add endpoint** `GET /orders/{order_id}`; the
+      tool name is suggested and `order_id` is listed as a required path parameter.
+- [ ] **Import from OpenAPI…** with the API's document: its operations are listed with checkboxes,
+      and the server URL fills an empty base URL. Adding them lists each as `<name>__<operation>`
+      under Tools. A `POST` endpoint is marked "Not offered until writes are allowed".
+- [ ] A run that needs the API calls the typed tool (`store__get_order`), not `store__get`.
+- [ ] **edit endpoints** with a duplicate name or `/../x` as the path is refused and the old list stays.
+- [ ] **Serve as an MCP server**: the read tools are ticked; copy the Claude Code command, fill in an
+      API key, and in Claude Code ask for an order: it calls `get_order` and gets the API's answer.
+      The token you stored never appears in Claude Code.
+- [ ] With the workspace's autonomy set to **Supervised**, a served write tool is refused with "needs a
+      person's approval", and the API receives nothing.
+- [ ] The workspace's audit log lists each call as `gateway.call` with the key; unticking the gateway
+      makes the client's next call fail.
+
+### W10b. Clone, save as template, delete
+
+**Tests:** copies of a workspace ([workspaces.md](workspaces.md#cloning-templates-and-deleting)).
+Use the workspace from W5–W9.
+
+**Check:**
+- [ ] **Clone** makes a new workspace with the same pipeline, triggers, integrations (as an Admin,
+      with their secrets and switched-off tools), skills, knowledge and policy, and no runs, files
+      or chat. Its webhook triggers have new URLs.
+- [ ] **Save as template** adds it to **Templates** with a *Yours* badge; creating a workspace from it
+      works; **Download** gives a JSON file without secrets that **Import** brings back.
+- [ ] **Delete** is offered only once the workspace is archived (Admin). Its runs stay in Run history.
 
 ### W11. Surviving a restart
 
@@ -538,7 +588,9 @@ models, e.g. a strong cloud one and a cheap or local one.
 
 **Check:**
 - [ ] **Settings → AI model** lists "Server default"; **Add model** opens the editor.
-- [ ] Pick a provider, paste a key, click **Load models**: the provider's models appear in the picker.
+- [ ] Pick a provider: the model is a dropdown of its known models with their list prices filled in.
+      **Custom model…** asks for a model id and its prices, and won't save without them.
+- [ ] Paste a key, click **Load models**: the provider's models appear in the picker.
 - [ ] **Test connection** with a wrong key says it didn't work and why; with the right key, it works.
 - [ ] Reloading never shows a key; editing a model without retyping the key keeps it; changing its address asks for the key again.
 - [ ] **Make default** moves the Default badge; the composer's picker shows the default first.
@@ -555,6 +607,7 @@ models, e.g. a strong cloud one and a cheap or local one.
 **Check:**
 - [ ] **By model** shows both models of D1 with their spend, cost per call and response time; clicking one filters the page by it.
 - [ ] The **Workspaces** view shows spend per workspace, triggers fired and approvals; clicking a workspace focuses on it.
+- [ ] **Usage** shows active days, spend per active day, median tokens per run and tokens by kind (input, output, cache read, cache write); **Tools** shows each tool's share of calls.
 - [ ] The figures match Run history (runs, spend) for the same range.
 - [ ] Switching Spend / Tokens / Runs / Avg duration redraws the trend; clicking a bar zooms into that day.
 - [ ] "What consumes the most" lists the agent roles of T2; the root's role is among the top.

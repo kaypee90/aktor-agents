@@ -115,8 +115,11 @@ public sealed class LlmSettingsApiTests(ApiTestHostFixture fixture, ITestOutputH
         Assert.All(byModel.EnumerateArray(), m => Assert.Equal("demo-b", m.GetProperty("profile_id").GetString()));
         Assert.True(byModel[0].GetProperty("calls").GetInt32() >= 1);
 
-        // A finished task can't be switched: fork it onto another model instead.
-        Assert.Equal(HttpStatusCode.Conflict, (await api.PostAsJsonAsync($"/api/tasks/{taskId}/model", new { model = "demo-a" })).StatusCode);
+        // A finished task can be switched too: its follow-ups run on the new model.
+        var switched = await Json(await api.PostAsJsonAsync($"/api/tasks/{taskId}/model", new { model = "demo-a" }));
+        Assert.Equal("demo-a", switched.GetProperty("model").GetProperty("profile_id").GetString());
+        await Json(await api.PostAsJsonAsync($"/api/tasks/{taskId}/model", new { model = "demo-b" }));
+        // Or fork it onto another model.
         var journal = await Json(await api.GetAsync($"/api/tasks/{taskId}/journal"));
         var firstStep = journal.EnumerateArray().First().GetProperty("seq").GetInt64();
         var fork = await Json(await api.PostAsJsonAsync($"/api/tasks/{taskId}/replay", new { mode = "fork", fork_after_step = firstStep, model = "demo-a" }));

@@ -49,18 +49,20 @@ function StudyList() {
   const canEdit = atLeast((me?.role ?? "Viewer") as Role, "Member");
   const [studies, setStudies] = useState<StudySummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState<{ name: string; question: string } | null>(null);
+  const [creating, setCreating] = useState<{ name: string; question: string; model: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [models, setModels] = useState<ModelChoice[]>([]);
 
   useEffect(() => {
     listStudies().then(setStudies).catch((e) => setError(apiErrorMessage(e)));
+    getLlmSettings().then((v) => setModels(modelChoices(v))).catch(() => { /* the default model is used */ });
   }, []);
 
   async function create() {
     if (!creating?.name.trim()) return;
     setBusy(true);
     try {
-      const study = await createStudy(creating.name.trim(), creating.question.trim());
+      const study = await createStudy(creating.name.trim(), creating.question.trim(), creating.model);
       router.push(`/studies?id=${encodeURIComponent(study.study_id)}&tab=sources`);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -73,7 +75,7 @@ function StudyList() {
       <PageHeader
         title="Studies"
         description="Research a question with your own data. Give a study its datasets, documents and connections; agent teams explore the data, fit models, run simulated experiments, review each other's work and report findings that cite their evidence."
-        actions={canEdit && <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => setCreating({ name: "", question: "" })}>New study</Button>}
+        actions={canEdit && <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => setCreating({ name: "", question: "", model: "" })}>New study</Button>}
       />
       <div className="mx-auto max-w-6xl space-y-4 px-6 py-6">
         <ErrorBanner error={error} onClose={() => setError(null)} />
@@ -82,7 +84,7 @@ function StudyList() {
         ) : studies.length === 0 ? (
           <EmptyState icon={<Icons.Simulation className="h-5 w-5" />} title="No studies yet"
             description="Start with a question, like “What happens to renewals if rents rise 8%?”, then add the data that can answer it."
-            action={canEdit && <Button variant="primary" onClick={() => setCreating({ name: "", question: "" })}>New study</Button>} />
+            action={canEdit && <Button variant="primary" onClick={() => setCreating({ name: "", question: "", model: "" })}>New study</Button>} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {studies.map((s) => (
@@ -113,6 +115,7 @@ function StudyList() {
               <textarea className={inputClass} rows={3} value={creating.question} placeholder="What happens to renewals if rents rise 8% next year, and which tenants are most at risk?"
                 onChange={(e) => setCreating({ ...creating, question: e.target.value })} />
             </Field>
+            <ModelField models={models} value={creating.model} onChange={(model) => setCreating({ ...creating, model })} />
           </div>
         )}
       </Modal>
@@ -134,7 +137,7 @@ function StudyView({ id }: { id: string }) {
   const [running, setRunning] = useState<{ instructions: string; model: string } | null>(null);
   const [models, setModels] = useState<ModelChoice[]>([]);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState<{ name: string; question: string } | null>(null);
+  const [editing, setEditing] = useState<{ name: string; question: string; model: string } | null>(null);
 
   const load = useCallback(() => {
     getStudy(id).then(setStudy).catch((e) => setError(apiErrorMessage(e)));
@@ -172,7 +175,7 @@ function StudyView({ id }: { id: string }) {
   async function saveEdit() {
     if (!editing) return;
     try {
-      setStudy(await updateStudy(id, { name: editing.name, question: editing.question }));
+      setStudy(await updateStudy(id, { name: editing.name, question: editing.question, model: editing.model }));
       setEditing(null);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -206,12 +209,15 @@ function StudyView({ id }: { id: string }) {
         description={study.question || "No question yet."}
         actions={<>
           <StatusBadge status={study.status} />
-          {canEdit && <Button size="sm" onClick={() => setEditing({ name: study.name, question: study.question })}>Edit</Button>}
+          <span className="text-xs text-zinc-500" title="The model this study's runs use, unless you pick another for a run">
+            Model <span className="font-medium text-zinc-700 dark:text-zinc-300">{modelName(models, study.model_profile_id)}</span>
+          </span>
+          {canEdit && <Button size="sm" onClick={() => setEditing({ name: study.name, question: study.question, model: study.model_profile_id ?? "" })}>Edit</Button>}
           <a href={studyNotebookUrl(id)}><Button size="sm" icon={<Icons.Download className="h-3.5 w-3.5" />}>Notebook</Button></a>
           {atLeast(role, "Admin") && <Button size="sm" variant="ghost" onClick={remove}>Delete</Button>}
           {canEdit && (
             <Button variant="primary" icon={<Icons.Play className="h-3.5 w-3.5" />} disabled={study.status === "Running"}
-              onClick={() => setRunning({ instructions: "", model: "" })}>
+              onClick={() => setRunning({ instructions: "", model: study.model_profile_id ?? "" })}>
               {study.status === "Running" ? "Running…" : lastRun ? "Run again" : "Run study"}
             </Button>
           )}
@@ -304,14 +310,8 @@ function StudyView({ id }: { id: string }) {
             <Field label="Instructions for this run (optional)" hint="E.g. “Focus on tenants with more than 3 years of tenure” or “Test a 5% and an 8% increase.”">
               <textarea className={inputClass} rows={3} value={running.instructions} onChange={(e) => setRunning({ ...running, instructions: e.target.value })} />
             </Field>
-            {models.length > 1 && (
-              <Field label="Model">
-                <select className={inputClass} value={running.model} onChange={(e) => setRunning({ ...running, model: e.target.value })}>
-                  <option value="">Organization default</option>
-                  {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </Field>
-            )}
+            <ModelField models={models} value={running.model} onChange={(model) => setRunning({ ...running, model })}
+              hint="This run only; the study keeps its own model (Edit to change it). Simulated participants use it too." />
           </div>
         )}
       </Modal>
@@ -322,6 +322,7 @@ function StudyView({ id }: { id: string }) {
           <div className="space-y-4">
             <Field label="Name"><input className={inputClass} value={editing.name} maxLength={120} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
             <Field label="Question"><textarea className={inputClass} rows={4} value={editing.question} onChange={(e) => setEditing({ ...editing, question: e.target.value })} /></Field>
+            <ModelField models={models} value={editing.model} onChange={(model) => setEditing({ ...editing, model })} />
           </div>
         )}
       </Modal>
@@ -377,5 +378,27 @@ function EvidenceList({ studyId, refreshKey }: { studyId: string; refreshKey: nu
         ))}
       </ul>
     </Card>
+  );
+}
+
+function modelName(models: ModelChoice[], id: string | null) {
+  if (!id) return "Organization default";
+  const m = models.find((x) => x.id === id);
+  return m ? (m.provider === "Mock" ? "Mock (demo)" : `${m.name} · ${m.provider}`) : id;
+}
+
+/** The provider and model a study (or one run of it) uses. */
+function ModelField({ models, value, onChange, hint }: { models: ModelChoice[]; value: string; onChange: (id: string) => void; hint?: string }) {
+  return (
+    <Field label="Model" hint={hint ?? "Its runs and simulated participants use this model. Add models under Settings → AI model."}>
+      <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Organization default</option>
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name} · {m.provider === "Mock" ? "demo" : `${m.provider} ${m.model}`}{m.in_per_million ? ` · $${m.in_per_million} in / $${m.out_per_million} out` : ""}
+          </option>
+        ))}
+      </select>
+    </Field>
   );
 }

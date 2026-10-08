@@ -26,6 +26,10 @@ Member key; Viewer keys can read status and results.
 - `dashboard_url`: a link straight to the task's live graph (`Dashboard:BaseUrl`, from
   `APP_BASE_URL`).
 
+**The other direction: your API as an MCP server.** To let an outside agent call your own REST
+API's endpoints directly (not hand a goal to a team), add the API as an HTTP API connection with
+its endpoints and switch on its **MCP gateway**: [plugins.md](plugins.md#mcp-gateway-a-connection-as-an-mcp-server).
+
 ## Finding out that a task finished
 
 Tasks usually take minutes. Pick whichever fits the caller:

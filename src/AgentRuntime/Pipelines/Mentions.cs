@@ -21,6 +21,9 @@ public static partial class Mentions
     /// <summary>Skills are mentioned as <c>@skill:name</c>, so they never clash with a stage's id.</summary>
     public const string SkillPrefix = "skill:";
 
+    /// <summary>Knowledge (a file or a fact) is mentioned as <c>@knowledge:handle</c> (<see cref="Memory.KnowledgeFiles.Handle"/>).</summary>
+    public const string KnowledgePrefix = "knowledge:";
+
     [GeneratedRegex(@"(?<![\w.@])@([A-Za-z0-9][A-Za-z0-9._:/-]*[A-Za-z0-9]|[A-Za-z0-9])")]
     private static partial Regex Handle();
 
@@ -38,6 +41,14 @@ public static partial class Mentions
             .Distinct()
             .ToList();
 
+    /// <summary>The knowledge mentioned in the texts (<c>@knowledge:handle</c>), by handle.</summary>
+    public static List<string> KnowledgeIn(IEnumerable<string?> texts) =>
+        texts.SelectMany(Find)
+            .Where(h => h.StartsWith(KnowledgePrefix, StringComparison.OrdinalIgnoreCase) && h.Length > KnowledgePrefix.Length)
+            .Select(h => h[KnowledgePrefix.Length..].ToLowerInvariant())
+            .Distinct()
+            .ToList();
+
     /// <summary>One line per known handle in the texts, e.g. "@diagnose: the 'Diagnose' stage…".</summary>
     /// <param name="skills">Skills that can be mentioned, as (name, description).</param>
     public static List<string> Describe(IEnumerable<string?> texts, IReadOnlyCollection<PipelineStage> stages,
@@ -46,7 +57,12 @@ public static partial class Mentions
         var lines = new List<string>();
         foreach (var handle in texts.SelectMany(Find).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (handle.StartsWith(SkillPrefix, StringComparison.OrdinalIgnoreCase))
+            if (handle.StartsWith(KnowledgePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                lines.Add($"@{handle}: '{handle[KnowledgePrefix.Length..]}' in the workspace's or organization's knowledge (a document or a fact). " +
+                          $"An agent whose instructions mention @{handle} is told to read it with read_knowledge first.");
+            }
+            else if (handle.StartsWith(SkillPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 var name = handle[SkillPrefix.Length..];
                 if (skills?.FirstOrDefault(s => Same(s.Name, name)) is { Name: not null } skill)

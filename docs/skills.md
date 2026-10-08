@@ -13,7 +13,7 @@ agent of the organization, in tasks and workspaces alike.
   instructions and the list of the skill's files, and **`read_skill_file`** for a resource file the
   instructions point to.
 - Both tools are read-only. Every agent gets them while its organization has at least one enabled
-  skill; simulation residents don't.
+  skill; world residents and a study's simulated participants don't.
 - **Skills are instructions, not permissions.** A skill never grants tools, budget or access. The
   runtime enforces those as always.
 - Nothing in a skill is executed by the runtime. A script in a skill is only text an agent can read

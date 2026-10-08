@@ -150,6 +150,33 @@ export interface ConnectionView {
   supports_tools: boolean;
   supports_notifications: boolean;
   supports_inbound: boolean;
+  gateway?: McpGatewaySettings | null;
+  /** Where the connection is served as an MCP server (workspace connections with tools). */
+  gateway_path?: string | null;
+}
+
+export interface McpGatewaySettings {
+  enabled: boolean;
+  /** The connection's own tool names (without the "name__" prefix agents see). */
+  tools: string[];
+}
+
+/** One operation of an HTTP API connection (docs/plugins.md, "Endpoints"). */
+export interface ApiEndpointParam {
+  name: string;
+  in: "path" | "query";
+  type: "string" | "integer" | "number" | "boolean";
+  required?: boolean;
+  description?: string | null;
+}
+
+export interface ApiEndpoint {
+  name: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  description?: string | null;
+  params: ApiEndpointParam[];
+  body_schema?: unknown;
 }
 
 // ---- Safety (docs/safety.md) ----

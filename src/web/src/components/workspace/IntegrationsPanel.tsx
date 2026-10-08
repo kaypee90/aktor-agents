@@ -11,7 +11,9 @@ import {
   removeConnection,
   updateConnection,
 } from "@/lib/api";
+import type { ConnectionUpdateBody } from "@/lib/api";
 import type { ConnectionView, NotifyLevel, PluginInfo, SideEffects } from "@/lib/workspaceTypes";
+import { EndpointsEditor, GatewaySettings, parseEndpoints, serializeEndpoints } from "./ApiEndpoints";
 
 const LEVELS: NotifyLevel[] = ["Off", "Urgent", "Warning", "All"];
 const LEVEL_HELP: Record<NotifyLevel, string> = {
@@ -34,7 +36,7 @@ export interface ConnectionsApi {
   key: string;
   list: () => Promise<ConnectionView[]>;
   add: (body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>; notify_level?: string; allowed_senders?: string[] }) => Promise<unknown>;
-  update: (connectionId: string, body: { notify_level?: string; enabled_tools?: string[]; allowed_senders?: string[] }) => Promise<unknown>;
+  update: (connectionId: string, body: ConnectionUpdateBody) => Promise<unknown>;
   refresh: (connectionId: string) => Promise<unknown>;
   remove: (connectionId: string) => Promise<unknown>;
 }
@@ -133,6 +135,9 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
 }) {
   const [senders, setSenders] = useState(c.allowed_senders.join(", "));
   const [busy, setBusy] = useState(false);
+  const [editingEndpoints, setEditingEndpoints] = useState(false);
+  const isHttpApi = c.plugin_id === "http-api";
+  const endpoints = parseEndpoints(c.settings.endpoints);
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -169,7 +174,7 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
       </div>
       {c.last_error && <div className="text-[11px] text-amber-700 dark:text-amber-300">Last error: {c.last_error}</div>}
       <div className="text-[10px] text-zinc-400">
-        {Object.entries(c.settings).map(([k, v]) => `${k}=${v}`).join(" · ")}
+        {Object.entries(c.settings).filter(([k]) => k !== "endpoints").map(([k, v]) => `${k}=${v}`).join(" · ")}
         {c.secret_keys.length > 0 && ` · secrets set: ${c.secret_keys.join(", ")}`}
       </div>
 
@@ -182,6 +187,25 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
             {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_HELP[l]}</option>)}
           </select>
         </label>
+      )}
+
+      {isHttpApi && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-zinc-500">Endpoints ({endpoints.length})</span>
+            {!editingEndpoints && (
+              <button disabled={busy} onClick={() => setEditingEndpoints(true)} className="text-[10px] text-blue-600 hover:underline">edit endpoints</button>
+            )}
+          </div>
+          {editingEndpoints && (
+            <EndpointsDraft initial={endpoints} writesAllowed={c.settings.allow_writes === "true"} busy={busy}
+              onCancel={() => setEditingEndpoints(false)}
+              onSave={(next) => run(async () => {
+                await api.update(c.connection_id, { settings: { endpoints: serializeEndpoints(next) } });
+                setEditingEndpoints(false);
+              })} />
+          )}
+        </div>
       )}
 
       {c.tools.length > 0 && (
@@ -197,6 +221,10 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
             ))}
           </ul>
         </div>
+      )}
+
+      {c.supports_tools && c.gateway_path && c.tools.length > 0 && (
+        <GatewaySettings connection={c} busy={busy} onSave={(gateway) => run(() => api.update(c.connection_id, { gateway }))} />
       )}
 
       {c.supports_inbound && (
@@ -283,7 +311,7 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
             <span className="text-zinc-500">Connection name (tool prefix)</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className={field} />
           </label>
-          {plugin.settings.map((s) => (
+          {plugin.settings.filter((s) => !(plugin.id === "http-api" && s.key === "endpoints")).map((s) => (
             <label key={s.key} className="block space-y-0.5">
               <span className="text-zinc-500">{s.label}{s.required && " *"}{s.secret && " 🔒"}</span>
               {s.options ? (
@@ -298,6 +326,14 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
               )}
             </label>
           ))}
+          {plugin.id === "http-api" && (
+            <div className="space-y-0.5">
+              <span className="text-zinc-500">Endpoints (optional)</span>
+              <EndpointsEditor value={parseEndpoints(values.endpoints)} writesAllowed={(values.allow_writes ?? "false") === "true"}
+                onChange={(next) => setValues((v) => ({ ...v, endpoints: serializeEndpoints(next) }))}
+                onBaseUrl={(url) => setValues((v) => (v.base_url ? v : { ...v, base_url: url }))} />
+            </div>
+          )}
           {plugin.supports_notifications && (
             <label className="block space-y-0.5">
               <span className="text-zinc-500">Forward notifications</span>
@@ -323,5 +359,27 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
         <button type="button" onClick={onCancel} className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700">Cancel</button>
       </div>
     </form>
+  );
+}
+
+/** Endpoint changes are kept here until saved, so a half-edited list never reaches the server. */
+function EndpointsDraft({ initial, writesAllowed, busy, onSave, onCancel }: {
+  initial: ReturnType<typeof parseEndpoints>;
+  writesAllowed: boolean;
+  busy: boolean;
+  onSave: (next: ReturnType<typeof parseEndpoints>) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  return (
+    <div className="space-y-1.5">
+      <EndpointsEditor value={draft} onChange={setDraft} writesAllowed={writesAllowed} />
+      <div className="flex gap-2">
+        <button disabled={busy} onClick={() => onSave(draft)} className="rounded bg-brand-500 px-3 py-0.5 font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+          {busy ? "Saving…" : "Save endpoints"}
+        </button>
+        <button disabled={busy} onClick={onCancel} className="rounded border border-zinc-300 px-2 py-0.5 dark:border-zinc-700">Cancel</button>
+      </div>
+    </div>
   );
 }

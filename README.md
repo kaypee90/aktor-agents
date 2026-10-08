@@ -36,10 +36,11 @@ to enforce a system-level constraint — the runtime always is.
   /AgentRuntime.IntegrationTests  tests against real Orleans grains, scripted LLM, and the real API
                                against a throwaway Postgres container
   /AgentRuntime.Evals          aktor-eval: runs goals N times and reports team size, cost, completion, quality
+  /web                        Next.js dashboard (tasks, workspaces, studies, agent graph, analytics, settings)
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
+/samples/studies              sample data for the Studies walkthrough (docs/studies-walkthrough.md)
 /sdk/typescript               TypeScript SDK and the aktor-acp bridge
-  /web                        Next.js dashboard (agent graph, live events, analytics, settings)
-/docker                       Dockerfiles for the API and the web app
+/docker                       Dockerfiles for the API, the web app and the analysis sandbox
 docker-compose.yml
 .env.example
 ```
@@ -227,9 +228,12 @@ The API never exposes this key to an agent or a tool call — it's held by the p
 implementation and injected via configuration, per CLAUDE.md §44.
 
 **Or set up several models in the dashboard.** Under **Settings → AI model**, an organization's
-Admin adds any number of named models (a provider, a model id, its own API key stored encrypted,
-and the prices budgets count in), tests each one, and picks a default. Each task picks its model
-when it starts and can switch to another while it runs. The `.env` settings above are always
+Admin adds any number of named models (a provider, a model id picked from a list or typed as a
+custom model, and its own API key stored encrypted), tests each one, and picks a default. Known
+models come with their list prices built in (per million input, output and cached tokens, from
+each provider's pricing page); only a custom model needs prices entered. Each task picks its model
+when it starts and can switch to another at any time, even after it finished; a study has its own
+model. The `.env` settings above are always
 available as the "Server default" model. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ### Local models with Ollama
@@ -258,11 +262,10 @@ LLM_BASE_URL=            # blank = Ollama on the Docker host (host.docker.intern
   (`OLLAMA_HOST=0.0.0.0` before `ollama serve`, or set it as a Windows environment variable).
 - Or run Ollama inside Compose: `docker compose --profile ollama up -d --build`, set
   `LLM_BASE_URL=http://ollama:11434`, then `docker compose exec ollama ollama pull qwen2.5:7b`.
-- Ollama answers one request at a time by default, so simulations switch to a local-model
-  profile automatically: 3 residents by default (max 6 at creation, 8 in total), 45 s ticks (min
-  20 s), 20 ticks and 30 min. The create form shows these, and the server enforces them
-  (`Simulation:LocalModel` in `appsettings.json`). If you have the VRAM, raise
-  `OLLAMA_NUM_PARALLEL` and loosen those limits.
+- Ollama answers one request at a time by default, so a study's simulated experiments (one call
+  per participant per round) are slow on it; keep them small, or raise `OLLAMA_NUM_PARALLEL` if
+  you have the VRAM. Ollama models are free, so cost budgets don't limit them: rely on the token,
+  time and tool-call limits.
 
 ## 9. Running the demonstration
 
@@ -293,27 +296,33 @@ produces.
   - **Tasks**: a ChatGPT/Claude-style composer that takes a goal and files, with a model picker and
     options for budget (cost, tokens, minutes, sub-agents), team shape (max agents, fan-out,
     spawner roles, goal type), delivery (webhook, secret, correlation id) and a cost estimate. Each
-    task is then a **conversation** (follow-ups, attachments, file previews, continuing with more
-    budget; see [docs/tasks.md](docs/tasks.md)). Its **Agents** view shows the live React Flow
+    task is then a **conversation** (detailed Markdown answers with a copy button on every code
+    block, follow-ups, attachments, file previews, a model picker next to the message box,
+    continuing with more budget; see [docs/tasks.md](docs/tasks.md)). Its **Agents** view shows the live React Flow
     graph colour-coded by status, a switch to move the team to another model, the run's full
     activity (history plus live events via `/ws/events`), the result, and a details panel per agent
     (goal, budget and usage, granted tools, structured reasoning trace).
   - **Workspaces** and **Templates**: reusable pipelines on a resizable canvas (edit in plain
     language, or by hand: drag stages, draw connections, drop in new agents), run history with
-    live stage status, their triggers, integrations, safety policy (including team shape) and
-    approvals.
+    live stage status, their triggers, integrations, skills and knowledge (with counts), safety
+    policy (including team shape) and approvals. The workspace chat is a floating widget you can
+    hide, with an unread marker. A workspace can be **cloned** (its setup, not its runs or files),
+    **saved as an organization template**, and deleted once archived.
   - **Approvals** that are hard to miss: a bell with the count in the sidebar and the tab title,
     a toast with Approve and Reject, optional desktop notifications, a banner in the workspace and
     a marker on the waiting agent ([docs/safety.md](docs/safety.md#approvals)).
-  - **@mentions** in every text box: agents (stages), models, providers and skills, explained to
-    the model that reads the text ([docs/workspaces.md](docs/workspaces.md#mentions)).
+  - **@mentions** in every text box: agents (stages), models, providers, skills and knowledge
+    (documents and facts), explained to the model that reads the text ([docs/workspaces.md](docs/workspaces.md#mentions)).
   - **Skills**: write a skill in the browser or upload a `SKILL.md` or `.zip`; enable, edit,
     download or delete it. Skills belong to the whole organization or to one workspace, whose agents
     alone use them ([docs/skills.md](docs/skills.md)).
   - **Shared memory**: search what agents saved with `write_memory`, and add facts or whole files
     (PDF, Word, Excel, PowerPoint, CSV, text) for them, for the whole organization or one workspace
-    ([docs/memory.md](docs/memory.md#organization-and-workspace-knowledge)).
-  - **Analytics**, for tasks and for workspaces: spend, tokens, runs and durations over time; what
+    ([docs/memory.md](docs/memory.md#organization-and-workspace-knowledge)). Upload by clicking or
+    dropping files; Admins delete entries or whole files.
+  - **Analytics**, for tasks, workspaces and studies: spend, tokens (input, output, cache read and
+    write), runs and durations over time; a usage overview (median tokens per run, active days,
+    spend per active day, tool share); what
     consumes the most by agent role; spend and response time by model; spend by source or by
     workspace; tool timings and failures; triggers and approvals; the most expensive and slowest
     runs. Filter by date range, model, source, status, goal or workspace; click a chart to drill in
@@ -402,6 +411,9 @@ flowchart LR
 - **Setup:** `docker compose up` builds the `aktor-analysis:1` image; locally run
   `docker build -t aktor-analysis:1 docker/analysis`. With `LLM_PROVIDER=Mock` a study still runs
   end to end (real statistics, scripted interpretation).
+- **Try it:** [docs/studies-walkthrough.md](docs/studies-walkthrough.md) runs a rent-increase study
+  on sample data with known effects (`samples/studies/lease-renewals/`), so you can check what the
+  agents find.
 
 Open-ended worlds (`/api/worlds`) remain available over the API but no longer have a page.
 
@@ -420,8 +432,10 @@ does.
   model: drag stages around, drag from a stage's dot to another to connect them (or to empty
   space to add an agent there), drop in **New agent**, + on any connection, × on any stage or
   connection. Every change is a version you can restore; moving stages isn't a new version.
-- **Mention** stages, models, providers and skills with `@` in any text box, so a weaker model
-  doesn't have to guess what you mean.
+- **Mention** stages, models, providers, skills and knowledge (`@knowledge:refund-policy.docx`)
+  with `@` in any text box, so a weaker model doesn't have to guess what you mean.
+- **Skills & knowledge** tab: the workspace's own skills and knowledge, counted in the header like
+  its files. The workspace chat floats in a widget you can hide; it marks new messages.
 - **Each stage can run on its own model**, and shared knowledge its agents save stays in the
   workspace unless they share it with the whole organization.
 - **Run it** with an input, or let **triggers** run it: schedules (intervals or cron), webhooks
@@ -435,6 +449,10 @@ does.
 - **Templates** start you from real-world pipelines: incident response, support triage, market
   research, pull request review, lead research, content production, weekly competitive
   intelligence, contract review and candidate screening.
+- **Clone** a workspace to start a new one with the same setup (pipeline, triggers, integrations,
+  skills, knowledge, policy) but none of its runs or files; **Save as template** to share it with
+  the organization on the Templates page; **Delete** an archived one (its runs and audit trail
+  stay).
 
 See [docs/workspaces.md](docs/workspaces.md) and [docs/templates.md](docs/templates.md).
 
@@ -443,7 +461,12 @@ See [docs/workspaces.md](docs/workspaces.md) and [docs/templates.md](docs/templa
 In a workspace's **Integrations** tab you can connect services, and you can add your own plugins.
 - **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Slack,
   SMS (Twilio), email (SMTP) and Telegram.
-- **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`).
+- **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`). For a REST API,
+  add its endpoints by hand or import them from an OpenAPI document, and each becomes a typed tool
+  (`store__get_order {order_id}`).
+- **MCP gateway:** serve a connection as its own MCP server, so Claude Code, n8n or any MCP client
+  calls your API's endpoints directly with an Aktor API key, under the workspace's safety policy,
+  rate limit and audit log, without ever seeing the stored credential.
 - **Notifications:** run results, watch alerts and approvals reach you on your channels by urgency.
 - **Commands back:** you can reply by SMS or Telegram to start a run or decide an approval.
 - **Secrets** are encrypted in a vault and never reach agents.
@@ -510,6 +533,8 @@ editors hand it a goal; a team works on it under the server's budgets; the resul
   `cancel_task`, `list_agents`.
 - **A2A agent** (`/.well-known/agent-card.json`, `/a2a`), speaking protocol 1.0 and 0.3.
 - **ACP agent** (`/acp`, plus the `aktor-acp` stdio bridge) for OpenClaw/acpx and Zed.
+- **MCP gateway** (`/mcp/gateway/{workspace}/{connection}`): one connection's tools, e.g. your own
+  REST API's endpoints, served directly to MCP clients ([docs/plugins.md](docs/plugins.md#mcp-gateway-a-connection-as-an-mcp-server)).
 - **Finding out a task finished:** poll, long-poll, a signed completion webhook, or MCP progress
   notifications.
 - **No bypass:** every way in uses the same API keys, task service, budget ceiling, quotas and
@@ -548,18 +573,21 @@ work matches. Skills are per organization and never grant permissions. See
 ## 10b-8c. Choosing models
 
 Each organization sets up the models it wants under **Settings → AI model**: Anthropic, OpenAI or
-any OpenAI-compatible service, Gemini or Ollama, each with its own key and prices, tested before
-saving, one of them the default. A task picks its model when it starts, can **switch to another
-while it runs** (the whole team moves from each agent's next step), and can be forked onto another
-model after it finishes to compare them from the same start. Agents can also give different models
+any OpenAI-compatible service, Gemini or Ollama, each with its own key, tested before saving, one
+of them the default. The model is picked from a list with list prices built in; a custom model
+needs its prices entered. A task picks its model when it starts and can **switch to another at
+any time** (the whole team moves from each agent's next step; after it finished, the next
+follow-up uses it), and can be forked onto another model to compare them from the same start. A
+study has its own model, and each of its runs can use another. Agents can also give different models
 to the agents they spawn, so a goal can say it in plain language: "use Careful for the analysis and
 Quick for collecting prices". Keys are encrypted, never returned, and never sent to an address they
 weren't saved for. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ## 10b-8d. Analytics
 
-**Analytics** shows where tokens and money go and what takes long, for tasks and for workspaces:
-trends per hour or day, consumption by agent role, spend and response time **by model** (which one
+**Analytics** shows where tokens and money go and what takes long, for tasks, workspaces and
+studies: a usage overview (tokens by kind: input, output, cache read and cache write; median
+tokens per run; active days and spend per active day; tool share), trends per hour or day, consumption by agent role, spend and response time **by model** (which one
 is cheaper or faster), spend by source or by workspace, tool timings and failures, triggers and
 approvals, run durations, and the most expensive and slowest runs, with changes against the
 previous period. Filters (date range, model, source, status, goal, workspace) stay in the URL, so a

@@ -761,10 +761,37 @@ public sealed partial class WorkspaceGrain(
             c.AllowedSenders = senders.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct().ToList();
         }
 
+        if (update.Settings is { } changes)
+        {
+            if (plugins.Get(c.PluginId) is not { } plugin) return ConnectionResult.Fail($"The plugin '{c.PluginId}' isn't installed.");
+            var merged = ConnectionSettings.Merge(plugin.Manifest, c.Settings, changes, out var invalid);
+            if (invalid is not null) return ConnectionResult.Fail(invalid);
+
+            // Checked like a new connection; nothing changes unless the new settings work.
+            var candidate = new ConnectionDefinition
+            {
+                ConnectionId = c.ConnectionId, PluginId = c.PluginId, Name = c.Name, Settings = merged,
+                SecretKeys = c.SecretKeys, Tools = c.Tools, InboundSecret = c.InboundSecret
+            };
+            var (check, tools) = await integrations.InspectAsync(S.WorkspaceId, candidate);
+            if (!check.Ok) return ConnectionResult.Fail(check.Message);
+            c.Settings = merged;
+            c.Tools = tools;
+            c.LastError = null;
+        }
+
+        if (update.Gateway is { } gateway)
+        {
+            if (!c.SupportsTools) return ConnectionResult.Fail("This connection has no tools to serve.");
+            var known = c.Tools.Select(t => t.LocalName).ToHashSet(StringComparer.Ordinal);
+            c.Gateway = new McpGatewaySettings { Enabled = gateway.Enabled, Tools = gateway.Tools.Where(known.Contains).Distinct().ToList() };
+        }
+
         await SaveAsync();
         await AuditAsync("user", "user", "You", "connection.updated", c.Name, "ok",
-            $"Updated '{c.Name}': notify {c.NotifyLevel}, {c.Tools.Count(t => t.Enabled)}/{c.Tools.Count} tools enabled",
-            JsonSerializer.Serialize(new { update.NotifyLevel, update.EnabledTools, update.AllowedSenders }));
+            $"Updated '{c.Name}': notify {c.NotifyLevel}, {c.Tools.Count(t => t.Enabled)}/{c.Tools.Count} tools enabled" +
+            (c.Gateway.Enabled ? $", MCP gateway on ({c.Gateway.Tools.Count} tools)" : string.Empty),
+            JsonSerializer.Serialize(new { update.NotifyLevel, update.EnabledTools, update.AllowedSenders, settings = update.Settings?.Keys, update.Gateway }));
         await ChangedAsync($"connection {c.Name} updated");
         return ConnectionResult.Ok(ToView(c), "Updated.");
     }
@@ -892,6 +919,11 @@ public sealed partial class WorkspaceGrain(
             }))
             .ToList());
     }
+
+    public Task<ConnectionDefinition?> GetGatewayConnection(string connectionId) =>
+        Task.FromResult(Exists && S.Status == WorkspaceStatus.Active && S.Connections.TryGetValue(connectionId, out var c) && c.SupportsTools && c.Gateway.Enabled
+            ? c
+            : null);
 
     public Task<ConnectionToolTarget?> ResolveConnectionTool(string exposedName)
     {
@@ -1067,7 +1099,9 @@ public sealed partial class WorkspaceGrain(
         InboundPath = c.SupportsInbound ? integrations.InboundPath(S.WorkspaceId, c) : null,
         SupportsTools = c.SupportsTools,
         SupportsNotifications = c.SupportsNotifications,
-        SupportsInbound = c.SupportsInbound
+        SupportsInbound = c.SupportsInbound,
+        Gateway = c.Gateway,
+        GatewayPath = c.SupportsTools ? $"/mcp/gateway/{S.WorkspaceId}/{c.ConnectionId}" : null
     };
 
     // ---- Safety: policy, approvals, audit ----------------------------------------

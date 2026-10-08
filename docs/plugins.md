@@ -27,7 +27,7 @@ flowchart LR
 | Plugin | Tools | Notifications | Inbound | Notes |
 |---|---|---|---|---|
 | **MCP server** (`mcp`) | the server's tools | | | Any MCP server over Streamable HTTP (or SSE). Launched-as-a-command (stdio) servers run in an isolated Docker container and must be enabled with `Integrations:AllowStdioMcp`. |
-| **HTTP API** (`http-api`) | `get`, and `send` if writes are allowed | | | Any REST API behind one base URL and auth header, e.g. **Shopify Admin** (`X-Shopify-Access-Token`) or Stripe. |
+| **HTTP API** (`http-api`) | `get`, and `send` if writes are allowed; plus one tool per [endpoint](#endpoints-for-an-http-api) you add | | | Any REST API behind one base URL and auth header, e.g. **Shopify Admin** (`X-Shopify-Access-Token`) or Stripe. |
 | **Slack** (`slack`) | `post_message` | ✓ | | Incoming webhook. |
 | **SMS (Twilio)** (`twilio-sms`) | `send_sms` | ✓ | ✓ | Verifies `X-Twilio-Signature` when `PUBLIC_BASE_URL` is set. |
 | **Email (SMTP)** (`email-smtp`) | `send_email` | ✓ | | STARTTLS on 587. A stable Message-ID per notification lets receivers spot retried duplicates. |
@@ -66,6 +66,92 @@ instructions plus the services you connect. Two examples:
    reply starts a run with it as the input.
 
 Alternatively, connect a Shopify MCP server with the `mcp` plugin.
+
+## Endpoints for an HTTP API
+
+Without endpoints, an HTTP API connection gives agents two general tools: `get` (any path under the
+base URL) and `send` (any write, if writes are allowed). The agent has to work out paths and
+parameters itself. Add the API's operations as **endpoints** and each becomes a tool of its own with
+named, typed parameters: `store__get_order {order_id}` instead of
+`store__get {path: "/orders/…"}`.
+
+On the connection (when adding it, or later with **edit endpoints**):
+- **Add endpoint** by hand: method, path with `{placeholders}` (`/orders/{order_id}`), a tool name,
+  what it does (shown to agents), query parameters (string, integer, number or boolean; optionally
+  required) and, for writes, an optional JSON schema of the body. Every placeholder is a required
+  path parameter.
+- **Import from OpenAPI…**: choose or paste an OpenAPI 3 or Swagger 2 document (JSON or YAML), then
+  pick the operations to add. Names come from `operationId` (`getOrderById` → `get_order_by_id`),
+  `$ref`s inside the document are inlined, and the document's server URL fills an empty base URL.
+  The server only reads the document; it never fetches anything it points to. Header and cookie
+  parameters are skipped (the connection sets its own headers), and so are operations past the
+  first 300.
+
+What the runtime enforces:
+- Endpoints are checked when the connection is saved: valid names (lowercase, digits and
+  underscores; `get` and `send` are taken), known methods, paths under the base URL (no `..` or
+  full URLs), parameters only in the path or query. An invalid list is refused and the old one
+  stays.
+- A path value must be one segment: values containing `/`, `\` or `..` are refused, and the rest is
+  escaped, so an agent can't steer a request to another path.
+- `GET` endpoints are read-only tools; `PUT` and `DELETE` idempotent; `POST` and `PATCH` writes
+  (with an `Idempotency-Key`). Write endpoints exist only while **Allow writes** is on.
+- At most 100 endpoints per connection, and as with any connection only the first
+  `MaxEnabledToolsPerConnection` (20) tools start enabled: each enabled tool costs tokens on every
+  agent call.
+
+A JSON response comes back to the agent as JSON (`{status, body}`), not as an escaped string.
+
+Endpoints are kept in the connection's `endpoints` setting (a JSON array), so clones and templates
+carry them. Over the API: `PATCH …/connections/{cid}` with `{"settings": {"endpoints": "[…]"}}`,
+and `POST /api/integrations/openapi` with `{spec}` to turn a document into endpoints.
+
+## MCP gateway: a connection as an MCP server
+
+Any workspace connection with tools can also be **served as an MCP server**, so agents outside
+Aktor (Claude Code, n8n, a CrewAI crew, your own MCP client) call its tools directly, with no Aktor
+agent team in between. Add your REST API with its endpoints, switch the gateway on, and you have an
+MCP server for your API that keeps the credential on the server.
+
+```mermaid
+flowchart LR
+    C((Claude Code / n8n /<br/>any MCP client)) -- "Bearer ak_…<br/>tools/call get_order" --> G["/mcp/gateway/{ws}/{conn}"]
+    G -- "key's organization? Member?<br/>tool served? rate limit?<br/>safety policy?" --> X[Connection tool]
+    V[(Vault)] -- credential --> X
+    X --> API[Your REST API]
+    G -- every call --> A[(Workspace audit log)]
+```
+
+On the connection's card, **Serve as an MCP server**:
+- Pick the tools callers get. This is separate from the tools the workspace's agents have enabled.
+  Switching it on serves the read tools to start with; add writes deliberately.
+- Copy the URL, `{API}/mcp/gateway/{workspace id}/{connection id}`, or the Claude Code command:
+
+  ```bash
+  claude mcp add --transport http store https://your-aktor/mcp/gateway/ws-…/conn-… \
+    --header "Authorization: Bearer ak_…"
+  ```
+
+What the runtime enforces on every call:
+- **Who:** an API key (or a session) of the workspace's organization. Viewer keys can list the
+  tools; calling them needs Member. Another organization's key gets a 404.
+- **What:** only the served tools, only while the gateway is on and the workspace is active.
+- **Safety policy:** the organization's and the workspace's rules apply to the tool's exposed name
+  (`store__create_refund`), exactly as for agents. A call they block is refused, and so is one that
+  needs approval: nobody is there to approve it while the caller waits.
+- **Credential:** used inside the server for the call; it never appears in a result or the audit log.
+- **Rate limit:** `Integrations:GatewayCallsPerMinute` (60) per connection, all callers together
+  (per server process).
+- **Audit:** every call, refused ones included, is in the workspace's audit log as `gateway.call`
+  with the key, the arguments, the outcome and a truncated result.
+
+The gateway speaks MCP over streamable HTTP, statelessly (one JSON response per request, no
+sessions or server-sent stream), with `initialize`, `tools/list`, `tools/call` and `ping`. Tool
+annotations follow the side effects: `readOnlyHint` for reads, `destructiveHint` for writes. A clone
+or template of the workspace starts with the gateway off.
+
+This works for any plugin with tools: an MCP server connected to a workspace can be re-served the
+same way, behind the workspace's key, policy and audit log.
 
 ## Security model
 
@@ -153,6 +239,7 @@ host doesn't already have); the SDK and `Microsoft.Extensions.*` come from the h
 | `Integrations:PublicBaseUrl` | `PUBLIC_BASE_URL` | | Needed for inbound channels and Twilio signature checks. |
 | `Integrations:AllowStdioMcp` | `ALLOW_STDIO_MCP` | `false` | Allow MCP servers launched as commands (in Docker). |
 | `Integrations:MaxEnabledToolsPerConnection` | | `20` | |
+| `Integrations:GatewayCallsPerMinute` | | `60` | Calls per minute to one connection's MCP gateway. |
 | `Plugins:Directory` | | `/app/plugins` | Third-party plugin DLLs. |
 
 ## API
@@ -161,12 +248,14 @@ host doesn't already have); the SDK and `Microsoft.Extensions.*` come from the h
 |---|---|---|
 | `GET` | `/api/plugins` | Installed plugins and their setting fields |
 | `GET` / `POST` | `/api/workspaces/{id}/connections` | `{plugin_id, name, settings, secrets, notify_level?, allowed_senders?}` |
-| `PATCH` | `/api/workspaces/{id}/connections/{cid}` | `{notify_level?, enabled_tools?, allowed_senders?}` |
+| `PATCH` | `/api/workspaces/{id}/connections/{cid}` | `{notify_level?, enabled_tools?, allowed_senders?, settings?, gateway?}`: `settings` changes non-secret settings such as `endpoints` (checked again; refused if invalid); `gateway` is `{enabled, tools}` |
+| `POST` | `/api/integrations/openapi` | `{spec}` (JSON or YAML): `{title, base_url, endpoints, warnings}`; saves nothing. Member |
+| `POST` | `/mcp/gateway/{id}/{cid}` | The connection's MCP gateway (JSON-RPC; `Authorization: Bearer ak_…`) |
 | `POST` | `/api/workspaces/{id}/connections/{cid}/refresh` | Re-list tools, keeping on/off choices |
 | `DELETE` | `/api/workspaces/{id}/connections/{cid}` | Removes it and deletes its secrets |
 | `POST` | `/api/channels/{workspaceId}/{connectionId}/{secret}` | Public inbound endpoint (set it as the provider's webhook) |
 | `GET` / `POST` | `/api/tasks/{id}/connections` | A task's own tool connections (MCP, HTTP API): `{plugin_id, name, settings, secrets}`; Member |
-| `PATCH` / `DELETE` | `/api/tasks/{id}/connections/{cid}` | `{enabled_tools}`, or remove it and its secrets |
+| `PATCH` / `DELETE` | `/api/tasks/{id}/connections/{cid}` | `{enabled_tools?, settings?}`, or remove it and its secrets |
 | `POST` | `/api/tasks/{id}/connections/{cid}/refresh` | Re-list its tools |
 
 **Tasks** can have connections too, for tools only (MCP servers, HTTP APIs; no inbound channels or
@@ -189,5 +278,13 @@ Secrets are stored in the vault under the task. See [tasks.md](tasks.md#connecti
   - inbound commands are accepted from allowed senders once, and ignored from anyone else;
   - bad credentials leave no secrets behind;
   - removal deletes secrets.
+- `HttpApiEndpointTests`: endpoints are validated, become typed tools (writes only when allowed),
+  build requests under the base URL, refuse path values that leave their segment, and OpenAPI 3
+  YAML and Swagger 2 JSON import with `$ref`s inlined.
+- `ConnectionGatewayTests`, end to end with a real MCP client and a local REST API: hand-written
+  endpoints are listed and called through the gateway with the stored credential, which never
+  comes back; a supervised workspace refuses writes; every call is audited; nothing is served
+  before it's switched on, after it's switched off, or to another organization; endpoints imported
+  from OpenAPI can be saved later, and invalid ones are refused.
 - `McpLiveTests` checks the MCP plugin against a real MCP server when `MCP_TEST_URL` is set.
 - `PluginLoaderTests` loads the sample plugin DLL the way the server does.

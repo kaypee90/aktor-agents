@@ -17,6 +17,8 @@ from code the runtime ran in a sandboxed Python container (pandas, statsmodels, 
 scipy, sympy, DuckDB), with the data version, the code and the output recorded. Each such result
 has an **evidence id** (`ev-…`), and the report's findings cite them.
 
+To try it with sample data, follow [studies-walkthrough.md](studies-walkthrough.md).
+
 ## A study
 
 | Part | What it is |
@@ -25,6 +27,7 @@ has an **evidence id** (`ev-…`), and the report's findings cite them.
 | **Datasets** | CSV, Excel, Parquet or JSON files. Profiled on upload (columns, types, missing values, ranges), versioned, with a data dictionary you can edit. A share of each (20% by default) is **sealed as holdout**: agents never see it, and only `evaluate_on_holdout` scores models on it. Mark a time column and the holdout is the most recent rows instead of a random sample. |
 | **Documents** | Reports, papers, policies: the study's own knowledge (searchable passages, cited by evidence id). |
 | **Connections** | MCP servers and APIs, set up for this study only (secrets in the vault). Every response agents use is snapshotted as evidence, so results can be checked and reproduced later. |
+| **Model** | The provider and model the study's runs use (the organization's default unless chosen): its agents and its simulated participants. A run can use another one without changing the study's. |
 | **Runs** | Each **Run** starts an agent team on the question. A study can be run again after sources change. |
 
 Everything belongs to one study: another study (or organization) never sees its data, documents,
@@ -79,7 +82,7 @@ Results of `search_knowledge` and of connection tools also get evidence ids auto
   leave, from the data). The runtime reports the gap between simulated and real.
 
 The runtime generates the participants (seeded, so a run can be reproduced), asks each for a
-structured decision with the organization's fast model, and saves every decision as a row of a new
+structured decision with the run's model (its fast model, if it has one), and saves every decision as a row of a new
 **simulated dataset** that `query_dataset` and `fit_model` work on. It reports choice shares per
 condition and round, the calibration gap, and a **low diversity** warning when nearly everyone
 chose the same.
@@ -107,14 +110,14 @@ reviews).
 | Method | Path | |
 |---|---|---|
 | GET | `/api/studies` | The organization's studies. |
-| POST | `/api/studies` | `{name, question}`. Member. |
+| POST | `/api/studies` | `{name, question, model}` (a model profile id; left out, the organization's default). Member. |
 | GET | `/api/studies/{id}` | The study with its sources, plan, runs, models, hypotheses and latest report. |
-| PATCH | `/api/studies/{id}` | `{name, question}`. Member. |
+| PATCH | `/api/studies/{id}` | `{name, question, model}` (`""` for the organization's default). Member. |
 | DELETE | `/api/studies/{id}` | Deletes the study and everything in it. Admin. |
 | POST | `/api/studies/{id}/datasets` | Multipart `files`: adds datasets (a file with the same name adds a new version). |
 | PUT | `/api/studies/{id}/datasets/{datasetId}` | `{dictionary, time_column, holdout_fraction}`; re-splits when the holdout changes. |
 | DELETE | `/api/studies/{id}/datasets/{datasetId}` | Removes a dataset. |
-| POST | `/api/studies/{id}/runs` | Starts a run; `{instructions}` optional. Returns the task. |
+| POST | `/api/studies/{id}/runs` | Starts a run; `{instructions, model}` optional (model: for this run only). Returns the task. |
 | GET | `/api/studies/{id}/evidence/{evidenceId}` | One piece of evidence: what was run and what came back. |
 | GET | `/api/studies/{id}/files/{name}` | A chart an analysis saved. |
 | GET | `/api/studies/{id}/notebook` | The notebook export. |

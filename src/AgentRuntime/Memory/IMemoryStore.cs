@@ -63,13 +63,19 @@ public interface IMemoryStore
 /// entries agents saved.</summary>
 public sealed record KnowledgeSummary(int Entries, int Files, int Facts, int FromAgents, IReadOnlyList<string> FileNames)
 {
+    /// <summary>The keys of the facts people typed (newest first), for @knowledge mentions.</summary>
+    public IReadOnlyList<string> FactKeys { get; init; } = [];
+
     public static KnowledgeSummary Of(IReadOnlyList<(string Key, string AgentId)> entries)
     {
         var byPeople = entries.Where(e => e.AgentId == "user").ToList();
         var files = byPeople.Select(e => KnowledgeFiles.FileOf(e.Key) ?? (KnowledgeFiles.LooksLikeFile(e.Key) ? e.Key : null))
             .Where(f => f is not null).Select(f => f!).Distinct().ToList();
         var facts = byPeople.Count(e => KnowledgeFiles.FileOf(e.Key) is null && !KnowledgeFiles.LooksLikeFile(e.Key));
-        return new KnowledgeSummary(entries.Count, files.Count, facts, entries.Count - byPeople.Count, files);
+        return new KnowledgeSummary(entries.Count, files.Count, facts, entries.Count - byPeople.Count, files)
+        {
+            FactKeys = byPeople.Where(e => KnowledgeFiles.FileOf(e.Key) is null && !KnowledgeFiles.LooksLikeFile(e.Key)).Select(e => e.Key).Distinct().ToList()
+        };
     }
 }
 
@@ -88,6 +94,19 @@ public static partial class KnowledgeFiles
 
     /// <summary>Whether the entry with this key is (a passage of) the file.</summary>
     public static bool IsPassageOf(string key, string fileName) => key == fileName || FileOf(key) == fileName;
+
+    /// <summary>
+    /// How knowledge is mentioned (<c>@knowledge:refund-policy.docx</c>): a file's name or a fact's key,
+    /// lowercase, with anything but letters, digits, dots, dashes and underscores turned into dashes,
+    /// so it stays one handle. The dashboard makes the same handle (MentionTextarea).
+    /// </summary>
+    public static string Handle(string nameOrKey)
+    {
+        var chars = nameOrKey.Trim().ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-' ? c : '-').ToArray();
+        var handle = new string(chars);
+        while (handle.Contains("--")) handle = handle.Replace("--", "-");
+        return handle.Trim('-', '.', '_');
+    }
 
     /// <summary>A key that reads as a file name ("notes.md"): a file that fit in one passage.</summary>
     public static bool LooksLikeFile(string key) => FileExtension().IsMatch(key);

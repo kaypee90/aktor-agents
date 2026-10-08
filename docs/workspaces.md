@@ -91,6 +91,7 @@ Typing `@` in a text box suggests what you can refer to; ↑/↓ and Enter or Ta
 | A model, by its profile id | `@claude-fast`, `@default-model` (the server's own) | That model (Settings → Models) |
 | A provider | `@anthropic` | The organization's models from that provider |
 | A skill | `@skill:incident-postmortems` | That skill ([skills.md](skills.md)): the workspace's own, else the organization's |
+| Knowledge | `@knowledge:refund-policy.docx`, `@knowledge:on-call-rota` | That document or fact ([memory.md](memory.md)): the workspace's own, else the organization's |
 
 A mention means one thing to whichever model reads it: the runtime adds a short glossary to the
 text it passes on (`Mentions`), so a weaker model doesn't have to guess.
@@ -98,7 +99,9 @@ text it passes on (`Mentions`), so a weaker model doesn't have to guess.
   editor is told every model a stage can run on, and a model that isn't set up is refused.
 - **A run's input, stage instructions, the chat and triggers:** each stage's agent is told which
   stage a mention is. A stage whose instructions (or the run's input) name a skill is told to load
-  it before anything else, and the canvas shows the skill on the stage.
+  it before anything else, and the canvas shows the skill on the stage. A stage whose instructions
+  (or the run's input) name knowledge is told to read it first with `read_knowledge`, which returns
+  the whole document (its passages in order) or the fact.
 - **Describe a change:** the editor is told the skills too, so "have `@write` follow
   `@skill:report-style`" puts the skill in that stage's instructions.
 - **The task composer:** mentioning a model picks it for the task; mentioning a provider picks its
@@ -182,7 +185,7 @@ Every section is resizable: drag a divider (or focus it and use the arrow keys; 
 resets it). Sizes are remembered per browser.
 
 - **Left:** your workspaces.
-- **Center top, Live agents:** the team at work, like the simulation map. You sit at the top, each
+- **Center top, Live agents:** the team at work. You sit at the top, each
   recent run below you, its stage agents below the run, and their helpers below them, joined by
   dashed lines. For about 20 seconds after something happens, messages between agents animate as
   coloured arrows (task, done, question and answer, started), runs started by you and their

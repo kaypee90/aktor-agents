@@ -17,7 +17,7 @@ function taskConnections(taskId: string): ConnectionsApi {
     key: taskId,
     list: () => listTaskConnections(taskId),
     add: (body) => addTaskConnection(taskId, body),
-    update: (id, body) => updateTaskConnection(taskId, id, { enabled_tools: body.enabled_tools }),
+    update: (id, body) => updateTaskConnection(taskId, id, { enabled_tools: body.enabled_tools, settings: body.settings }),
     refresh: (id) => refreshTaskConnection(taskId, id),
     remove: (id) => removeTaskConnection(taskId, id),
   };

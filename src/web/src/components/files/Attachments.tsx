@@ -56,6 +56,42 @@ export function AttachButton({ onFiles, className }: { onFiles: (files: File[]) 
   );
 }
 
+/** A labelled button that opens the file picker: the whole button is clickable, not just its icon. */
+export function ChooseFilesButton({ onFiles, children, accept, disabled, className }: {
+  onFiles: (files: File[]) => void; children: React.ReactNode; accept?: string; disabled?: boolean; className?: string;
+}) {
+  return (
+    <label className={cx("inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-sm transition dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+      disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800", className)}>
+      <Icons.Paperclip className="h-4 w-4 text-zinc-500" />
+      {children}
+      <input type="file" multiple accept={accept} disabled={disabled} className="sr-only"
+        onChange={(e) => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+    </label>
+  );
+}
+
+/** A dashed area that takes files both ways: dropped on it, or picked after a click anywhere on it. */
+export function FilePickArea({ onFiles, title, hint, accept, disabled, label = "Drop files to add them" }: {
+  onFiles: (files: File[]) => void; title: React.ReactNode; hint?: React.ReactNode; accept?: string; disabled?: boolean; label?: string;
+}) {
+  return (
+    <DropZone onFiles={(f) => { if (!disabled) onFiles(f); }} label={label}>
+      <label className={cx("flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-200 px-6 py-10 text-center transition dark:border-zinc-700",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:border-brand-300 hover:bg-brand-50/40 dark:hover:border-brand-800 dark:hover:bg-brand-950/20")}>
+        <Icons.Upload className="h-6 w-6 text-zinc-400" />
+        <span className="text-sm text-zinc-600 dark:text-zinc-400">{title}</span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+          <Icons.Paperclip className="h-4 w-4 text-zinc-500" /> Choose files
+        </span>
+        {hint && <span className="text-[11px] text-zinc-400">{hint}</span>}
+        <input type="file" multiple accept={accept} disabled={disabled} className="sr-only"
+          onChange={(e) => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+      </label>
+    </DropZone>
+  );
+}
+
 /** Wraps an area that accepts files dropped on it, with a hint while dragging. */
 export function DropZone({ onFiles, children, className, label = "Drop files to attach them" }: {
   onFiles: (files: File[]) => void; children: React.ReactNode; className?: string; label?: string;

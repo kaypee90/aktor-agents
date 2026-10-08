@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
 import Link from "next/link";
-import { MentionTextarea, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
+import { MentionTextarea, useKnowledgeMentionables, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
 import { pipelineShape, type WorkspaceTemplate } from "@/lib/workspaceTypes";
 
 // Deliberately varied: workspaces are generic, and these only seed the form. Each describes a
@@ -59,7 +59,8 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
 
   const modelMentions = useModelMentionables();
   const skillMentions = useSkillMentionables();
-  const models = useMemo(() => [...modelMentions, ...skillMentions], [modelMentions, skillMentions]);
+  const knowledgeMentions = useKnowledgeMentionables();
+  const models = useMemo(() => [...modelMentions, ...skillMentions, ...knowledgeMentions], [modelMentions, skillMentions, knowledgeMentions]);
   const input = "w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900";
 
   return (

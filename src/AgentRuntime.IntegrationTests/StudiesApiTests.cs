@@ -182,4 +182,30 @@ public sealed class StudiesApiTests(ApiTestHostFixture fixture, ITestOutputHelpe
         Assert.Equal(HttpStatusCode.NoContent, (await api.DeleteAsync($"/api/studies/{id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync($"/api/studies/{id}")).StatusCode);
     }
+
+    [Fact]
+    public async Task A_study_has_its_own_model_and_its_runs_use_it()
+    {
+        if (Skip()) return;
+        using var api = Host.ClientFor(await Host.CreateOrganizationAsync("StudyModels", Tenancy.TenantRole.Admin));
+        await Json(await api.PostAsJsonAsync("/api/llm/profiles", new { name = "Study model", provider = "Mock" }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsJsonAsync("/api/studies", new { name = "X", model = "no-such-model" })).StatusCode);
+        var created = await Json(await api.PostAsJsonAsync("/api/studies", new { name = "Pricing", question = "What drives renewals?", model = "study-model" }));
+        var id = created.GetProperty("study_id").GetString()!;
+        Assert.Equal("study-model", created.GetProperty("model_profile_id").GetString());
+
+        // Back to the organization's default, and to the profile again.
+        var reset = await Json(await api.PatchAsJsonAsync($"/api/studies/{id}", new { model = "" }));
+        Assert.Equal(JsonValueKind.Null, reset.GetProperty("model_profile_id").ValueKind);
+        await Json(await api.PatchAsJsonAsync($"/api/studies/{id}", new { model = "study-model" }));
+
+        await Json(await api.PostAsync($"/api/studies/{id}/datasets", File("Lease Renewals.csv", RenewalsCsv())));
+        var run = await Json(await api.PostAsJsonAsync($"/api/studies/{id}/runs", new { }));
+        var task = await Json(await api.GetAsync($"/api/tasks/{run.GetProperty("task_id").GetString()}"));
+        Assert.Equal("study-model", task.GetProperty("model").GetProperty("profile_id").GetString());
+        Assert.Equal("study_run", task.GetProperty("kind").GetString());
+        Assert.Equal(id, task.GetProperty("study_id").GetString());
+        await Json(await api.GetAsync($"/api/tasks/{run.GetProperty("task_id").GetString()}/wait?timeout_seconds=240"));
+    }
 }

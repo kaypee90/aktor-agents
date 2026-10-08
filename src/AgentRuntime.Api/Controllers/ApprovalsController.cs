@@ -23,12 +23,17 @@ public sealed class ApprovalsController(IGrainFactory grains, AgentDbContext db,
             .Select(w => new { w.WorkspaceId, w.Name })
             .ToListAsync(ct);
 
+        // A study's approvals belong to the study (docs/studies.md), not to its hidden workspace.
+        var ids = workspaces.Select(w => w.WorkspaceId).ToList();
+        var studies = await db.Studies.AsNoTracking().Where(s => ids.Contains(s.WorkspaceId))
+            .ToDictionaryAsync(s => s.WorkspaceId, s => new { s.StudyId, s.Name }, ct);
         var pending = await Task.WhenAll(workspaces.Select(async w => (w, approvals: await grains.GetGrain<IWorkspaceGrain>(w.WorkspaceId).GetPendingApprovals())));
         return Ok(pending
             .SelectMany(p => p.approvals.Select(a => new
             {
                 workspace_id = p.w.WorkspaceId,
-                workspace_name = p.w.Name,
+                workspace_name = studies.TryGetValue(p.w.WorkspaceId, out var study) ? study.Name : p.w.Name,
+                study_id = studies.TryGetValue(p.w.WorkspaceId, out var s) ? s.StudyId : null,
                 approval = a
             }))
             .OrderBy(x => x.approval.RequestedAt));

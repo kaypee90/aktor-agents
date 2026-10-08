@@ -158,9 +158,11 @@ export interface TaskSummary {
   task_id: string;
   goal: string;
   status: string;
-  /** "pipeline_run" for a run of a workspace's pipeline. */
-  kind?: "task" | "pipeline_run";
+  /** "pipeline_run" for a run of a workspace's pipeline, "study_run" for a run of a study. */
+  kind?: "task" | "pipeline_run" | "study_run";
   workspace_id?: string | null;
+  /** For a study's run: its study. */
+  study_id?: string | null;
   /** Paused with Pause (every agent of it), until Resume. */
   paused?: boolean;
   root_agent_id: string | null;

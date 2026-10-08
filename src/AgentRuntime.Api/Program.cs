@@ -58,6 +58,7 @@ builder.Services.AddSingleton<UploadStore>();
 builder.Services.AddSingleton<TaskService>();
 builder.Services.AddSingleton<StudyService>();
 builder.Services.AddSingleton<WorkspaceCopyService>();
+builder.Services.AddSingleton<AgentRuntime.Api.Interop.GatewayRateLimiter>();
 builder.Services.AddSingleton<TaskPreviewService>();
 builder.Services.AddSingleton<PipelineDesignService>();
 builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));
@@ -123,6 +124,8 @@ app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 app.MapMcp("/mcp");
+// A workspace connection served as its own MCP server (docs/plugins.md, "MCP gateway").
+AgentRuntime.Api.Interop.ConnectionGatewayEndpoint.MapConnectionGateway(app);
 // Aktor as an A2A agent and an ACP agent (docs/integrations.md).
 AgentRuntime.Api.Interop.A2aEndpoint.MapA2a(app);
 AgentRuntime.Api.Interop.AcpEndpoint.MapAcp(app);

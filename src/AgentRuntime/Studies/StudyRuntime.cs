@@ -57,7 +57,7 @@ public sealed class StudyEvidenceRecorder(IStudyStore store) : IToolEvidenceReco
     {
         if (!result.Success || request.WorkspaceId is not { } workspaceId) return result;
         var isConnection = ConnectionNames.IsConnectionTool(request.ToolName);
-        if (!isConnection && request.ToolName != "search_knowledge") return result;
+        if (!isConnection && request.ToolName is not ("search_knowledge" or "read_knowledge")) return result;
         if (await StudyOfAsync(workspaceId, request.CancellationToken) is not { } study) return result;
 
         string? source = null;

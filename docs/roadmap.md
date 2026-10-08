@@ -33,6 +33,13 @@ product? If it's the latter, move P9 (flagship use case) ahead of P2.
 
 Change log:
 
+- 2026-10-08: **Studies** replace the Simulation page: research on a question with the study's own
+  datasets, documents and connections, statistics in a sandboxed Python container, reviewed models,
+  a sealed holdout, simulated experiments built from the data, and reports whose findings cite
+  evidence ([studies.md](studies.md)). Also: built-in model prices with a model dropdown,
+  token-kind and usage analytics, switching a finished task's model, `@knowledge` mentions,
+  deleting knowledge, and cloning, templating and deleting workspaces.
+
 - 2026-10-03: direction set: a finished **productivity product** where people do their work through
   agent teams, used like ChatGPT, Claude or Gemini (this answers the open question above). Built:
   tasks as conversations with follow-ups that reopen a finished task, continuing a partial result

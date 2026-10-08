@@ -38,6 +38,37 @@ public sealed class PluginsController(PluginCatalog catalog) : ControllerBase
         }));
 }
 
+/// <summary>Reads an OpenAPI document (JSON or YAML) into endpoints for an HTTP API connection. It
+/// only parses what it's given: nothing is fetched, and nothing is saved until a connection is.</summary>
+[ApiController]
+[Route("api/integrations/openapi")]
+public sealed class OpenApiImportController : ControllerBase
+{
+    public sealed record ImportBody(string? Spec);
+
+    [HttpPost]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    [RequestSizeLimit(6_000_000)]
+    public IActionResult Import([FromBody] ImportBody body)
+    {
+        try
+        {
+            var result = AgentRuntime.Infrastructure.Plugins.OpenApiImport.Parse(body.Spec ?? string.Empty);
+            return Ok(new
+            {
+                title = result.Title,
+                base_url = result.BaseUrl,
+                endpoints = System.Text.Json.Nodes.JsonNode.Parse(AgentRuntime.Infrastructure.Plugins.HttpApiEndpoints.Serialize(result.Endpoints)),
+                warnings = result.Warnings
+            });
+        }
+        catch (FormatException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+}
+
 /// <summary>A workspace's connections. Secrets are accepted here and go straight to the
 /// encrypted vault; no endpoint ever returns them.</summary>
 [ApiController]
@@ -47,7 +78,9 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
 {
     public sealed record AddBody(string PluginId, string Name, Dictionary<string, string>? Settings, Dictionary<string, string>? Secrets,
         string? NotifyLevel, List<string>? AllowedSenders);
-    public sealed record UpdateBody(string? NotifyLevel, List<string>? EnabledTools, List<string>? AllowedSenders);
+    public sealed record UpdateBody(string? NotifyLevel, List<string>? EnabledTools, List<string>? AllowedSenders,
+        Dictionary<string, string>? Settings = null, GatewayBody? Gateway = null);
+    public sealed record GatewayBody(bool Enabled, List<string>? Tools);
 
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
 
@@ -91,7 +124,9 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
         {
             NotifyLevel = level,
             EnabledTools = body.EnabledTools,
-            AllowedSenders = body.AllowedSenders
+            AllowedSenders = body.AllowedSenders,
+            Settings = body.Settings,
+            Gateway = body.Gateway is null ? null : new McpGatewaySettings { Enabled = body.Gateway.Enabled, Tools = body.Gateway.Tools ?? [] }
         });
         return result.Success ? Ok(result.Connection) : BadRequest(new { error = result.Message });
     }
@@ -164,7 +199,7 @@ public sealed class ChannelsController(IGrainFactory grains) : ControllerBase
 [Route("api/tasks/{taskId}/connections")]
 public sealed class TaskConnectionsController(IGrainFactory grains, AgentRuntime.Api.Platform.TenantAccess access) : ControllerBase
 {
-    public sealed record UpdateBody(List<string>? EnabledTools);
+    public sealed record UpdateBody(List<string>? EnabledTools, Dictionary<string, string>? Settings = null);
 
     private ITaskConnectionsGrain Connections(string taskId) => grains.GetGrain<ITaskConnectionsGrain>(taskId);
 
@@ -192,8 +227,9 @@ public sealed class TaskConnectionsController(IGrainFactory grains, AgentRuntime
     public async Task<IActionResult> Update(string taskId, string connectionId, [FromBody] UpdateBody body, CancellationToken ct)
     {
         if (!await access.TaskAsync(taskId, ct)) return NotFound();
-        var result = await Connections(taskId).UpdateConnection(connectionId, new ConnectionUpdate { EnabledTools = body.EnabledTools });
-        return result.Success ? Ok(result.Connection) : NotFound(new { error = result.Message });
+        var result = await Connections(taskId).UpdateConnection(connectionId, new ConnectionUpdate { EnabledTools = body.EnabledTools, Settings = body.Settings });
+        return result.Success ? Ok(result.Connection)
+            : result.Message == "No such connection." ? NotFound(new { error = result.Message }) : BadRequest(new { error = result.Message });
     }
 
     [HttpPost("{connectionId}/refresh")]

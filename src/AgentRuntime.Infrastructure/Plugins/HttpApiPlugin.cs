@@ -11,7 +11,8 @@ namespace AgentRuntime.Infrastructure.Plugins;
 /// ticketing system, an internal service. Agents choose only the path and query; the host, scheme and
 /// credentials are fixed by the connection, so an agent can't point the credential elsewhere.
 /// Reads are a ReadOnly tool; writes are a separate tool that exists only when the user enabled
-/// them, and send an Idempotency-Key header (honoured by many APIs).
+/// them, and send an Idempotency-Key header (honoured by many APIs). Endpoints added by hand or
+/// imported from OpenAPI (<see cref="HttpApiEndpoints"/>) become typed tools beside the general ones.
 /// </summary>
 public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolProviderPlugin
 {
@@ -27,7 +28,12 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
             new() { Key = "description", Label = "What this API is (shown to agents)", Placeholder = "Our CRM's REST API: contacts, deals, activities" },
             new() { Key = "auth_header_name", Label = "Auth header name", DefaultValue = "Authorization", Placeholder = "Authorization or X-Api-Key" },
             new() { Key = "auth_header_value", Label = "Auth header value", Secret = true },
-            new() { Key = "allow_writes", Label = "Allow writes (POST/PUT/PATCH/DELETE)", Options = ["false", "true"], DefaultValue = "false" }
+            new() { Key = "allow_writes", Label = "Allow writes (POST/PUT/PATCH/DELETE)", Options = ["false", "true"], DefaultValue = "false" },
+            new()
+            {
+                Key = HttpApiEndpoints.SettingKey, Label = "Endpoints",
+                Description = "Optional. The API's operations as a JSON array, added by hand or imported from an OpenAPI document; each becomes a typed tool."
+            }
         ],
         SetupHelp = "Use a token with the narrowest permissions that do the job (read-only unless agents must write). " +
                     "Most APIs take 'Authorization: Bearer <token>'; some use their own header (e.g. X-Api-Key, or " +
@@ -36,6 +42,9 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
 
     public async Task<ConnectionCheck> ValidateAsync(PluginConnection connection, CancellationToken cancellationToken)
     {
+        HttpApiEndpoints.Parse(connection.Setting(HttpApiEndpoints.SettingKey), out var problems);
+        if (problems.Count > 0) return ConnectionCheck.Failure("Endpoints: " + string.Join(" ", problems.Take(5)));
+
         var baseUri = BaseUri(connection);
         using var request = new HttpRequestMessage(HttpMethod.Get, baseUri);
         AddAuth(request, connection);
@@ -89,13 +98,34 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
             });
         }
 
+        // The connection's own endpoints, as typed tools. Writes are offered only when writes are allowed.
+        var writes = connection.Setting("allow_writes", "false") == "true";
+        foreach (var e in Endpoints(connection).Where(e => writes || !HttpApiEndpoints.IsWrite(e.Method)))
+        {
+            tools.Add(new ToolDefinition
+            {
+                Name = e.Name,
+                Description = HttpApiEndpoints.DescriptionOf(e, about),
+                SideEffects = HttpApiEndpoints.SideEffectsOf(e.Method),
+                JsonSchema = HttpApiEndpoints.SchemaOf(e)
+            });
+        }
+
         return Task.FromResult<IReadOnlyList<ToolDefinition>>(tools);
     }
+
+    private static IReadOnlyList<ApiEndpoint> Endpoints(PluginConnection connection) =>
+        HttpApiEndpoints.Parse(connection.Setting(HttpApiEndpoints.SettingKey), out _);
 
     public async Task<ToolExecutionResult> ExecuteToolAsync(PluginConnection connection, string toolName, ToolExecutionRequest request)
     {
         using var args = JsonDocument.Parse(string.IsNullOrWhiteSpace(request.ArgumentsJson) ? "{}" : request.ArgumentsJson);
         var root = args.RootElement;
+        if (toolName is not ("get" or "send") && Endpoints(connection).FirstOrDefault(e => e.Name == toolName) is { } endpoint)
+        {
+            return await ExecuteEndpointAsync(connection, endpoint, root, request);
+        }
+
         var path = root.TryGetProperty("path", out var p) ? p.GetString() ?? "/" : "/";
 
         HttpMethod method;
@@ -118,12 +148,30 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
             return ToolExecutionResult.Fail(error);
         }
 
+        return await SendAsync(connection, method, uri, root, request);
+    }
+
+    private async Task<ToolExecutionResult> ExecuteEndpointAsync(PluginConnection connection, ApiEndpoint endpoint, JsonElement args, ToolExecutionRequest request)
+    {
+        if (HttpApiEndpoints.IsWrite(endpoint.Method) && connection.Setting("allow_writes", "false") != "true")
+        {
+            return ToolExecutionResult.Fail($"'{endpoint.Name}' writes, and this connection doesn't allow writes.");
+        }
+
+        if (!HttpApiEndpoints.TryBuild(endpoint, args, out var path, out var query, out var error)) return ToolExecutionResult.Fail(error);
+        using var queryDoc = JsonDocument.Parse(query.ToJsonString());
+        if (!TryResolve(connection, path, queryDoc.RootElement, out var uri, out error)) return ToolExecutionResult.Fail(error);
+        return await SendAsync(connection, new HttpMethod(endpoint.Method), uri, args, request);
+    }
+
+    private async Task<ToolExecutionResult> SendAsync(PluginConnection connection, HttpMethod method, Uri uri, JsonElement args, ToolExecutionRequest request)
+    {
         using var httpRequest = new HttpRequestMessage(method, uri);
         AddAuth(httpRequest, connection);
         if (method != HttpMethod.Get)
         {
             if (!string.IsNullOrEmpty(request.IdempotencyKey)) httpRequest.Headers.TryAddWithoutValidation("Idempotency-Key", request.IdempotencyKey);
-            if (root.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null)
+            if (args.ValueKind == JsonValueKind.Object && args.TryGetProperty("body", out var body) && body.ValueKind != JsonValueKind.Null)
             {
                 httpRequest.Content = new StringContent(body.GetRawText(), Encoding.UTF8, "application/json");
             }
@@ -131,8 +179,27 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
 
         using var response = await httpClientFactory.CreateClient("integrations").SendAsync(httpRequest, request.CancellationToken);
         var text = await response.Content.ReadAsStringAsync(request.CancellationToken);
-        var payload = JsonSerializer.Serialize(new { status = (int)response.StatusCode, body = text });
+        var payload = JsonSerializer.Serialize(new { status = (int)response.StatusCode, body = Body(text) });
         return response.IsSuccessStatusCode ? ToolExecutionResult.Ok(payload) : ToolExecutionResult.Fail(payload);
+    }
+
+    /// <summary>A JSON response stays JSON (not a string of escaped JSON, which costs tokens to read); anything else is text.</summary>
+    private static object Body(string text)
+    {
+        var trimmed = text.TrimStart();
+        if (trimmed.StartsWith('{') || trimmed.StartsWith('['))
+        {
+            try
+            {
+                return JsonDocument.Parse(text).RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                // Not JSON after all.
+            }
+        }
+
+        return text;
     }
 
     /// <summary>Resolves an agent-supplied relative path against the base URL, refusing anything

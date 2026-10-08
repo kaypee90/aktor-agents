@@ -29,10 +29,21 @@ public sealed class StudyService(
     IMemoryStore memory,
     IGrainFactory grains,
     TaskService tasks,
+    LLM.LlmSettingsService modelSettings,
     IOptions<StudyOptions> options,
     ILogger<StudyService> logger)
 {
     private StudyOptions O => options.Value;
+
+    /// <summary>A model profile id to keep on a study: null (or empty) for the organization's default,
+    /// else a profile of the organization or "server". Unknown ones are refused.</summary>
+    private async Task<string?> CheckModelAsync(string tenantId, string? model, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return null;
+        var (found, profile) = (await modelSettings.GetAsync(tenantId, ct)).Find(model);
+        if (!found) throw new StudyServiceException($"No model '{model}'. Pick one under Settings → AI model.");
+        return profile?.Id ?? LLM.ModelProfiles.ServerId;
+    }
 
     public static readonly string[] DatasetExtensions = [".csv", ".tsv", ".txt", ".xlsx", ".xlsm", ".parquet", ".json", ".jsonl", ".ndjson"];
 
@@ -71,8 +82,9 @@ public sealed class StudyService(
         : lastRun.Status is "Failed" or "TimedOut" or "Terminated" or "Canceled" ? "Failed"
         : "Completed";
 
-    public async Task<StudyRecord> CreateAsync(string tenantId, string name, string? question, string createdBy, CancellationToken ct)
+    public async Task<StudyRecord> CreateAsync(string tenantId, string name, string? question, string createdBy, CancellationToken ct, string? model = null)
     {
+        var modelProfileId = await CheckModelAsync(tenantId, model, ct);
         name = name.Trim();
         if (name.Length is 0 or > 120) throw new StudyServiceException("A study needs a name of up to 120 characters.");
         if (question?.Length > 4000) throw new StudyServiceException("Keep the question under 4,000 characters.");
@@ -103,6 +115,7 @@ public sealed class StudyService(
             WorkspaceId = workspaceId,
             Name = name,
             Question = question?.Trim() ?? string.Empty,
+            ModelProfileId = modelProfileId,
             CreatedBy = createdBy,
             CreatedAt = now,
             UpdatedAt = now
@@ -114,14 +127,18 @@ public sealed class StudyService(
         return study;
     }
 
-    public async Task UpdateAsync(string tenantId, string studyId, string? name, string? question, CancellationToken ct)
+    /// <summary>Renames, rewords the question, or picks the study's model (<paramref name="model"/>
+    /// "" goes back to the organization's default; null leaves it).</summary>
+    public async Task UpdateAsync(string tenantId, string studyId, string? name, string? question, CancellationToken ct, string? model = null)
     {
         await RequireAsync(tenantId, studyId, ct);
         if (name is not null && name.Trim().Length is 0 or > 120) throw new StudyServiceException("A study needs a name of up to 120 characters.");
+        var modelProfileId = model is null ? null : await CheckModelAsync(tenantId, model, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var row = await db.Studies.FirstAsync(s => s.StudyId == studyId, ct);
         if (name is not null) row.Name = name.Trim();
         if (question is not null) row.Question = question.Trim();
+        if (model is not null) row.ModelProfileId = modelProfileId;
         row.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
     }
@@ -330,6 +347,8 @@ public sealed class StudyService(
             study_id = study.StudyId,
             name = study.Name,
             question = study.Question,
+            // The model runs use unless one is picked for a run; null: the organization's default.
+            model_profile_id = study.ModelProfileId,
             workspace_id = study.WorkspaceId,
             status = StatusOf(study, runs.FirstOrDefault()),
             created_at = study.CreatedAt,
@@ -460,7 +479,7 @@ public sealed class StudyService(
             Source = "study",
             StartedBy = startedBy,
             By = startedBy,
-            ModelProfileId = modelProfileId,
+            ModelProfileId = string.IsNullOrWhiteSpace(modelProfileId) ? study.ModelProfileId : modelProfileId,
             Budget = new Contracts.ResourceBudget
             {
                 MaxTokens = O.RunMaxTokens,

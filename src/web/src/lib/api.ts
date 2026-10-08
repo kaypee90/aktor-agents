@@ -143,6 +143,8 @@ export interface KnowledgeSummary {
   facts: number;
   from_agents: number;
   file_names: string[];
+  /** Keys of the facts people typed, newest first (for @knowledge mentions). */
+  fact_keys?: string[];
 }
 
 export function getKnowledgeSummary(workspace?: string | null) {
@@ -596,7 +598,10 @@ export function getOrganizationPolicyAudit() {
 /** An approval request waiting for a person, with its workspace. */
 export type PendingApproval = {
   workspace_id: string;
+  /** The workspace's name, or the study's for a study's approval. */
   workspace_name: string;
+  /** Set when the approval belongs to a study (its connections live in a hidden workspace). */
+  study_id?: string | null;
   approval: import("./workspaceTypes").ApprovalRecord;
 };
 
@@ -637,7 +642,7 @@ export function addTaskConnection(taskId: string, body: { plugin_id: string; nam
   });
 }
 
-export function updateTaskConnection(taskId: string, connectionId: string, body: { enabled_tools?: string[] }) {
+export function updateTaskConnection(taskId: string, connectionId: string, body: ConnectionUpdateBody) {
   return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/tasks/${taskId}/connections/${connectionId}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
@@ -667,11 +672,26 @@ export function addConnection(workspaceId: string, body: {
   });
 }
 
-export function updateConnection(workspaceId: string, connectionId: string, body: { notify_level?: string; enabled_tools?: string[]; allowed_senders?: string[] }) {
+/** A change to a connection: settings (e.g. an HTTP API's endpoints) re-check it; gateway is workspaces only. */
+export interface ConnectionUpdateBody {
+  notify_level?: string;
+  enabled_tools?: string[];
+  allowed_senders?: string[];
+  settings?: Record<string, string>;
+  gateway?: import("./workspaceTypes").McpGatewaySettings;
+}
+
+export function updateConnection(workspaceId: string, connectionId: string, body: ConnectionUpdateBody) {
   return apiFetch<import("./workspaceTypes").ConnectionView>(`/api/workspaces/${workspaceId}/connections/${connectionId}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
+}
+
+/** Reads an OpenAPI document (JSON or YAML) into endpoints for an HTTP API connection; saves nothing. */
+export function importOpenApi(spec: string) {
+  return apiFetch<{ title: string | null; base_url: string | null; endpoints: import("./workspaceTypes").ApiEndpoint[]; warnings: string[] }>(
+    "/api/integrations/openapi", { method: "POST", body: JSON.stringify({ spec }) });
 }
 
 export function refreshConnection(workspaceId: string, connectionId: string) {
@@ -1339,6 +1359,8 @@ export interface StudyDetail {
   study_id: string;
   name: string;
   question: string;
+  /** The model runs use unless one is picked for a run; null: the organization's default. */
+  model_profile_id: string | null;
   workspace_id: string;
   status: StudyStatus;
   created_at: string;
@@ -1371,15 +1393,16 @@ export function listStudies() {
   return apiFetch<StudySummary[]>("/api/studies");
 }
 
-export function createStudy(name: string, question: string) {
-  return apiFetch<StudyDetail>("/api/studies", { method: "POST", body: JSON.stringify({ name, question }) });
+export function createStudy(name: string, question: string, model?: string | null) {
+  return apiFetch<StudyDetail>("/api/studies", { method: "POST", body: JSON.stringify({ name, question, model: model || null }) });
 }
 
 export function getStudy(id: string) {
   return apiFetch<StudyDetail>(`/api/studies/${encodeURIComponent(id)}`);
 }
 
-export function updateStudy(id: string, patch: { name?: string; question?: string }) {
+/** model: a profile id, or "" for the organization's default. */
+export function updateStudy(id: string, patch: { name?: string; question?: string; model?: string }) {
   return apiFetch<StudyDetail>(`/api/studies/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
