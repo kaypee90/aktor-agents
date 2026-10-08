@@ -405,7 +405,11 @@ public sealed class LlmCallRecord
     public string Purpose { get; set; } = "step";
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
+    /// <summary>Of <see cref="InputTokens"/>, how many were read from the provider's prompt cache.</summary>
     public int CachedInputTokens { get; set; }
+    /// <summary>Of <see cref="InputTokens"/>, how many were written to the prompt cache (providers
+    /// that charge for writes, like Anthropic); 0 for calls recorded before this was.</summary>
+    public int CacheWriteInputTokens { get; set; }
     public decimal CostUsd { get; set; }
     public int DurationMs { get; set; }
     public DateTimeOffset Timestamp { get; set; }

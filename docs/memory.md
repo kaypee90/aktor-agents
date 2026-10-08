@@ -77,6 +77,25 @@ The Compose file runs `pgvector/pgvector:pg16`, which is Postgres 16 with the ex
 existing data volumes keep working. The migration enables the extension and adds the `Embedding`
 column only where the extension is available.
 
+## Deleting knowledge
+
+Admins delete knowledge from **Shared memory** (with the **Scope** picker set to the organization
+or a workspace): the trash button on an entry deletes it, and on a passage of a file it deletes
+**the whole file**, every passage. Agents stop finding it at once. Each deletion is recorded in the
+audit log (`knowledge.deleted`): the organization's for organization-wide knowledge, the
+workspace's for a workspace's own, with who deleted what.
+
+Over the API (Admin role; add `?workspace={id}` / `&workspace={id}` for a workspace's knowledge):
+
+| Method | Path | |
+|---|---|---|
+| DELETE | `/api/memory/{memory_id}` | One entry. `404` if it isn't in this organization and scope. |
+| DELETE | `/api/memory/files?name=report.pdf` | Every passage of the file. |
+
+`GET /api/memory` returns each passage's `file_name` (null for single entries) so a client can
+group or delete them by file. Only shared knowledge can be deleted this way; an agent's own working
+and episodic memory belong to the agent.
+
 ## Not done yet
 
 **Consolidation**, meaning merging near-duplicate entries and summarizing old ones in the
@@ -104,5 +123,5 @@ Shared memory → **Add knowledge → From files** (or `POST /api/memory/files`,
 turns documents into knowledge. Supported types are PDF, Word, Excel, PowerPoint, CSV, Markdown,
 text and code. Each file's text is split at paragraph breaks into passages of up to about 4,000
 characters. Each passage becomes a shared entry, keyed by the file name (`report.pdf (part 2 of 5)`),
-so a search finds the passage that matters. Adding a file with the same name again replaces its
-passages. Files with no readable text (images, scanned PDFs) are reported back and not added.
+so a search finds the passage that matters. Adding a file with the same name again replaces it
+as a whole: its old passages are deleted first, so a shorter new version leaves none behind. Files with no readable text (images, scanned PDFs) are reported back and not added.

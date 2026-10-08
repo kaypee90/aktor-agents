@@ -279,7 +279,10 @@ public sealed class CompleteTaskTool : ITool
           "type": "object",
           "properties": {
             "status": { "type": "string", "enum": ["completed", "failed", "partial"] },
-            "summary": { "type": "string" },
+            "summary": {
+              "type": "string",
+              "description": "Your full result in Markdown, not a status line. For the root agent this is the reply the user reads: the complete answer, with exact commands and code in fenced code blocks."
+            },
             "artifacts": { "type": "array", "items": { "type": "string" } },
             "evidence": { "type": "array", "items": { "type": "string" } },
             "remaining_work": { "type": "array", "items": { "type": "string" } }

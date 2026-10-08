@@ -174,6 +174,7 @@ public sealed class PersistenceEventSubscriber(
                     InputTokens = IntOf(evt, "input_tokens"),
                     OutputTokens = IntOf(evt, "output_tokens"),
                     CachedInputTokens = IntOf(evt, "cached_input_tokens"),
+                    CacheWriteInputTokens = IntOf(evt, "cache_write_input_tokens"),
                     CostUsd = decimal.TryParse(evt.Data.GetValueOrDefault("cost_usd"), System.Globalization.NumberStyles.Number,
                         System.Globalization.CultureInfo.InvariantCulture, out var callCost) ? callCost : 0,
                     DurationMs = IntOf(evt, "duration_ms"),

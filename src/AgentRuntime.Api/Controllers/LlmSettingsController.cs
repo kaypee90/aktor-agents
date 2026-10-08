@@ -39,17 +39,15 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
 
     public sealed record ModelsBody(string Provider, string? BaseUrl, string? ApiKey, string? ProfileId);
 
-    /// <summary>What the dashboard offers: each provider, whether it needs a key or an address,
-    /// and a few well-known models to start from (any model id the provider serves works).</summary>
+    /// <summary>What the dashboard offers: each provider, whether it needs a key or an address, and
+    /// the models it serves with their list prices (any other model id the provider serves works
+    /// too, with prices entered for it).</summary>
     [HttpGet("providers")]
     public IActionResult Providers() => Ok(new[]
     {
-        Provider("Anthropic", "Anthropic (Claude)", needsKey: true, "https://api.anthropic.com",
-            ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"], "https://console.anthropic.com/settings/keys"),
-        Provider("OpenAI", "OpenAI (or compatible)", needsKey: true, "https://api.openai.com",
-            ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o-mini"], "https://platform.openai.com/api-keys"),
-        Provider("Gemini", "Google Gemini", needsKey: true, "https://generativelanguage.googleapis.com",
-            ["gemini-2.5-pro", "gemini-2.5-flash"], "https://aistudio.google.com/apikey"),
+        Provider("Anthropic", "Anthropic (Claude)", needsKey: true, "https://api.anthropic.com", null, "https://console.anthropic.com/settings/keys"),
+        Provider("OpenAI", "OpenAI (or compatible)", needsKey: true, "https://api.openai.com", null, "https://platform.openai.com/api-keys"),
+        Provider("Gemini", "Google Gemini", needsKey: true, "https://generativelanguage.googleapis.com", null, "https://aistudio.google.com/apikey"),
         Provider("Ollama", "Ollama (local models)", needsKey: false, LlmProviderFactory.DefaultOllamaUrl().TrimEnd('/'),
             ["qwen3:8b", "qwen2.5:7b", "llama3.1:8b"], "https://ollama.com/search?c=tools"),
         Provider("Mock", "Mock (demo, no model)", needsKey: false, null, ["mock"], null),
@@ -223,6 +221,7 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
                 // What budgets count with, per million tokens as providers publish them.
                 price_per_million_input_usd = o.PricePerInputTokenUsd * 1_000_000,
                 price_per_million_output_usd = o.PricePerOutputTokenUsd * 1_000_000,
+                price_source = PriceSource(p),
                 api_key_set = hasKey,
                 uses_server_key = !hasKey && UsesServerKey(p),
                 is_default = org.DefaultProfileId == p.Id,
@@ -332,14 +331,40 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
-    private static object Provider(string id, string label, bool needsKey, string? defaultBaseUrl, string[] models, string? keyUrl) => new
+    /// <summary>A provider for the dashboard. Without <paramref name="models"/> its models are the
+    /// listed ones (<see cref="ModelPriceCatalog"/>), with their prices.</summary>
+    private static object Provider(string id, string label, bool needsKey, string? defaultBaseUrl, string[]? models, string? keyUrl)
     {
-        id,
-        label,
-        needs_api_key = needsKey,
-        free = LlmProviders.IsFree(id),
-        default_base_url = defaultBaseUrl,
-        suggested_models = models,
-        get_key_url = keyUrl
-    };
+        var listed = ModelPriceCatalog.For(id).ToList();
+        return new
+        {
+            id,
+            label,
+            needs_api_key = needsKey,
+            free = LlmProviders.IsFree(id),
+            default_base_url = defaultBaseUrl,
+            suggested_models = models ?? listed.Select(m => m.Model).ToArray(),
+            models = listed.Select(m => new
+            {
+                id = m.Model,
+                name = m.Name,
+                input_per_million_usd = m.InputPerMillion,
+                output_per_million_usd = m.OutputPerMillion,
+                cached_input_per_million_usd = m.CachedInputPerMillion,
+                note = m.Note
+            }),
+            prices_as_of = listed.Count > 0 ? ModelPriceCatalog.AsOf : null,
+            get_key_url = keyUrl
+        };
+    }
+
+    /// <summary>Where the price budgets count with comes from: "custom" (entered for the model),
+    /// "list" (the provider's list price), "free" (a local model) or "server" (the server's
+    /// prices, standing in for a model nobody priced).</summary>
+    private static string PriceSource(ModelProfile p)
+    {
+        if (p.PricePerInputTokenUsd is not null || p.PricePerOutputTokenUsd is not null) return "custom";
+        if (LlmProviders.IsFree(p.Provider)) return "free";
+        return LlmSettingsService.ListPrices(p.Provider, p.Model, null, p.BaseUrl).Model is not null ? "list" : "server";
+    }
 }

@@ -66,6 +66,13 @@ public sealed class LlmSettingsApiTests(ApiTestHostFixture fixture, ITestOutputH
         Assert.DoesNotContain("sk-secret-value", await (await api.GetAsync("/api/llm/settings")).Content.ReadAsStringAsync());
         // Editing without a key keeps it; moving it to another address needs the key again.
         await Json(await api.PutAsJsonAsync("/api/llm/profiles/gpt-5-best", new { name = "GPT-5 (best)", provider = "OpenAI", model = "gpt-5.1" }));
+        // Saved without prices, a listed model is counted at its list price.
+        var listed = (await Json(await api.GetAsync("/api/llm/settings"))).GetProperty("profiles").EnumerateArray().Single(p => p.GetProperty("id").GetString() == "gpt-5-best");
+        Assert.Equal("list", listed.GetProperty("price_source").GetString());
+        Assert.Equal(10m, listed.GetProperty("price_per_million_output_usd").GetDecimal());
+        var openAi = (await Json(await api.GetAsync("/api/llm/providers"))).EnumerateArray().Single(p => p.GetProperty("id").GetString() == "OpenAI");
+        Assert.Contains(openAi.GetProperty("models").EnumerateArray(), m => m.GetProperty("id").GetString() == "gpt-6-astra"
+            && m.GetProperty("input_per_million_usd").GetDecimal() == 10m);
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PutAsJsonAsync("/api/llm/profiles/gpt-5-best",
             new { name = "GPT-5 (best)", provider = "OpenAI", model = "gpt-5.1", base_url = "https://elsewhere.example.com" })).StatusCode);
 

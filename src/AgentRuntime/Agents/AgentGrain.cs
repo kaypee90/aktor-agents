@@ -769,6 +769,7 @@ public sealed class AgentGrain(
                 ["input_tokens"] = response.InputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["output_tokens"] = response.OutputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["cached_input_tokens"] = response.CachedInputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["cache_write_input_tokens"] = response.CacheWriteInputTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["cost_usd"] = cost.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["duration_ms"] = durationMs.ToString(System.Globalization.CultureInfo.InvariantCulture)
             });

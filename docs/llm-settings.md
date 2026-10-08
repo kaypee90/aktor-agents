@@ -20,13 +20,18 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
 1. **Settings → AI model** lists the models: the server default and the organization's own, with
    each one's price per million tokens and whether its key is saved.
 2. An Admin clicks **Add model**, picks a provider, names the model (e.g. "GPT-5 mini (cheap)"),
-   pastes its API key and chooses the model id. **Load models** asks the provider which models the
-   key can use; any model id the provider serves can also be typed.
+   pastes its API key and picks the model from the dropdown, which shows each listed model's price.
+   **Load models** asks the provider which models the key can use; ones not on the price list
+   (fine-tunes, new releases) appear under "From your account". **Custom model…** takes any other
+   model id the provider serves.
 3. Optionally a **fast model**: a cheaper one from the same provider for routine work (standing
    agents handling events, history summaries). Planning and real work use the main model.
-4. **Prices**, in USD per million tokens as providers publish them. Budgets, spend, cost estimates
-   and analytics are counted with these, so copy them from the provider's price list. Left blank,
-   the server's prices are used (local providers are free).
+4. **Prices**, in USD per million tokens. Budgets, spend, cost estimates and analytics are counted
+   with these. A listed model is priced from the price list, so there's nothing to enter; **Use a
+   different price** sets your own (e.g. a negotiated rate). A model that isn't listed, or any model
+   at a custom base URL (another service with its own prices), needs its input and output price
+   entered. Local providers are free. A model saved without prices and not on the list falls back
+   to the server's prices; the model list flags it.
 5. **Test connection** makes one tiny call, so a wrong key, model or address shows up before
    agents depend on it.
 6. **Make default** picks the model tasks use when they don't choose one.
@@ -116,6 +121,19 @@ reasoning), or leave it out.
 | POST | `/api/tasks/{id}/model` | Member | Switch a running task. `409` once it has finished: fork it instead. |
 | POST | `/api/tasks/{id}/replay` | Member | `model`: for a fork, the model the live part runs on. |
 | GET | `/api/tasks/{id}` | any | Includes `model`: the model the task runs on now. |
+
+## The price list
+
+`ModelPriceCatalog` (src/AgentRuntime/LLM/ModelPriceCatalog.cs) holds the standard-tier prices of
+the Anthropic, OpenAI and Gemini models, copied from each provider's price list, with the date they
+were copied (`AsOf`). It covers input, output and cached-input prices; cached input tokens are
+counted at the model's own cached rate. Prices for very long prompts (over 100k–272k tokens,
+depending on the model) are higher than the listed ones, which each such model's note mentions.
+Dated snapshots ("gpt-4o-mini-2024-07-18") are priced as their model. `GET /api/llm/providers`
+returns each provider's listed models with their prices.
+
+The server's own model is priced from the list too, unless `Llm:PricePerInputTokenUsd` and the
+other price settings are set. Update the list (and `AsOf`) when providers change their prices.
 
 ## How it works
 

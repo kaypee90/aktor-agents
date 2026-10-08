@@ -42,6 +42,36 @@ public interface IMemoryStore
     Task<IReadOnlyList<MemoryRecord>> SearchAsync(
         string tenantId, string query, MemoryKind? kind = null, string? agentId = null, MemoryScope? scope = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes shared knowledge of one organization in exactly <paramref name="scope"/> (its own
+    /// workspace's entries, or organization-wide ones): the entries with <paramref name="memoryIds"/>,
+    /// or every passage of the file <paramref name="fileName"/> (see <see cref="KnowledgeFiles"/>).
+    /// Returns what was deleted; nothing outside the tenant and scope is ever touched.
+    /// </summary>
+    Task<IReadOnlyList<MemoryRecord>> DeleteSharedAsync(
+        string tenantId, MemoryScope scope, IReadOnlyCollection<string>? memoryIds = null, string? fileName = null,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Files added as knowledge are split into passages keyed by the file name: "notes.md" for a file
+/// that fits in one, else "report.pdf (part 2 of 5)". These tell a file's passages apart from
+/// other entries, so a file can be deleted (or replaced) as a whole.
+/// </summary>
+public static partial class KnowledgeFiles
+{
+    /// <summary>The key of one passage of a file.</summary>
+    public static string KeyOf(string fileName, int part, int parts) => parts == 1 ? fileName : $"{fileName} (part {part} of {parts})";
+
+    /// <summary>The file a "(part N of M)" passage came from; null for any other key.</summary>
+    public static string? FileOf(string key) => PartSuffix().Match(key) is { Success: true } m ? key[..m.Index] : null;
+
+    /// <summary>Whether the entry with this key is (a passage of) the file.</summary>
+    public static bool IsPassageOf(string key, string fileName) => key == fileName || FileOf(key) == fileName;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@" \(part \d+ of \d+\)$")]
+    private static partial System.Text.RegularExpressions.Regex PartSuffix();
 }
 
 /// <summary>

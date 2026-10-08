@@ -337,12 +337,14 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
         o.BaseUrl = string.IsNullOrWhiteSpace(profile.BaseUrl) ? (sameProvider ? server.BaseUrl : null) : profile.BaseUrl.Trim();
         o.ApiKey = apiKey ?? (sameProvider && sameAddress ? server.ApiKey : null);
 
-        // Prices: the profile's, else free for local models, else the server's as the closest estimate.
+        // Prices: the profile's, else the model's list price, else free for local models, else the
+        // server's as the closest estimate.
         var free = LlmProviders.IsFree(profile.Provider);
-        o.PricePerInputTokenUsd = profile.PricePerInputTokenUsd ?? (free ? 0 : server.PricePerInputTokenUsd);
-        o.PricePerOutputTokenUsd = profile.PricePerOutputTokenUsd ?? (free ? 0 : server.PricePerOutputTokenUsd);
-        o.FastPricePerInputTokenUsd = profile.FastPricePerInputTokenUsd ?? (free ? 0 : null);
-        o.FastPricePerOutputTokenUsd = profile.FastPricePerOutputTokenUsd ?? (free ? 0 : null);
+        var (listed, listedFast) = ListPrices(profile.Provider, o.Model, o.FastModel, o.BaseUrl);
+        o.PricePerInputTokenUsd = profile.PricePerInputTokenUsd ?? listed?.InputPerToken ?? (free ? 0 : server.PricePerInputTokenUsd);
+        o.PricePerOutputTokenUsd = profile.PricePerOutputTokenUsd ?? listed?.OutputPerToken ?? (free ? 0 : server.PricePerOutputTokenUsd);
+        o.FastPricePerInputTokenUsd = profile.FastPricePerInputTokenUsd ?? listedFast?.InputPerToken ?? (free ? 0 : null);
+        o.FastPricePerOutputTokenUsd = profile.FastPricePerOutputTokenUsd ?? listedFast?.OutputPerToken ?? (free ? 0 : null);
         if (!sameProvider)
         {
             // The server's cache-price factors were set for its own provider.
@@ -350,6 +352,14 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
             o.CacheWritePriceFactor = null;
         }
 
+        if (listed is not null) o.CachedInputPriceFactor = listed.CachedInputFactor;
         return o;
     }
+
+    /// <summary>The list prices of a profile's model and fast model. None at a custom base URL:
+    /// that's another service (OpenRouter, a proxy) with prices of its own.</summary>
+    public static (ModelPrice? Model, ModelPrice? FastModel) ListPrices(string provider, string? model, string? fastModel, string? baseUrl) =>
+        string.IsNullOrWhiteSpace(baseUrl)
+            ? (ModelPriceCatalog.Find(provider, model), ModelPriceCatalog.Find(provider, fastModel))
+            : (null, null);
 }

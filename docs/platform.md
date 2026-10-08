@@ -66,6 +66,11 @@ and the first account created on a server takes it over.
 - A link works only for the email it was sent to, and only while the plan has seats.
 - Admins can't invite anyone with more access than they have themselves.
 
+**Local admin.** Docker Compose and the Development environment create a built-in account at
+startup: sign in with username `admin` and password `admin` (the username goes in the email field).
+It owns the default organization and is an operator. It's created only if missing, so a changed
+password survives restarts. Set `LOCAL_ADMIN_USERNAME=` (empty) on any server others can reach.
+
 **Self-hosting alone?** `AUTH_MODE=disabled` skips sign-in entirely and makes everyone the owner of
 the default organization. Use it only on a machine nobody else can reach.
 
@@ -170,6 +175,7 @@ only ones who can use **Reset all**, which wipes every organization's work but k
 | `Auth:Mode` | `AUTH_MODE` | `accounts` | `disabled`: no sign-in, single user. |
 | `Auth:AllowSignup` | `AUTH_ALLOW_SIGNUP` | `true` | `false`: invitation only (the first account is always allowed). |
 | `Auth:PlatformAdmins` | `PLATFORM_ADMIN_EMAIL` | | Operators. |
+| `Auth:LocalAdmin:Username` / `Password` | `LOCAL_ADMIN_USERNAME` / `LOCAL_ADMIN_PASSWORD` | `admin` / `admin` in compose and Development; none otherwise | Built-in local sign-in. |
 | `Auth:SessionDays` / `Auth:InvitationDays` | | 30 / 7 | |
 | `Billing:Provider` | `BILLING_PROVIDER` | `none` | or `stripe`. |
 | `Billing:DefaultPlan` | `BILLING_DEFAULT_PLAN` | `unlimited` | For new organizations. |

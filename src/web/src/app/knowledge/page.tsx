@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { ScopePicker, useScope } from "@/components/platform/ScopePicker";
-import { addKnowledge, addKnowledgeFiles, apiErrorMessage, getMemoryStatus, searchKnowledge, type KnowledgeEntry } from "@/lib/api";
+import { addKnowledge, addKnowledgeFiles, apiErrorMessage, deleteKnowledge, deleteKnowledgeFile, getMemoryStatus, searchKnowledge, type KnowledgeEntry } from "@/lib/api";
 import { AttachButton, DropZone } from "@/components/files/Attachments";
 import { FileChip } from "@/components/files/FilePreview";
 import { atLeast, type Role } from "@/lib/platformTypes";
@@ -23,6 +23,8 @@ function Knowledge() {
   // The organization's knowledge, or one workspace's own (?workspace=).
   const [scope, setScope] = useScope();
   const canAdd = atLeast((me?.role ?? "Viewer") as Role, "Member");
+  const canDelete = atLeast((me?.role ?? "Viewer") as Role, "Admin");
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [status, setStatus] = useState<{ semantic: boolean; embedding_model: string | null; mode: string } | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<KnowledgeEntry[] | null>(null);
@@ -45,6 +47,22 @@ function Knowledge() {
     }, 250);
     return () => clearTimeout(timer);
   }, [query, scope]);
+
+  /** Deletes an entry, or every passage of the file it came from. Agents stop finding it at once. */
+  async function remove(r: KnowledgeEntry) {
+    const what = r.file_name ? `the file "${r.file_name}" (all of its passages)` : `"${r.key}"`;
+    if (!confirm(`Delete ${what} from ${scope ? "this workspace's" : "your organization's"} knowledge? Agents won't find it any more. This can't be undone.`)) return;
+    setDeleting(r.memory_id);
+    try {
+      await (r.file_name ? deleteKnowledgeFile(r.file_name, scope) : deleteKnowledge(r.memory_id, scope));
+      setResults((prev) => prev?.filter((e) => (r.file_name ? e.file_name !== r.file_name : e.memory_id !== r.memory_id)) ?? prev);
+      if (open === r.memory_id) setOpen(null);
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setDeleting(null);
+    }
+  }
 
   function close() {
     setAdding(null);
@@ -118,8 +136,8 @@ function Knowledge() {
         ) : (
           <div className="space-y-2">
             {results.map((r) => (
-              <Card key={r.memory_id} className="p-4">
-                <button className="w-full text-left" onClick={() => setOpen(open === r.memory_id ? null : r.memory_id)}>
+              <Card key={r.memory_id} className="group flex items-start gap-2 p-4">
+                <button className="min-w-0 flex-1 text-left" onClick={() => setOpen(open === r.memory_id ? null : r.memory_id)}>
                   <div className="flex items-start justify-between gap-3">
                     <span className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100">{r.key}</span>
                     <span className="flex shrink-0 items-center gap-2 text-[11px] text-zinc-400">
@@ -132,6 +150,14 @@ function Knowledge() {
                   </div>
                   <p className={`mt-1.5 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-400 ${open === r.memory_id ? "" : "line-clamp-2"}`}>{r.value}</p>
                 </button>
+                {canDelete && (
+                  <button onClick={() => remove(r)} disabled={deleting !== null}
+                    title={r.file_name ? `Delete ${r.file_name} (all passages)` : "Delete"} aria-label={r.file_name ? `Delete file ${r.file_name}` : `Delete ${r.key}`}
+                    className="-mr-1 -mt-1 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-zinc-400 opacity-60 hover:bg-rose-50 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 dark:hover:bg-rose-950/40">
+                    <Icons.Trash className="h-3.5 w-3.5" />
+                    {deleting === r.memory_id ? "Deleting…" : r.file_name ? "Delete file" : null}
+                  </button>
+                )}
               </Card>
             ))}
           </div>

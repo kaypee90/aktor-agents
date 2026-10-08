@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using AgentRuntime.Infrastructure.Documents;
 using AgentRuntime.IntegrationTests.TestSupport;
@@ -176,6 +177,48 @@ public sealed class TaskChatApiTests(ApiTestHostFixture fixture, ITestOutputHelp
         var entry = found.EnumerateArray().Single(e => e.GetProperty("key").GetString() == "refund-policy.docx");
         Assert.Contains("refundable within 30 days", entry.GetProperty("value").GetString());
         Assert.Equal("user", entry.GetProperty("agent_id").GetString());
+    }
+
+    [Fact]
+    public async Task Admins_delete_knowledge_one_entry_or_a_whole_file_and_reuploads_replace_a_file()
+    {
+        if (Skip()) return;
+        var org = await Host.CreateOrganizationAsync("KnowledgeDelete", Tenancy.TenantRole.Admin);
+        using var api = Host.ClientFor(org);
+        using var member = Host.ClientFor(await Host.CreateOrganizationAsync("KnowledgeDeleteMember"));
+        async Task<List<JsonElement>> All(HttpClient c, string scope = "") =>
+            (await Json(await c.GetAsync($"/api/memory?limit=200{scope}"))).EnumerateArray().ToList();
+        static string Paragraphs(int n, string word) => string.Join("\n\n", Enumerable.Range(1, n).Select(i => $"{word} {i}. " + new string('x', 1500)));
+
+        // A file long enough for three passages, and a fact typed in.
+        var three = Encoding.UTF8.GetBytes(Paragraphs(6, "Clause")); // two ~1.5k paragraphs per 4k passage
+        Assert.Equal(3, (await Json(await api.PostAsync("/api/memory/files", Files(("terms.md", three)))))[0].GetProperty("entries").GetInt32());
+        Assert.Equal(HttpStatusCode.NoContent, (await api.PostAsJsonAsync("/api/memory", new { key = "Office hours", value = "9 to 5" })).StatusCode);
+        var entries = await All(api);
+        Assert.Equal(3, entries.Count(e => e.GetProperty("file_name").GetString() == "terms.md"));
+
+        // Uploading a shorter version replaces the file: no stale third passage is left behind.
+        var two = Encoding.UTF8.GetBytes(Paragraphs(4, "Revised"));
+        Assert.Equal(2, (await Json(await api.PostAsync("/api/memory/files", Files(("terms.md", two)))))[0].GetProperty("entries").GetInt32());
+        var passages = (await All(api)).Where(e => e.GetProperty("file_name").GetString() == "terms.md").ToList();
+        Assert.Equal(2, passages.Count);
+        Assert.All(passages, p => Assert.Contains("Revised", p.GetProperty("value").GetString()));
+
+        // Members can't delete; admins delete one entry, or a file with all its passages.
+        var fact = (await All(api)).Single(e => e.GetProperty("key").GetString() == "Office hours");
+        var factId = fact.GetProperty("memory_id").GetString()!;
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.DeleteAsync($"/api/memory/{factId}")).StatusCode);
+        Assert.Equal(1, (await Json(await api.DeleteAsync($"/api/memory/{factId}"))).GetProperty("deleted").GetInt32());
+        Assert.Equal(HttpStatusCode.NotFound, (await api.DeleteAsync($"/api/memory/{factId}")).StatusCode);
+        Assert.Equal(2, (await Json(await api.DeleteAsync("/api/memory/files?name=terms.md"))).GetProperty("deleted").GetInt32());
+        Assert.Empty(await All(api));
+        Assert.Equal(HttpStatusCode.NotFound, (await api.DeleteAsync("/api/memory/files?name=terms.md")).StatusCode);
+
+        // Another organization's entry can't be deleted by id.
+        Assert.Equal(HttpStatusCode.NoContent, (await member.PostAsJsonAsync("/api/memory", new { key = "Theirs", value = "kept" })).StatusCode);
+        var theirs = (await All(member)).Single().GetProperty("memory_id").GetString()!;
+        Assert.Equal(HttpStatusCode.NotFound, (await api.DeleteAsync($"/api/memory/{theirs}")).StatusCode);
+        Assert.Single(await All(member));
     }
 
     [Fact]

@@ -42,7 +42,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
   },
 ];
 
-const PUBLIC = ["/login"];
+const PUBLIC = ["/login", "/welcome"];
 const COLLAPSED_KEY = "aktor:navCollapsed";
 
 function readCollapsed() {

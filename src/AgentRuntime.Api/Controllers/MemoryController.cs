@@ -15,7 +15,8 @@ namespace AgentRuntime.Api.Controllers;
 [ApiController]
 [Route("api/memory")]
 public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider embeddings, TenantAccess access,
-    Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions) : ControllerBase
+    Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions, AgentRuntime.Safety.IAuditLog audit,
+    ILogger<MemoryController> logger) : ControllerBase
 {
     /// <summary>Each knowledge entry made from a file holds about this much text, so a search finds
     /// the passage that matters rather than a whole document.</summary>
@@ -59,8 +60,65 @@ public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider emb
             agent_id = r.AgentId,
             created_at = r.CreatedAt,
             score = r.Score,
-            workspace_id = r.WorkspaceId
+            workspace_id = r.WorkspaceId,
+            // The file a passage was added from ("report.pdf (part 2 of 5)" → "report.pdf"), so the
+            // dashboard can delete the whole file; null for single entries.
+            file_name = r.AgentId == "user" ? KnowledgeFiles.FileOf(r.Key) : null
         }));
+    }
+
+    /// <summary>Deletes one knowledge entry. Agents stop finding it at once.</summary>
+    [HttpDelete("{memoryId}")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> Delete(string memoryId, CancellationToken ct)
+    {
+        var (ok, ws) = await ScopeAsync();
+        if (!ok) return NotFound();
+        var deleted = await memory.DeleteSharedAsync(access.TenantId, ScopeOf(ws), memoryIds: [memoryId], cancellationToken: ct);
+        if (deleted.Count == 0) return NotFound(new { error = "No such knowledge entry." });
+        await AuditAsync(ws, deleted[0].Key, deleted, ct);
+        return Ok(new { deleted = deleted.Count });
+    }
+
+    /// <summary>Deletes every passage of a file added as knowledge (?name=report.pdf).</summary>
+    [HttpDelete("files")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> DeleteFile([FromQuery] string? name, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { error = "name is required" });
+        var (ok, ws) = await ScopeAsync();
+        if (!ok) return NotFound();
+        var deleted = await memory.DeleteSharedAsync(access.TenantId, ScopeOf(ws), fileName: name.Trim(), cancellationToken: ct);
+        if (deleted.Count == 0) return NotFound(new { error = $"No knowledge from a file named '{name}'." });
+        await AuditAsync(ws, name.Trim(), deleted, ct);
+        return Ok(new { deleted = deleted.Count });
+    }
+
+    /// <summary>Who deleted what, in the workspace's or organization's audit log.</summary>
+    private async Task AuditAsync(string? workspaceId, string target, IReadOnlyList<MemoryRecord> deleted, CancellationToken ct)
+    {
+        var caller = HttpContext.Caller();
+        var who = caller.Email ?? (caller.ActorId == "local" ? "user" : caller.ActorId);
+        try
+        {
+            await audit.AppendAsync(new AgentRuntime.Safety.AuditEntry
+            {
+                Scope = workspaceId ?? OrganizationPolicyController.AuditScope(access.TenantId),
+                Key = $"knowledge-deleted:{Guid.NewGuid():n}",
+                ActorType = "user",
+                ActorId = who,
+                ActorName = who,
+                Action = "knowledge.deleted",
+                Target = target,
+                Summary = deleted.Count == 1 ? $"Deleted knowledge \"{target}\"" : $"Deleted {deleted.Count} passages of \"{target}\"",
+                DetailJson = System.Text.Json.JsonSerializer.Serialize(deleted.Select(d => new { memory_id = d.MemoryId, key = d.Key, author = d.AgentId }))
+            }, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // The knowledge is gone either way; a missing audit line shouldn't undo or fail that.
+            logger.LogWarning(ex, "Couldn't record the deletion of knowledge '{Target}' in the audit log", target);
+        }
     }
 
     /// <summary>Adds a fact every agent of the organization can find with search_knowledge.</summary>
@@ -130,6 +188,9 @@ public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider emb
                 }
 
                 var chunks = Chunk(content.Text, ChunkChars);
+                // Replace the file as a whole: a new version with fewer passages would otherwise
+                // leave the old version's later passages behind.
+                await memory.DeleteSharedAsync(access.TenantId, ScopeOf(ws), fileName: name, cancellationToken: ct);
                 for (var i = 0; i < chunks.Count; i++)
                 {
                     await memory.WriteAsync(new MemoryRecord
@@ -137,7 +198,7 @@ public sealed class MemoryController(IMemoryStore memory, IEmbeddingProvider emb
                         TenantId = access.TenantId,
                         AgentId = "user",
                         Kind = MemoryKind.Shared,
-                        Key = chunks.Count == 1 ? name : $"{name} (part {i + 1} of {chunks.Count})",
+                        Key = KnowledgeFiles.KeyOf(name, i + 1, chunks.Count),
                         Value = chunks[i],
                         WorkspaceId = ws
                     }, ct);

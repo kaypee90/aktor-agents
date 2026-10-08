@@ -26,6 +26,19 @@ public sealed class AuthOptions
     public int SessionDays { get; set; } = 30;
     public int InvitationDays { get; set; } = 7;
     public string CookieName { get; set; } = "aktor_session";
+
+    /// <summary>A built-in sign-in for a local machine, created at startup if it doesn't exist yet.
+    /// Leave the username empty to have none; never enable it on a server others can reach.</summary>
+    public LocalAdminOptions LocalAdmin { get; set; } = new();
+}
+
+public sealed class LocalAdminOptions
+{
+    /// <summary>What to type in the sign-in form's email field (it needn't be an email address).</summary>
+    public string? Username { get; set; }
+    public string? Password { get; set; }
+
+    public bool Enabled => !string.IsNullOrWhiteSpace(Username) && !string.IsNullOrEmpty(Password);
 }
 
 /// <summary>Who is making a request, as the API sees it.</summary>
@@ -77,7 +90,38 @@ public sealed class IdentityService(
         email.Length is > 3 and <= 254 && email.IndexOf('@') is > 0 and var at && at < email.Length - 1 && !email.Contains(' ');
 
     public bool IsPlatformAdmin(string? email) =>
-        Auth.Disabled || (email is not null && Auth.PlatformAdmins.Any(a => NormalizeEmail(a) == email));
+        Auth.Disabled || (email is not null && (Auth.PlatformAdmins.Any(a => NormalizeEmail(a) == email)
+            || (Auth.LocalAdmin.Enabled && NormalizeEmail(Auth.LocalAdmin.Username!) == email)));
+
+    /// <summary>Creates the configured local admin (Auth:LocalAdmin) as an owner of the default
+    /// organization. An existing account is left alone, so a changed password survives restarts.
+    /// The password skips the strength rules on purpose: it's the operator's choice for a local box.</summary>
+    public async Task EnsureLocalAdminAsync(CancellationToken ct = default)
+    {
+        if (Auth.Disabled || !Auth.LocalAdmin.Enabled) return;
+        var username = NormalizeEmail(Auth.LocalAdmin.Username!);
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        if (await db.Users.AnyAsync(u => u.Email == username, ct)) return;
+
+        var now = DateTimeOffset.UtcNow;
+        var user = new UserRecord
+        {
+            UserId = "u-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6)).ToLowerInvariant(),
+            Email = username,
+            Name = "Local admin",
+            PasswordHash = PasswordHasher.Hash(Auth.LocalAdmin.Password!),
+            CreatedAt = now
+        };
+        db.Users.Add(user);
+        if (await db.Tenants.FindAsync([TenantIds.Default], ct) is null)
+        {
+            db.Tenants.Add(new TenantRecord { TenantId = TenantIds.Default, Name = "Default organization", CreatedAt = now, PlanId = billingOptions.Value.DefaultPlan });
+        }
+
+        db.Memberships.Add(new MembershipRecord { TenantId = TenantIds.Default, UserId = user.UserId, Role = nameof(TenantRole.Owner), CreatedAt = now });
+        await db.SaveChangesAsync(ct);
+        logger.LogWarning("Created the local admin account '{Username}'. Remove Auth:LocalAdmin on any server others can reach.", username);
+    }
 
     // ---- Accounts ---------------------------------------------------------------
 

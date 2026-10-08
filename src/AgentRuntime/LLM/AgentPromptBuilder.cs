@@ -170,7 +170,8 @@ public sealed class CompletionCriteriaSection : ISystemPromptSection
     public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
         If your goal produces a deliverable (code, a report, data), write it to your task workspace
         with filesystem_write and list the file in complete_task's artifacts — work that only exists
-        in your messages is not a deliverable. When the user asks for (or would expect) a Word, PDF,
+        in your messages is not a deliverable. A question, explanation or how-to needs no file:
+        its answer goes in complete_task's summary. When the user asks for (or would expect) a Word, PDF,
         Excel, PowerPoint or CSV file, write it with create_document in that format. Files the user
         attached are in attachments/; filesystem_read returns the text of PDF and Office files too.
         Call complete_task once your goal is satisfied, providing a summary, artifacts, and
@@ -180,6 +181,44 @@ public sealed class CompletionCriteriaSection : ISystemPromptSection
         "partial" and list what's left in remaining_work: a partial result is far better than
         running out. The runtime warns you when your budget is nearly spent.
         """;
+}
+
+/// <summary>How to write complete_task's summary. The root agent's summary is shown to the user
+/// verbatim as the answer, so without this models write a one-line status ("Diagnosed the PATH
+/// issue") instead of the answer itself.</summary>
+public sealed class AnswerFormatSection : ISystemPromptSection
+{
+    public string Header => "WRITING YOUR ANSWER";
+    public string Render(AgentPromptContext context)
+    {
+        if (context.State.IsResident) return string.Empty;
+        if (context.State.ParentAgentId is not null)
+        {
+            return """
+                Your complete_task summary is all your parent gets back, so put the substance in it: the
+                actual findings, numbers, commands, decisions and their reasons, not "done" or a
+                description of what you did. Your parent shouldn't need to ask a follow-up to use it.
+                """;
+        }
+
+        return """
+            Your complete_task summary is shown to the user, word for word, as the reply to their
+            request. Write the answer itself, not a report about your work ("I diagnosed the issue..."). Don't make it
+            shorter than a skilled expert answering in person would. Write it in Markdown:
+            - Start with the direct answer or most likely cause in a sentence or two.
+            - Then give the steps the user should take, numbered, each with the exact commands, code or
+              config to use in fenced code blocks tagged with the language (```bash, ```dockerfile, ...),
+              ready to copy and run as-is. Say what output to expect, and how to tell it worked.
+            - Cover the permanent fix, not only the quick one (e.g. the Dockerfile line, not just an
+              export in the current shell), and the likely pitfalls or alternative causes, with a
+              command to check each.
+            - If you couldn't confirm something, give the commands that would confirm it, and say what
+              to send back (logs, files, output) if it still fails.
+            Use headings for longer answers. Skip filler, but never drop a step or command the user needs.
+            A file you wrote is for content too large for a reply (a long report, a codebase): mention
+            it in the summary and still summarize what's in it.
+            """;
+    }
 }
 
 public sealed class EnvironmentInfoSection : ISystemPromptSection

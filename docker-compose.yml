@@ -68,6 +68,9 @@ services:
       Auth__Mode: ${AUTH_MODE:-accounts}
       Auth__AllowSignup: ${AUTH_ALLOW_SIGNUP:-true}
       Auth__PlatformAdmins__0: ${PLATFORM_ADMIN_EMAIL:-}
+      # A built-in sign-in for local use; set LOCAL_ADMIN_USERNAME= (empty) to turn it off.
+      Auth__LocalAdmin__Username: ${LOCAL_ADMIN_USERNAME-admin}
+      Auth__LocalAdmin__Password: ${LOCAL_ADMIN_PASSWORD-admin}
       Billing__Provider: ${BILLING_PROVIDER:-none}
       Billing__DefaultPlan: ${BILLING_DEFAULT_PLAN:-unlimited}
       Billing__Stripe__SecretKey: ${STRIPE_SECRET_KEY:-}

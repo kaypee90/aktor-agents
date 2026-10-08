@@ -57,6 +57,18 @@ public sealed class AnalyticsApiTests(ApiTestHostFixture fixture, ITestOutputHel
         Assert.NotEmpty(a.GetProperty("by_role").EnumerateArray());
         Assert.Equal(taskId, a.GetProperty("top_by_cost")[0].GetProperty("task_id").GetString());
 
+        // Usage like a coding CLI's stats: active days, the median run, and tokens by kind, per model too.
+        Assert.Equal(1, totals.GetProperty("active_days").GetInt32());
+        Assert.Equal(totals.GetProperty("tokens").GetInt64(), totals.GetProperty("p50_tokens").GetInt64());
+        Assert.Equal(totals.GetProperty("cost_usd").GetDecimal(), totals.GetProperty("avg_cost_per_active_day_usd").GetDecimal());
+        var usage = totals.GetProperty("usage");
+        Assert.True(usage.GetProperty("calls").GetInt32() >= 1);
+        Assert.True(usage.GetProperty("input_tokens").GetInt64() > 0 && usage.GetProperty("output_tokens").GetInt64() > 0);
+        var modelRow = a.GetProperty("by_model")[0];
+        Assert.Equal(modelRow.GetProperty("tokens").GetInt64(),
+            modelRow.GetProperty("input_tokens").GetInt64() + modelRow.GetProperty("output_tokens").GetInt64()
+            + modelRow.GetProperty("cache_read_tokens").GetInt64() + modelRow.GetProperty("cache_write_tokens").GetInt64());
+
         // Tool times are measured from now on.
         var write = a.GetProperty("by_tool").EnumerateArray().First(t => t.GetProperty("tool").GetString() == "filesystem_write");
         Assert.True(write.GetProperty("calls").GetInt32() >= 1);

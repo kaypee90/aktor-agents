@@ -135,7 +135,10 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             started_by = r.StartedBy,
             started_by_name = people[r.StartedBy].Name
         };
-        var byModel = await ByModelAsync(db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId)), ct);
+        var taskCalls = db.LlmCalls.AsNoTracking().Where(c => c.TenantId == tenant && ids.Contains(c.TaskId));
+        var byModel = await ByModelAsync(taskCalls, ct);
+        var tokenUsage = await UsageAsync(taskCalls, ct);
+        var activeDays = rows.Select(r => r.CreatedAt.ToOffset(offset).Date).Distinct().Count();
         var hourly = end - start <= TimeSpan.FromDays(2);
 
         return Ok(new
@@ -159,7 +162,11 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 p95_duration_s = finished.Count == 0 ? (double?)null : Percentile(finished, 0.95),
                 agents = rows.Sum(r => r.Agents),
                 tool_calls = byTool.Sum(t => t.Calls),
-                tool_failures = byTool.Sum(t => t.Failures)
+                tool_failures = byTool.Sum(t => t.Failures),
+                p50_tokens = rows.Count == 0 ? 0 : (long)Percentile(rows.Select(r => (double)r.Tokens).ToList(), 0.5),
+                active_days = activeDays,
+                avg_cost_per_active_day_usd = activeDays == 0 ? 0 : rows.Sum(r => r.Cost) / activeDays,
+                usage = tokenUsage
             },
             previous,
             series = Series(rows, start, end, hourly, offset),
@@ -340,6 +347,10 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 g.Key.Model,
                 Calls = g.Count(),
                 Tokens = g.Sum(c => (long)c.InputTokens + c.OutputTokens),
+                Input = g.Sum(c => (long)c.InputTokens),
+                Output = g.Sum(c => (long)c.OutputTokens),
+                CacheRead = g.Sum(c => (long)c.CachedInputTokens),
+                CacheWrite = g.Sum(c => (long)c.CacheWriteInputTokens),
                 Cost = g.Sum(c => c.CostUsd),
                 AvgMs = g.Average(c => (double)c.DurationMs)
             })
@@ -359,11 +370,38 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
             label = r.ProfileName is { Length: > 0 } n && n != r.Model ? $"{n} · {r.Model}" : r.Model,
             calls = r.Calls,
             tokens = r.Tokens,
+            input_tokens = Math.Max(0, r.Input - r.CacheRead - r.CacheWrite),
+            output_tokens = r.Output,
+            cache_read_tokens = r.CacheRead,
+            cache_write_tokens = r.CacheWrite,
             cost_usd = r.Cost,
             avg_cost_per_call_usd = r.Calls == 0 ? 0 : r.Cost / r.Calls,
             avg_duration_ms = r.AvgMs,
             p95_duration_ms = samples.TryGetValue((r.ProfileId, r.Model), out var p95) ? p95 : (double?)null
         }).ToList();
+    }
+
+    /// <summary>Model calls and their tokens by kind. A call's input tokens include the ones read
+    /// from or written to the prompt cache; here input is the rest, so the four kinds add up to
+    /// every token sent and received, each priced differently.</summary>
+    private static async Task<object> UsageAsync(IQueryable<LlmCallRecord> calls, CancellationToken ct)
+    {
+        var u = await calls.GroupBy(_ => 1).Select(g => new
+        {
+            Calls = g.Count(),
+            Input = g.Sum(c => (long)c.InputTokens),
+            Output = g.Sum(c => (long)c.OutputTokens),
+            CacheRead = g.Sum(c => (long)c.CachedInputTokens),
+            CacheWrite = g.Sum(c => (long)c.CacheWriteInputTokens)
+        }).FirstOrDefaultAsync(ct);
+        return new
+        {
+            calls = u?.Calls ?? 0,
+            input_tokens = u is null ? 0 : Math.Max(0, u.Input - u.CacheRead - u.CacheWrite),
+            output_tokens = u?.Output ?? 0,
+            cache_read_tokens = u?.CacheRead ?? 0,
+            cache_write_tokens = u?.CacheWrite ?? 0
+        };
     }
 
     /// <summary>
@@ -506,6 +544,7 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
                 tokens = rows.Sum(r => r.Tokens),
                 cost_usd = rows.Sum(r => r.CostUsd),
                 avg_cost_per_day_usd = rows.Sum(r => r.CostUsd) / (decimal)Math.Max(1, (end - start).TotalDays),
+                usage = await UsageAsync(calls, ct),
                 avg_call_ms = durations.Count == 0 ? (double?)null : durations.Average(),
                 p95_call_ms = durations.Count == 0 ? (double?)null : Percentile(durations, 0.95),
                 triggers_fired = triggers.Values.Sum(),

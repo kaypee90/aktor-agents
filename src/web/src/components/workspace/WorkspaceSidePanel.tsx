@@ -11,12 +11,11 @@ import { BotIcon } from "../BotIcon";
 import { MentionTextarea, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import { EventStream } from "../EventStream";
 import { FilesPanel } from "./FilesPanel";
-import { WorkspaceChat } from "./WorkspaceChat";
 import { pauseInfo } from "./pauseInfo";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
 
-type Tab = "chat" | "agents" | "files" | "knowhow" | "triggers" | "integrations" | "safety" | "events";
+type Tab = "agents" | "files" | "knowhow" | "triggers" | "integrations" | "safety" | "events";
 
 function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
@@ -30,14 +29,14 @@ function describeSchedule(t: TriggerView) {
   return describeInterval(t);
 }
 
-export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onSelectRun, onChanged }: {
+export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged }: {
   workspace: WorkspaceSnapshot;
   events: RuntimeEvent[];
   onSelectAgent: (id: string) => void;
-  onSelectRun: (runId: string) => void;
   onChanged: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("chat");
+  // The chat is a widget over the page (WorkspaceChatWidget), not a tab.
+  const [tab, setTab] = useState<Tab>("agents");
   // Reload the file list whenever an agent saves a file (and once on open).
   const fileWrites = events.filter((e) => e.type === "ArtifactCreated").length;
   const workspaceId = workspace.workspace_id;
@@ -46,7 +45,6 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onSelectR
 
   const pendingApprovals = workspace.approvals?.filter((a) => a.status === "Pending").length ?? 0;
   const tabs: [Tab, string, number | null][] = [
-    ["chat", "Chat", pendingApprovals || null],
     ["agents", "Agents", workspace.agents.length || null],
     ["files", "Files", files.length || null],
     ["knowhow", "Skills & knowledge", null],
@@ -74,7 +72,6 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onSelectR
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "chat" && <WorkspaceChat workspace={workspace} onSent={onChanged} onSelectRun={onSelectRun} />}
 
         {tab === "agents" && workspace.agents.length === 0 && (
           <div className="p-3 text-xs text-zinc-500">No run is in progress. The agents of runs in progress show here; finished runs keep theirs on the run&apos;s page.</div>

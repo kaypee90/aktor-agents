@@ -116,6 +116,8 @@ export interface KnowledgeEntry {
   agent_id: string;
   created_at: string;
   score: number | null;
+  /** The file a passage was added from, when it's one of several ("report.pdf (part 2 of 5)"). */
+  file_name: string | null;
 }
 
 export function getMemoryStatus() {
@@ -132,6 +134,16 @@ export function searchKnowledge(q: string, limit = 50, workspace?: string | null
 
 export function addKnowledge(key: string, value: string, workspace?: string | null) {
   return apiFetch<void>(`/api/memory${scopeQuery(workspace)}`, { method: "POST", body: JSON.stringify({ key, value }) });
+}
+
+/** Deletes one knowledge entry (Admin). */
+export function deleteKnowledge(memoryId: string, workspace?: string | null) {
+  return apiFetch<{ deleted: number }>(`/api/memory/${encodeURIComponent(memoryId)}${scopeQuery(workspace)}`, { method: "DELETE" });
+}
+
+/** Deletes every passage of a file added as knowledge (Admin). */
+export function deleteKnowledgeFile(fileName: string, workspace?: string | null) {
+  return apiFetch<{ deleted: number }>(`/api/memory/files?name=${encodeURIComponent(fileName)}${scopeQuery(workspace, false)}`, { method: "DELETE" });
 }
 
 export function getTask(taskId: string) {
@@ -823,7 +835,22 @@ export type LlmProviderInfo = {
   free: boolean;
   default_base_url: string | null;
   suggested_models: string[];
+  /** The models with a list price, newest first; empty for local providers. */
+  models: ListedModel[];
+  /** When the list prices were copied from the provider; null without any. */
+  prices_as_of: string | null;
   get_key_url: string | null;
+};
+
+/** A model on the provider's price list, in USD per million tokens. */
+export type ListedModel = {
+  id: string;
+  name: string;
+  input_per_million_usd: number;
+  output_per_million_usd: number;
+  cached_input_per_million_usd: number | null;
+  /** What the list price doesn't cover, e.g. a higher rate for long prompts. */
+  note: string | null;
 };
 
 export type ModelProfile = {
@@ -840,6 +867,8 @@ export type ModelProfile = {
   fast_price_per_output_token_usd: number | null;
   price_per_million_input_usd: number;
   price_per_million_output_usd: number;
+  /** custom: entered for it; list: the provider's list price; free: local; server: nobody priced it. */
+  price_source: "custom" | "list" | "free" | "server";
   api_key_set: boolean;
   uses_server_key: boolean;
   is_default: boolean;
@@ -973,13 +1002,22 @@ export type AnalyticsFilter = {
 };
 
 /** Spend and response time per model: which one is cheaper or faster for the same work. */
-export type AnalyticsModelRow = {
+/** Model-call tokens by kind. Input is uncached input only: cache reads and writes are counted apart
+ * (and priced apart), so the four add up to every token sent and received. */
+export type AnalyticsTokenUsage = {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+};
+
+export type AnalyticsModelRow = AnalyticsTokenUsage & {
   profile_id: string;
   profile_name: string;
   provider: string;
   model: string;
   label: string;
-  calls: number;
   tokens: number;
   cost_usd: number;
   avg_cost_per_call_usd: number;
@@ -999,6 +1037,7 @@ export type WorkspaceAnalytics = {
     tokens: number;
     cost_usd: number;
     avg_cost_per_day_usd: number;
+    usage: AnalyticsTokenUsage;
     avg_call_ms: number | null;
     p95_call_ms: number | null;
     triggers_fired: number;
@@ -1078,6 +1117,12 @@ export type Analytics = {
     agents: number;
     tool_calls: number;
     tool_failures: number;
+    /** Median tokens per run. */
+    p50_tokens: number;
+    /** Days (in the viewer's timezone) on which at least one run started. */
+    active_days: number;
+    avg_cost_per_active_day_usd: number;
+    usage: AnalyticsTokenUsage;
   };
   previous: { runs: number; tokens: number; cost_usd: number; avg_cost_usd: number; avg_duration_s: number | null };
   series: { t: string; runs: number; tokens: number; cost_usd: number; avg_duration_s: number | null }[];

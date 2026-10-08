@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { UNAUTHORIZED_EVENT, getMe } from "@/lib/api";
 import type { Me } from "@/lib/platformTypes";
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/welcome"];
 
 interface AuthState {
   me: Me | null;
@@ -18,7 +18,7 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
-/** Loads who's signed in and keeps everything but the sign-in page behind it. */
+/** Loads who's signed in and keeps everything but the landing and sign-in pages behind it. */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (mustSignIn) {
       const next = window.location.pathname + window.location.search;
-      router.replace(`/login?next=${encodeURIComponent(next)}`);
+      // A visitor arriving at the bare home page sees the product first; deep links go to sign-in.
+      router.replace(next === "/" ? "/welcome" : `/login?next=${encodeURIComponent(next)}`);
     }
   }, [mustSignIn, router]);
 

@@ -17,6 +17,7 @@ import { RunsPanel } from "@/components/workspace/RunsPanel";
 import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
 import { ApprovalBanner } from "@/components/workspace/SafetyPanel";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
+import { WorkspaceChatWidget } from "@/components/workspace/WorkspaceChatWidget";
 import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
 
 const POLL_MS = 2000;
@@ -276,9 +277,9 @@ function Workspaces() {
         <RunsPanel workspace={workspace} selectedRun={shownRun} onSelectRun={selectRun} onChanged={() => { refresh(); refreshRun(); }} />
       </Split>
     );
-    const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onSelectRun={selectRun} onChanged={refresh} />;
+    const side = <WorkspaceSidePanel workspace={workspace} events={events} onSelectAgent={setSelectedAgent} onChanged={refresh} />;
     main = (
-      <div className="flex h-full min-w-0 flex-col">
+      <div className="relative flex h-full min-w-0 flex-col">
         <WorkspaceHeader workspace={workspace} onChanged={refresh} />
         <ApprovalBanner workspace={workspace} onDecided={refresh} />
         <Split className="min-h-0 flex-1" sized="second" initial={380} min={280} max={900} minOther={420} storageKey="workspace-side" label="Resize the side panel">
@@ -288,6 +289,7 @@ function Workspaces() {
           </Split>
           {side}
         </Split>
+        <WorkspaceChatWidget workspace={workspace} onSent={refresh} onSelectRun={selectRun} />
       </div>
     );
   }

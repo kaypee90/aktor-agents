@@ -13,6 +13,7 @@ import {
   setDefaultModel,
   testLlmSettings,
   updateModelProfile,
+  type ListedModel,
   type LlmProviderInfo,
   type LlmSettingsView,
   type ModelProfile,
@@ -27,6 +28,20 @@ const toPerToken = (perMillion: string) => (perMillion.trim() === "" ? null : Nu
 const toPerMillion = (perToken: number | null | undefined) =>
   perToken === null || perToken === undefined ? "" : String(Math.round(perToken * PER_MILLION * 10_000) / 10_000);
 const money = (n: number) => (n === 0 ? "free" : `$${n.toFixed(2).replace(/\.00$/, "")}`);
+/** A per-million price as providers write it: "$2", "$2.50", "$0.075". */
+const listPrice = (n: number) => `$${n.toFixed(4).replace(/0{1,2}$/, "").replace(/\.00$/, "")}`;
+
+/** The list price of a model, as the server finds it: snapshots ("gpt-4o-2024-08-06") are priced as
+ * their model. None at a custom base URL, which is another service with its own prices. */
+function findListed(provider: LlmProviderInfo | undefined, model: string, baseUrl: string): ListedModel | undefined {
+  if (!provider || baseUrl.trim() || !model.trim()) return undefined;
+  const id = model.trim().toLowerCase().replace(/^models\//, "");
+  const lookup = (m: string) => provider.models.find((l) => l.id.toLowerCase() === m);
+  return lookup(id) ?? lookup(id.replace(/-(\d{4}-\d{2}-\d{2}|\d{8}|latest)$/, ""));
+}
+
+/** Picking "Custom model…" in a model dropdown. */
+const CUSTOM = "__custom__";
 
 type Draft = {
   id: string | null;
@@ -127,11 +142,12 @@ export function ModelSettings({ canEdit }: { canEdit: boolean }) {
       id: "server", name: "Server default", description: "Set by whoever runs this server (LLM_PROVIDER, LLM_MODEL).",
       provider: view.server.provider, model: view.server.model, fast: view.server.fast_model,
       inM: view.server.price_per_million_input_usd, outM: view.server.price_per_million_output_usd, isDefault: view.server.is_default,
-      key: undefined as string | undefined, profile: undefined as ModelProfile | undefined,
+      key: undefined as string | undefined, profile: undefined as ModelProfile | undefined, unpriced: false,
     },
     ...view.profiles.map((p) => ({
       id: p.id, name: p.name, description: p.description, provider: p.provider, model: p.model, fast: p.fast_model,
       inM: p.price_per_million_input_usd, outM: p.price_per_million_output_usd, isDefault: p.is_default, profile: p,
+      unpriced: p.price_source === "server",
       key: needsKey(providers, p.provider) ? (p.api_key_set ? "key saved" : p.uses_server_key ? "server's key" : "no key") : undefined,
     })),
   ];
@@ -168,6 +184,7 @@ export function ModelSettings({ canEdit }: { canEdit: boolean }) {
               <div className="w-40 text-xs text-zinc-500">
                 <div className="tabular-nums text-zinc-800 dark:text-zinc-200">{money(r.inM)} in · {money(r.outM)} out</div>
                 <div>per million tokens</div>
+                {r.unpriced && <div className="text-amber-700 dark:text-amber-400">Not priced: using the server&apos;s. Edit to set its price.</div>}
               </div>
               {editable && (
                 <div className="flex items-center gap-1">
@@ -238,6 +255,13 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(Boolean(initial.baseUrl));
+  const initialProvider = providers.find((p) => p.id === initial.provider);
+  const known = (m: string) => !m.trim() || Boolean(initialProvider?.suggested_models.some((s) => s.toLowerCase() === m.trim().toLowerCase()))
+    || Boolean(findListed(initialProvider, m, ""));
+  // A model id typed in rather than picked from the list.
+  const [custom, setCustom] = useState({ model: !known(initial.model), fast: !known(initial.fastModel) });
+  // Prices entered for a model that has a list price.
+  const [override, setOverride] = useState({ model: initial.priceIn !== "" || initial.priceOut !== "", fast: initial.fastPriceIn !== "" || initial.fastPriceOut !== "" });
 
   const provider = providers.find((p) => p.id === draft.provider);
   const saved = initial.id ? view.profiles.find((p) => p.id === initial.id) : undefined;
@@ -245,10 +269,13 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
   const sameEndpoint = Boolean(saved && saved.provider === draft.provider && (saved.base_url ?? "") === draft.baseUrl.trim());
   const keyOnFile = Boolean(saved?.api_key_set && sameEndpoint);
   const serverKeyUsable = draft.provider === view.server.provider && !draft.baseUrl.trim();
-  const suggestions = useMemo(
-    () => Array.from(new Set([...(models[draft.provider] ?? []), ...(provider?.suggested_models ?? [])])),
-    [models, draft.provider, provider],
-  );
+  // Models the provider's account serves that aren't on the list (no price known), for the dropdown.
+  const extra = useMemo(() => {
+    const listedIds = new Set((provider?.models.length ? provider.models.map((m) => m.id) : provider?.suggested_models ?? []).map((m) => m.toLowerCase()));
+    return (models[draft.provider] ?? []).filter((m) => !listedIds.has(m.toLowerCase()));
+  }, [models, draft.provider, provider]);
+  const listedModel = findListed(provider, draft.model, draft.baseUrl);
+  const listedFast = findListed(provider, draft.fastModel, draft.baseUrl);
 
   function change(patch: Partial<Draft>) {
     setDraft((d) => ({ ...d, ...patch }));
@@ -259,6 +286,32 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
     if (p.id === draft.provider) return;
     change({ provider: p.id, model: p.suggested_models[0] ?? "", fastModel: "", baseUrl: "", apiKey: "", priceIn: "", priceOut: "", fastPriceIn: "", fastPriceOut: "" });
     setAdvanced(false);
+    setCustom({ model: false, fast: false });
+    setOverride({ model: false, fast: false });
+  }
+
+  /** A model picked from the dropdown: a listed one is priced from the list again. */
+  function pickModel(which: "model" | "fast", value: string) {
+    const [modelKey, inKey, outKey] = which === "model" ? (["model", "priceIn", "priceOut"] as const) : (["fastModel", "fastPriceIn", "fastPriceOut"] as const);
+    if (value === CUSTOM) {
+      setCustom((c) => ({ ...c, [which]: true }));
+      change({ [modelKey]: "", [inKey]: "", [outKey]: "" });
+    } else {
+      setCustom((c) => ({ ...c, [which]: false }));
+      change({ [modelKey]: value, [inKey]: "", [outKey]: "" });
+    }
+    setOverride((o) => ({ ...o, [which]: false }));
+  }
+
+  /** Prices are required for a model without a list price, or when overriding one. */
+  function missingPrice(): string | null {
+    if (!provider || provider.free) return null;
+    const checks = [
+      { model: draft.model, listed: listedModel, over: override.model, inP: draft.priceIn, outP: draft.priceOut },
+      { model: draft.fastModel, listed: listedFast, over: override.fast, inP: draft.fastPriceIn, outP: draft.fastPriceOut },
+    ];
+    const gap = checks.find((c) => c.model.trim() && (!c.listed || c.over) && (c.inP.trim() === "" || c.outP.trim() === ""));
+    return gap ? `Enter the input and output price for ${gap.model.trim()} (USD per million tokens, from ${draft.provider}'s price list).` : null;
   }
 
   async function loadModels() {
@@ -282,6 +335,8 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
       if (kind === "test") {
         setTest(await testLlmSettings({ ...inputOf(draft), id: sameEndpoint ? initial.id : null }));
       } else {
+        const gap = missingPrice();
+        if (gap) { setError(gap); return; }
         onSaved(initial.id ? await updateModelProfile(initial.id, inputOf(draft)) : await createModelProfile({ ...inputOf(draft), id: null }));
       }
     } catch (e) {
@@ -363,41 +418,46 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
         {draft.provider !== "Mock" && (
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Model" hint="Planning and real work use this model.">
-              <input list="llm-models" className={`${inputClass} font-mono`} value={draft.model}
-                onChange={(e) => change({ model: e.target.value })} placeholder={provider?.suggested_models[0]} />
+              <ModelSelect provider={provider} extra={extra} value={draft.model} custom={custom.model}
+                onPick={(v) => pickModel("model", v)} onType={(v) => change({ model: v })} />
             </Field>
             <Field label="Fast model (optional)" hint="A cheaper model for routine work: standing agents handling events, history summaries.">
-              <input list="llm-models" className={`${inputClass} font-mono`} value={draft.fastModel}
-                onChange={(e) => change({ fastModel: e.target.value })} placeholder="Same as the model" />
+              <ModelSelect provider={provider} extra={extra} value={draft.fastModel} custom={custom.fast} optional
+                onPick={(v) => pickModel("fast", v)} onType={(v) => change({ fastModel: v })} />
             </Field>
-            <datalist id="llm-models">{suggestions.map((m) => <option key={m} value={m} />)}</datalist>
             <div className="flex items-center gap-3 sm:col-span-2">
               <Button size="sm" disabled={loadingModels} onClick={loadModels} icon={<Icons.Search className="h-3.5 w-3.5" />}>
                 {loadingModels ? "Asking the provider…" : `Load ${draft.provider}'s models`}
               </Button>
               <span className="text-xs text-zinc-500">
-                {models[draft.provider] ? `${models[draft.provider].length} models available; type to filter.` : "Or type any model id the provider serves."}
+                {models[draft.provider] ? `${models[draft.provider].length} models available; ones not on the price list are under "From your account".` : "Lists every model your key can use, including fine-tunes."}
               </span>
             </div>
           </div>
         )}
 
-        {provider && !provider.free && (
-          <div className="space-y-2">
+        {provider && !provider.free && draft.model.trim() && (
+          <div className="space-y-3">
             <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Prices (USD per million tokens)</div>
-            <p className="text-xs text-zinc-500">
-              Budgets, spend and cost estimates are counted with these, so copy them from {draft.provider}&apos;s price list.
-              Blank uses the server&apos;s prices ({money(view.server.price_per_million_input_usd)} in, {money(view.server.price_per_million_output_usd)} out).
-            </p>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {([["priceIn", "Input"], ["priceOut", "Output"], ["fastPriceIn", "Fast input"], ["fastPriceOut", "Fast output"]] as const).map(([k, label]) => (
-                <Field key={k} label={label}>
-                  <input type="number" min={0} step="any" className={inputClass} value={draft[k]}
-                    disabled={k.startsWith("fast") && !draft.fastModel.trim()}
-                    onChange={(e) => change({ [k]: e.target.value })} placeholder="—" />
-                </Field>
-              ))}
-            </div>
+            <p className="-mt-2 text-xs text-zinc-500">Budgets, spend and cost estimates are counted with these.</p>
+            <PriceRow label="Model" model={draft.model} listed={listedModel} asOf={provider.prices_as_of} provider={draft.provider}
+              customUrl={Boolean(draft.baseUrl.trim())} overriding={override.model}
+              values={[draft.priceIn, draft.priceOut]}
+              onOverride={(on) => {
+                setOverride((o) => ({ ...o, model: on }));
+                change(on && listedModel ? { priceIn: String(listedModel.input_per_million_usd), priceOut: String(listedModel.output_per_million_usd) } : { priceIn: "", priceOut: "" });
+              }}
+              onChange={([priceIn, priceOut]) => change({ priceIn, priceOut })} />
+            {draft.fastModel.trim() && (
+              <PriceRow label="Fast model" model={draft.fastModel} listed={listedFast} asOf={provider.prices_as_of} provider={draft.provider}
+                customUrl={Boolean(draft.baseUrl.trim())} overriding={override.fast}
+                values={[draft.fastPriceIn, draft.fastPriceOut]}
+                onOverride={(on) => {
+                  setOverride((o) => ({ ...o, fast: on }));
+                  change(on && listedFast ? { fastPriceIn: String(listedFast.input_per_million_usd), fastPriceOut: String(listedFast.output_per_million_usd) } : { fastPriceIn: "", fastPriceOut: "" });
+                }}
+                onChange={([fastPriceIn, fastPriceOut]) => change({ fastPriceIn, fastPriceOut })} />
+            )}
           </div>
         )}
 
@@ -420,5 +480,92 @@ function ModelEditor({ initial, providers, view, onClose, onSaved }: {
         )}
       </div>
     </Modal>
+  );
+}
+
+/** The model dropdown: the provider's listed models with their prices, models the account serves
+ * that aren't listed, and "Custom model…" to type any other id. */
+function ModelSelect({ provider, extra, value, custom, optional = false, onPick, onType }: {
+  provider: LlmProviderInfo | undefined; extra: string[]; value: string; custom: boolean; optional?: boolean;
+  onPick: (value: string) => void; onType: (value: string) => void;
+}) {
+  const listed = provider?.models ?? [];
+  // Local providers have no price list: their well-known models are offered by id.
+  const plain = listed.length === 0 ? provider?.suggested_models ?? [] : [];
+  // A saved model picked from "From your account" before the list was loaded again.
+  const unlisted = !custom && value.trim() && !findListed(provider, value, "") && !plain.includes(value) && !extra.includes(value);
+  return (
+    <div className="space-y-2">
+      <select className={inputClass} value={custom ? CUSTOM : value} onChange={(e) => onPick(e.target.value)}>
+        {optional ? <option value="">None (use the model)</option> : !value && !custom && <option value="" disabled>Choose a model</option>}
+        {listed.length > 0 && (
+          <optgroup label="On the price list">
+            {listed.map((m) => (
+              <option key={m.id} value={m.id}>{m.name} · {listPrice(m.input_per_million_usd)} in / {listPrice(m.output_per_million_usd)} out</option>
+            ))}
+          </optgroup>
+        )}
+        {plain.map((m) => <option key={m} value={m}>{m}</option>)}
+        {(extra.length > 0 || unlisted) && (
+          <optgroup label="From your account (enter prices)">
+            {unlisted && <option value={value}>{value}</option>}
+            {extra.map((m) => <option key={m} value={m}>{m}</option>)}
+          </optgroup>
+        )}
+        <option value={CUSTOM}>Custom model…</option>
+      </select>
+      {custom && (
+        <input autoFocus className={`${inputClass} font-mono`} value={value} onChange={(e) => onType(e.target.value)}
+          placeholder="Model id, e.g. ft:gpt-5-mini:acme::abc123" />
+      )}
+    </div>
+  );
+}
+
+/** One model's prices: its list price with a way to override it, or inputs when it isn't listed. */
+function PriceRow({ label, model, listed, asOf, provider, customUrl, overriding, values, onOverride, onChange }: {
+  label: string; model: string; listed: ListedModel | undefined; asOf: string | null; provider: string; customUrl: boolean;
+  overriding: boolean; values: [string, string]; onOverride: (on: boolean) => void; onChange: (values: [string, string]) => void;
+}) {
+  const link = "text-brand-600 hover:underline dark:text-brand-400";
+  if (listed && !overriding) {
+    return (
+      <div className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-800">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span>
+            <span className="text-zinc-500">{label}: </span>
+            <span className="tabular-nums text-zinc-900 dark:text-zinc-100">{listPrice(listed.input_per_million_usd)} in · {listPrice(listed.output_per_million_usd)} out</span>
+            {listed.cached_input_per_million_usd !== null && <span className="text-zinc-500"> · cached input {listPrice(listed.cached_input_per_million_usd)}</span>}
+          </span>
+          <button type="button" className={`text-xs ${link}`} onClick={() => onOverride(true)}>Use a different price</button>
+        </div>
+        <div className="mt-0.5 text-xs text-zinc-500">
+          {provider}&apos;s list price{asOf && <> as of {new Date(asOf + "T00:00:00").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</>}.
+          {listed.note && <> {listed.note}</>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+        <span className="text-zinc-600 dark:text-zinc-400">
+          {label} <span className="font-mono">{model.trim()}</span>:{" "}
+          {listed ? "your price (e.g. a negotiated rate)."
+            : customUrl ? "a custom base URL has its own prices, so enter that service's."
+            : `not on ${provider}'s price list, so enter its price.`}
+        </span>
+        {listed && <button type="button" className={link} onClick={() => onOverride(false)}>Use the list price</button>}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {(["Input", "Output"] as const).map((name, i) => (
+          <Field key={name} label={`${name} per million`}>
+            <input type="number" min={0} step="any" required className={inputClass} value={values[i]} placeholder="e.g. 2.50"
+              onChange={(e) => onChange(i === 0 ? [e.target.value, values[1]] : [values[0], e.target.value])} />
+          </Field>
+        ))}
+      </div>
+    </div>
   );
 }

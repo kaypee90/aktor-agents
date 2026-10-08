@@ -197,9 +197,13 @@ resets it). Sizes are remembered per browser.
   Both tabs stay loaded, so switching loses neither an unapplied change nor the live history.
 - **Center bottom:** **Run** with an input, and the runs, newest first, with pause, resume and
   cancel for runs in progress and a link to each run's full page.
-- **Right:** Chat, Agents (of recent runs), Files, Skills & knowledge, Triggers (schedules,
+- **Right:** Agents (of recent runs), Files, Skills & knowledge, Triggers (schedules,
   webhooks, watches), Integrations, Safety and Events. Clicking an agent, on either canvas or in
   the list, opens its details beside the canvas.
+- **Chat:** a button in the bottom-right corner opens the conversation over the page and hides it
+  again; whether it's open is remembered. While it's hidden, the button counts new messages since
+  you last had it open (pending approvals show in amber when nothing is unread), and a new message
+  shows as a short preview beside it. Your own messages never count as new.
 
 ## Workspaces made before pipelines
 

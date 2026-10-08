@@ -204,8 +204,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ILLMProvider, OrganizationLlmRouter>();
     }
 
-    /// <summary>Applies pending EF Core migrations and provisions the database_query sandbox role at
-    /// startup, so `docker compose up` works with no manual step.</summary>
+    /// <summary>Applies pending EF Core migrations, provisions the database_query sandbox role and
+    /// creates the configured local admin at startup, so `docker compose up` works with no manual step.</summary>
     public static async Task MigrateDatabaseAsync(this IHost host)
     {
         using var scope = host.Services.CreateScope();
@@ -223,5 +223,7 @@ public static class ServiceCollectionExtensions
 
         // After migrations, so the tables the sandbox role is locked out of already exist.
         await host.Services.GetRequiredService<AgentDatabaseSandbox>().ProvisionAsync();
+
+        await host.Services.GetRequiredService<Identity.IdentityService>().EnsureLocalAdminAsync();
     }
 }

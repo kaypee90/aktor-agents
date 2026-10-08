@@ -27,6 +27,7 @@ import {
   type Analytics,
   type AnalyticsFilter,
   type AnalyticsModelRow,
+  type AnalyticsTokenUsage,
   type AnalyticsTaskRow,
   type AnalyticsToolRow,
   type AnalyticsUserRow,
@@ -189,6 +190,52 @@ function RankedBars({ rows, nameKey, valueKey, format, nameWidth = 150, total, o
 
 type ModelMetric = "cost_usd" | "tokens" | "avg_cost_per_call_usd" | "avg_duration_ms";
 
+/** Where the tokens went, by kind: what is billed at full price (input, output) and what the
+ * provider's prompt cache made cheaper (cache reads) or dearer (cache writes). */
+function UsageCard({ usage, stats }: { usage: AnalyticsTokenUsage; stats: { label: string; value: React.ReactNode }[] }) {
+  const kinds = [
+    { label: "Input", value: usage.input_tokens, color: "#6366f1" },
+    { label: "Output", value: usage.output_tokens, color: "#14b8a6" },
+    { label: "Cache read", value: usage.cache_read_tokens, color: "#a3a3a3" },
+    { label: "Cache write", value: usage.cache_write_tokens, color: "#f59e0b" },
+  ];
+  const total = kinds.reduce((sum, k) => sum + k.value, 0);
+  const sent = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
+  return (
+    <Card>
+      <CardHeader title="Usage" description={`Tokens by kind across ${compact(usage.calls)} model calls. Cache reads are billed at a fraction of the input price.`} />
+      <div className="grid gap-6 p-5 md:grid-cols-2">
+        <dl className="space-y-1.5 text-sm">
+          {stats.map((st) => (
+            <div key={st.label} className="flex justify-between gap-3">
+              <dt className="text-zinc-500">{st.label}</dt>
+              <dd className="tabular-nums text-zinc-900 dark:text-zinc-100">{st.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="space-y-3">
+          <div className="flex h-2.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            {total > 0 && kinds.map((k) => <div key={k.label} style={{ width: `${(k.value / total) * 100}%`, background: k.color }} />)}
+          </div>
+          <dl className="space-y-1.5 text-sm">
+            {kinds.map((k) => (
+              <div key={k.label} className="flex items-center gap-2">
+                <span className="h-2.5 w-2.5 rounded-sm" style={{ background: k.color }} />
+                <dt className="text-zinc-500">{k.label}</dt>
+                <dd className="ml-auto tabular-nums text-zinc-900 dark:text-zinc-100">{compact(k.value)}</dd>
+                <dd className="w-14 text-right tabular-nums text-xs text-zinc-500">{total > 0 ? `${((k.value / total) * 100).toFixed(1)}%` : "—"}</dd>
+              </div>
+            ))}
+          </dl>
+          {sent > 0 && (
+            <p className="text-xs text-zinc-500">{((usage.cache_read_tokens / sent) * 100).toFixed(0)}% of input tokens came from the prompt cache.</p>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /** Which model is cheaper or faster: spend, tokens, cost per call and response time per model. */
 function ModelsCard({ rows, onPick }: { rows: AnalyticsModelRow[]; onPick: (profileId: string) => void }) {
   const [metric, setMetric] = useState<ModelMetric>("cost_usd");
@@ -208,12 +255,16 @@ function ModelsCard({ rows, onPick }: { rows: AnalyticsModelRow[]; onPick: (prof
       ) : (
         <>
           <RankedBars rows={sorted as unknown as Row[]} nameKey="label" valueKey={metric} format={format} nameWidth={190} onPick={(r) => onPick(String(r.profile_id))} />
-          <table className="w-full border-t border-zinc-100 text-xs dark:border-zinc-800">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-t border-zinc-100 text-xs dark:border-zinc-800">
             <thead className="text-left text-[10px] uppercase tracking-wide text-zinc-500">
               <tr>
                 <th className="px-5 py-2 font-medium">Model</th>
                 <th className="px-3 py-2 text-right font-medium">Calls</th>
-                <th className="px-3 py-2 text-right font-medium">Tokens</th>
+                <th className="px-3 py-2 text-right font-medium">Input</th>
+                <th className="px-3 py-2 text-right font-medium">Output</th>
+                <th className="px-3 py-2 text-right font-medium">Cache read</th>
+                <th className="px-3 py-2 text-right font-medium">Cache write</th>
                 <th className="px-3 py-2 text-right font-medium">Spend</th>
                 <th className="px-3 py-2 text-right font-medium">Per call</th>
                 <th className="px-5 py-2 text-right font-medium">Avg / p95 time</th>
@@ -227,7 +278,10 @@ function ModelsCard({ rows, onPick }: { rows: AnalyticsModelRow[]; onPick: (prof
                     <div className="font-mono text-[10px] text-zinc-500">{r.provider} · {r.model}</div>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{r.calls}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{compact(r.tokens)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{compact(r.input_tokens)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{compact(r.output_tokens)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{compact(r.cache_read_tokens)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{compact(r.cache_write_tokens)}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-zinc-900 dark:text-zinc-100">{usd(r.cost_usd)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{usd(r.avg_cost_per_call_usd)}</td>
                   <td className="px-5 py-2 text-right tabular-nums">{ms(r.avg_duration_ms)} / {ms(r.p95_duration_ms)}</td>
@@ -235,6 +289,7 @@ function ModelsCard({ rows, onPick }: { rows: AnalyticsModelRow[]; onPick: (prof
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </Card>
@@ -246,18 +301,20 @@ type ToolMetric = "total_duration_ms" | "avg_duration_ms" | "calls" | "failures"
 function ToolsCard({ rows }: { rows: AnalyticsToolRow[] }) {
   const [metric, setMetric] = useState<ToolMetric>("total_duration_ms");
   const sorted = [...rows].sort((a, b) => (b[metric] ?? 0) - (a[metric] ?? 0)).slice(0, 10);
+  const totalCalls = rows.reduce((sum, r) => sum + r.calls, 0);
   return (
     <Card>
       <CardHeader title="Tools" description="Which tools agents wait on, and which fail."
         actions={<select className={cx(inlineInputClass, "py-1 text-xs")} value={metric} onChange={(e) => setMetric(e.target.value as ToolMetric)}>
           <option value="total_duration_ms">Total time</option>
           <option value="avg_duration_ms">Average time</option>
-          <option value="calls">Calls</option>
+          <option value="calls">Calls (share)</option>
           <option value="failures">Failures</option>
         </select>} />
       {sorted.length === 0
         ? <div className="p-5 text-sm text-zinc-500">No tool calls in this range.</div>
         : <RankedBars rows={sorted as unknown as Row[]} nameKey="tool" valueKey={metric} nameWidth={130} color={metric === "failures" ? "#f43f5e" : "#14b8a6"}
+            total={metric === "calls" && totalCalls > 0 ? totalCalls : undefined}
             format={(v) => (metric.endsWith("_ms") ? ms(v) : String(v))} />}
     </Card>
   );
@@ -582,6 +639,16 @@ function TasksAnalytics({ a, loading, onDrill, update }: {
           { id: "avg_duration_s", label: "Avg duration", format: (v) => duration(v) },
         ]} />
 
+      <UsageCard usage={a.totals.usage} stats={[
+        { label: "Runs", value: a.totals.runs },
+        { label: "Model calls", value: compact(a.totals.usage.calls) },
+        { label: "Active days", value: a.totals.active_days },
+        { label: "Spend", value: usd(a.totals.cost_usd) },
+        { label: "Avg spend / active day", value: usd(a.totals.avg_cost_per_active_day_usd) },
+        { label: "Avg tokens / run", value: compact(Math.round(a.totals.avg_tokens)) },
+        { label: "Median tokens / run", value: compact(a.totals.p50_tokens) },
+      ]} />
+
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="lg:col-span-3"><RolesCard rows={a.by_role} /></div>
         <Card className="lg:col-span-2">
@@ -721,6 +788,14 @@ function WorkspacesAnalytics({ w, loading, onDrill, update }: {
         <RolesCard rows={w.by_role} />
         <ToolsCard rows={w.by_tool} />
       </div>
+
+      <UsageCard usage={t.usage} stats={[
+        { label: "Model calls", value: compact(t.calls) },
+        { label: "Spend", value: usd(t.cost_usd) },
+        { label: "Avg spend / day", value: usd(t.avg_cost_per_day_usd) },
+        { label: "Pipeline runs", value: t.runs },
+        { label: "Tool calls", value: compact(t.tool_calls) },
+      ]} />
 
       <ModelsCard rows={w.by_model} onPick={(id) => update({ model: id })} />
     </div>

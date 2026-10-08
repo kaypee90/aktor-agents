@@ -27,6 +27,9 @@ public static class ServiceCollectionExtensions
         services.Configure<Safety.TeamPolicy>(configuration.GetSection(Safety.TeamPolicy.SectionName));
         services.Configure<TaskBudgetCeilingOptions>(configuration.GetSection(TaskBudgetCeilingOptions.SectionName));
         services.Configure<LlmOptions>(configuration.GetSection(LlmOptions.SectionName));
+        // The configured model's list prices, unless the configuration sets its own.
+        services.PostConfigure<LlmOptions>(o => LLM.ModelPriceCatalog.FillServerPrices(o,
+            key => configuration[$"{LlmOptions.SectionName}:{key}"] is not null));
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
         services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
@@ -98,6 +101,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, MessagingRulesSection>();
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();
         services.AddSingleton<ISystemPromptSection, CompletionCriteriaSection>();
+        services.AddSingleton<ISystemPromptSection, AnswerFormatSection>();
         services.AddSingleton<ISystemPromptSection, BehavioralRulesSection>();
         services.Configure<PromptOptions>(configuration.GetSection(PromptOptions.SectionName));
         services.AddSingleton<ISystemPromptSection, OperatorInstructionsSection>();

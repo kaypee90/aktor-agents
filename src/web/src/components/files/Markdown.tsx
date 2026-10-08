@@ -1,7 +1,29 @@
 "use client";
 
+import { useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Icons } from "@/components/ui/icons";
+
+/** A code block with its own copy button, so a command can be copied without the prose around it. */
+function CodeBlock({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard.writeText(ref.current?.innerText.replace(/\n$/, "") ?? "").catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="group relative">
+      <pre ref={ref} className="overflow-x-auto rounded-lg bg-zinc-100 p-3 pr-16 text-[13px] leading-5 dark:bg-zinc-950">{children}</pre>
+      <button onClick={copy} aria-label="Copy code"
+        className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-white/80 px-1.5 py-1 text-xs text-zinc-500 opacity-0 transition-opacity hover:text-zinc-800 focus:opacity-100 group-hover:opacity-100 dark:bg-zinc-800/80 dark:hover:text-zinc-200">
+        {copied ? <Icons.Check className="h-3.5 w-3.5" /> : <Icons.Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
 
 /** Markdown (with tables, task lists and strikethrough) styled for reading. Raw HTML in the
  * source is not rendered, so a file can't inject markup into the page. */
@@ -21,7 +43,7 @@ export function Markdown({ text, compact = false }: { text: string; compact?: bo
           ol: ({ children }) => <ol className="list-decimal space-y-1 pl-6 text-zinc-700 dark:text-zinc-300">{children}</ol>,
           blockquote: ({ children }) => <blockquote className="border-l-4 border-zinc-300 pl-4 italic text-zinc-600 dark:border-zinc-700 dark:text-zinc-400">{children}</blockquote>,
           hr: () => <hr className="my-6 border-zinc-200 dark:border-zinc-800" />,
-          pre: ({ children }) => <pre className="overflow-x-auto rounded-lg bg-zinc-100 p-3 text-[13px] leading-5 dark:bg-zinc-950">{children}</pre>,
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           code: ({ children, className }) => className
             ? <code className={`font-mono ${className}`}>{children}</code>
             : <code className="rounded bg-zinc-100 px-1 py-0.5 font-mono text-[0.9em] dark:bg-zinc-800">{children}</code>,

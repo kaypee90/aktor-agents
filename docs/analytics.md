@@ -10,11 +10,12 @@ money go, which models and tools are worth it, and what takes long. It has two v
 |---|---|
 | **Spend, tokens, runs, average spend and tokens per run, median and p95 duration** | The headline figures, with the change against the previous period of the same length. |
 | **Over time** | Spend, tokens, runs or average duration per hour (ranges up to two days) or per day, in your timezone. Click a bar to zoom into that hour or day; drag the handles under the chart to focus on part of a long range. |
+| **Usage** | Runs, model calls, active days, spend and average spend per active day, average and median tokens per run, and tokens by kind: input, output, cache reads and cache writes, with the share of input served from the prompt cache. |
 | **What consumes the most** | Tokens or spend by agent role, with each role's share. |
 | **Spend by source** | Dashboard/API, MCP, A2A, ACP or replay. Click a slice to filter by it. |
 | **By user** | Who started the runs: each member (or API key, for runs started with one), with runs, spend and its share, tokens, average spend per run, failures and their last run. Click one to filter by them. |
-| **By model** | Spend, tokens, cost per call and response time (average and p95) for each model. Click one to filter by it. |
-| **Tools** | Total time, average time, calls or failures per tool: which tools agents wait on and which fail. |
+| **By model** | Calls, input, output, cache-read and cache-write tokens, spend, cost per call and response time (average and p95) for each model. Click one to filter by it. |
+| **Tools** | Total time, average time, calls (with each tool's share of all calls) or failures per tool: which tools agents wait on and which fail. |
 | **How long runs take** | Finished runs by duration. |
 | **Runs to look at** | The most expensive and the slowest runs, with who started each, linking to each run's agent graph. |
 
@@ -29,7 +30,7 @@ money go, which models and tools are worth it, and what takes long. It has two v
 | **By user** | Who started the runs: members, API keys, or triggers, with runs, spend and its share, failures and their last run. |
 | **Runs to look at** | The most expensive and the slowest runs, with their workspace and who started them, linking to each run's agent graph. |
 | **What consumes the most** | Tokens or spend by agent role: pipeline stages and their helpers. |
-| **Tools** and **By model** | As for tasks. |
+| **Usage**, **Tools** and **By model** | As for tasks. |
 
 ## Filters
 
@@ -53,6 +54,8 @@ workspace. Filters live in the page's URL, so a filtered view can be bookmarked 
 - A workspace pipeline's runs are reported in the **Workspaces** view, not under Tasks (though
   each run opens as a task). There, runs are attributed to whoever started them, or **Triggers
   (automatic runs)** for runs a schedule, webhook or watch started.
+- Input tokens are the uncached ones: cache reads and cache writes are counted apart, so the four
+  kinds add up to every token sent and received. Cache writes are recorded from this release on.
 - Up to 20,000 runs and 100,000 model calls per query are included (the response says
   `truncated: true` beyond that).
 

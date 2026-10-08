@@ -508,8 +508,9 @@ One server hosts many organizations, and the runtime (not only the API) keeps th
   limits. Usage is metered per organization. An agent over quota pauses mid-turn and carries on
   when the quota renews or the plan is upgraded (optionally through Stripe Checkout).
 
-The first account created on a server takes over existing data. Set `AUTH_MODE=disabled` for a
-single-user machine. See [docs/platform.md](docs/platform.md).
+Locally, sign in as `admin` / `admin`: Docker Compose and the Development environment create that
+account at startup (turn it off with `LOCAL_ADMIN_USERNAME=`). Visitors who aren't signed in land
+on the product page at `/welcome`. Set `AUTH_MODE=disabled` for a single-user machine. See [docs/platform.md](docs/platform.md).
 
 ## 10b-7. Calling Aktor from other tools: MCP, A2A, ACP
 

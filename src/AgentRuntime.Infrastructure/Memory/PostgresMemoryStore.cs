@@ -163,6 +163,30 @@ public sealed class PostgresMemoryStore(
     /// and age. Entries that match neither by meaning nor by words are left out; an empty query
     /// lists the most recent.
     /// </summary>
+    public async Task<IReadOnlyList<MemoryRecord>> DeleteSharedAsync(
+        string tenantId, MemoryScope scope, IReadOnlyCollection<string>? memoryIds = null, string? fileName = null,
+        CancellationToken cancellationToken = default)
+    {
+        if ((memoryIds is null || memoryIds.Count == 0) && string.IsNullOrEmpty(fileName)) return [];
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.MemoryEntries.Where(m => m.TenantId == tenantId && m.Kind == nameof(MemoryKind.Shared));
+        query = scope.WorkspaceId is null ? query.Where(m => m.WorkspaceId == null) : query.Where(m => m.WorkspaceId == scope.WorkspaceId);
+        query = memoryIds is { Count: > 0 }
+            ? query.Where(m => memoryIds.Contains(m.MemoryId))
+            : query.Where(m => m.Key == fileName || m.Key.StartsWith(fileName + " (part "));
+
+        // The exact key check runs here: "a.pdf (part x" prefixes could belong to "a.pdf (part 1 of 2) copy".
+        var doomed = (await query.ToListAsync(cancellationToken))
+            .Where(m => scope.Includes(m.WorkspaceId) && (fileName is null || KnowledgeFiles.IsPassageOf(m.Key, fileName)))
+            .ToList();
+        if (doomed.Count == 0) return [];
+
+        db.MemoryEntries.RemoveRange(doomed);
+        await db.SaveChangesAsync(cancellationToken);
+        return doomed.Select(ToRecord).ToList();
+    }
+
     private static string BuildSearchSql(bool useVectors)
     {
         var vec = useVectors

@@ -38,4 +38,20 @@ public sealed class InMemoryMemoryStore : IMemoryStore
 
         return Task.FromResult<IReadOnlyList<MemoryRecord>>(results.ToList());
     }
+
+    public Task<IReadOnlyList<MemoryRecord>> DeleteSharedAsync(
+        string tenantId, MemoryScope scope, IReadOnlyCollection<string>? memoryIds = null, string? fileName = null,
+        CancellationToken cancellationToken = default)
+    {
+        if ((memoryIds is null || memoryIds.Count == 0) && string.IsNullOrEmpty(fileName)) return Task.FromResult<IReadOnlyList<MemoryRecord>>([]);
+        var deleted = new List<MemoryRecord>();
+        foreach (var (key, r) in _records)
+        {
+            if (r.TenantId != tenantId || !r.IsShared || r.WorkspaceId != scope.WorkspaceId) continue;
+            var match = memoryIds is { Count: > 0 } ? memoryIds.Contains(r.MemoryId) : KnowledgeFiles.IsPassageOf(r.Key, fileName!);
+            if (match && _records.TryRemove(key, out var removed)) deleted.Add(removed);
+        }
+
+        return Task.FromResult<IReadOnlyList<MemoryRecord>>(deleted);
+    }
 }
