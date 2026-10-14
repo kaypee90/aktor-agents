@@ -15,11 +15,11 @@ public static partial class PipelineValidator
 
     public static bool IsValidStageId(string? id) => id is not null && StageIdPattern().IsMatch(id);
 
-    /// <summary>Every problem with <paramref name="pipeline"/>; empty when it can run.</summary>
+    /// <summary>Every problem with <paramref name="pipeline"/>; empty when it can be saved. A pipeline
+    /// with no stages (a blank canvas) can be saved, but not run.</summary>
     public static List<string> Validate(PipelineDefinition pipeline, PipelineOptions options)
     {
         var errors = new List<string>();
-        if (pipeline.Stages.Count == 0) errors.Add("A pipeline needs at least one stage.");
         if (pipeline.Stages.Count > options.MaxStages) errors.Add($"A pipeline can have at most {options.MaxStages} stages.");
         if (pipeline.MaxRunMinutes < 1 || pipeline.MaxRunMinutes > options.MaxRunMinutes)
         {

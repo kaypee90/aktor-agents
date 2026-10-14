@@ -51,6 +51,9 @@ public sealed class WorkspaceCopyApiTests(ApiTestHostFixture fixture, ITestOutpu
             .GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToList();
         Assert.True(tools.Count > 1);
         await Json(await api.PatchAsJsonAsync($"/api/workspaces/{source}/connections/{connectionId}", new { enabled_tools = tools.Skip(1).ToList() }));
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.PutAsJsonAsync($"/api/workspaces/{source}/variables", new { variables = new Dictionary<string, string> { ["Not OK"] = "x" } })).StatusCode);
+        var saved = await Json(await api.PutAsJsonAsync($"/api/workspaces/{source}/variables", new { variables = new Dictionary<string, string> { ["email_recipient"] = "ops@example.com" } }));
+        Assert.Equal("ops@example.com", saved.GetProperty("variables").GetProperty("email_recipient").GetString());
 
         // Some activity: a run.
         var run = await Json(await api.PostAsJsonAsync($"/api/workspaces/{source}/runs", new { input = "Disk is full on db-1." }));
@@ -72,6 +75,7 @@ public sealed class WorkspaceCopyApiTests(ApiTestHostFixture fixture, ITestOutpu
         Assert.Equal("Ops desk EU", copy.GetProperty("name").GetString());
         Assert.Equal("Investigate production alerts.", copy.GetProperty("goal").GetString());
         Assert.Equal(2, copy.GetProperty("triggers").GetArrayLength());
+        Assert.Equal("ops@example.com", copy.GetProperty("variables").GetProperty("email_recipient").GetString());
         Assert.Empty(copy.GetProperty("runs").EnumerateArray());
         var copiedTools = (await Json(await api.GetAsync($"/api/workspaces/{copyId}/connections"))).EnumerateArray().Single().GetProperty("tools").EnumerateArray().ToList();
         Assert.False(copiedTools.Single(t => t.GetProperty("name").GetString() == tools[0]).GetProperty("enabled").GetBoolean());

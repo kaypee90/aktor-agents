@@ -363,8 +363,14 @@ export function endWorld(worldId: string) {
 // ---- Workspaces (long-running agents with triggers) ----
 
 /** A workspace for `goal`; its pipeline is drafted from the goal by the pipeline editor. */
-export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number; visibility?: import("./workspaceTypes").WorkspaceVisibility }) {
+/** With `blank`, the workspace starts with an empty canvas and `goal` may be empty. */
+export function createWorkspace(input: { name: string; goal: string; blank?: boolean; daily_token_limit?: number; daily_cost_limit_usd?: number; visibility?: import("./workspaceTypes").WorkspaceVisibility }) {
   return apiFetch<{ workspace_id: string; draft: string | null }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+/** Replaces the workspace's variables (values every stage can use as {{ vars.name }}). */
+export function setWorkspaceVariables(id: string, variables: Record<string, string>) {
+  return apiFetch<{ variables: Record<string, string> }>(`/api/workspaces/${id}/variables`, { method: "PUT", body: JSON.stringify({ variables }) });
 }
 
 /** Only the workspace's owner may change who sees it. */

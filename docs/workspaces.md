@@ -1,8 +1,9 @@
 # Workspaces
 
-A workspace is a reusable agent pipeline. You describe the job once ("research a market I name
-and write a fact-checked report"), a pipeline of agents is drafted from it, and you run it as
-often as you like: by hand with an input, or automatically from a schedule, a webhook or a watch.
+A workspace is a reusable agent pipeline. You build it on a blank canvas, or describe the job once
+("research a market I name and write a fact-checked report") and have a pipeline of agents drafted
+from it, and you run it as often as you like: by hand with an input, or automatically from a
+schedule, a webhook or a watch.
 Change any stage in plain language ("add a security reviewer after Backend") or on the canvas;
 every change is a new version you can undo.
 
@@ -26,11 +27,12 @@ flowchart LR
 
 | Piece | What it is |
 |---|---|
-| **Pipeline** | A graph of stages, versioned. Stages with no inputs start with the run; a stage starts once all its inputs have finished; stages nothing depends on give the run's result. Limits come from `Pipelines:*` (20 stages, 5 helpers per stage, 3 retries, 240 minutes per run). |
+| **Pipeline** | A graph of stages, versioned. A new workspace's pipeline can be empty (a blank canvas), but a run needs at least one stage. Stages with no inputs start with the run; a stage starts once all its inputs have finished; stages nothing depends on give the run's result. Limits come from `Pipelines:*` (20 stages, 5 helpers per stage, 3 retries, 240 minutes per run). |
 | **Stage** | Usually an agent; or an **action** (one call of a connection's tool, per item if you like) or a **script** (Python or JavaScript in a sandbox), which run without a model; see [workflows.md](workflows.md). An agent stage has a name, role, instructions and tools (from capability words such as `research`, `http`, `shell`). Settings: helpers it may start (`max_helpers`), whether it may message the run's other stages, retries, what happens if it fails (`FailRun` or `Continue`), and an optional cost cap. Every stage can read and write the run's files and use the workspace's connections. |
 | **Run** | One execution of the pipeline with an input: a task typed by a person, a schedule's instruction, a webhook's payload, or a watch's matches. A run is an actor (`PipelineRunGrain`) and the root of its agent tree, and it is also a task: `/api/tasks/{run_id}` and the dashboard's task view show its agent graph, files, events, spend and result. |
 | **Trigger** | A schedule (`every_minutes` or a 5-field UTC `cron`), a webhook, a watch, or a [form](workflows.md#form-triggers) for members of your organization. Schedules, webhooks and forms start a run; a watch alerts you, or starts a run with only the newly matching items. Schedules are Orleans reminders, so they survive crashes and restarts. |
 | **Conversation** | Run notices and results, watch alerts, approvals and system notices. A message typed in the chat starts a run with it as the input; addressed to an agent of a run in progress, it reaches that agent instead. Results go to connected channels (SMS, Slack, email) by the pipeline's result urgency. |
+| **Variables** | Named values every stage can use, set once on the Variables tab: `{{ vars.name }}` in an action's arguments or an agent's instructions, `vars` in a script's data. See [Variables](#variables). |
 | **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call of every run. At 80% the chat warns once. When it's used up, the chat says so once, a banner with a **Raise budget** button stays in the header, and agents that need to run are paused until midnight UTC or until the budget is raised. |
 
 ## How a run works
@@ -39,8 +41,9 @@ flowchart LR
    slot, or while the workspace is paused, the run waits in a queue (a run and its task row exist
    from the start, so callers can follow it). Queued runs start on the pipeline as it is then.
 2. The run starts every stage whose inputs are done. An agent stage's agent gets its instructions
-   as its goal, plus the run's input, the summaries and files of its inputs, and who gets its
-   result. An action or script stage gets the run's data as JSON (`input`, `stages`, `previous`;
+   as its goal (with `{{ vars.… }}` filled in), plus the run's input, the workspace's variables, the
+   summaries and files of its inputs, and who gets its result. An action or script stage gets the
+   run's data as JSON (`input`, `stages`, `previous`, `vars`;
    see [workflows.md](workflows.md#data-between-stages)) and runs without a model. Independent
    stages run at the same time.
 3. An agent stage finishes with `complete_task`; an action or script when its call or code does.
@@ -81,8 +84,13 @@ Cancelling stops every agent of the run and skips its unfinished stages.
 - **Versions:** every applied change is a new version; an edit based on an older version is
   refused as a conflict. **History** restores any kept version (as a new version).
 - **From a template:** see [templates.md](templates.md) for nine real-world pipelines to start from.
-- **A new workspace** is drafted from its description by the same editor. If the model can't
-  propose a valid pipeline, the workspace starts with one stage that does its purpose.
+- **A new workspace starts on a blank canvas** (the default on the New workspace form): build the
+  pipeline yourself from the palette. A pipeline with no stages is saved but can't run until it
+  has one ("The pipeline has no stages yet"); removing the last stage gives the blank canvas back.
+  The description is optional then; when given, agents are told it as the workspace's purpose.
+- **Or describe it** (*Describe it* on the form): the pipeline is drafted from the description by
+  the same editor. If the model can't propose a valid pipeline, the workspace starts with one stage
+  that does its purpose. The editor never leaves a pipeline with no stages; only a person can.
 
 ## Mentions
 
@@ -91,7 +99,7 @@ Typing `@` in a text box suggests what you can refer to; ↑/↓ and Enter or Ta
 | Mention | Example | Means |
 |---|---|---|
 | An agent (a pipeline stage), by its id | `@diagnose` | That stage |
-| A model, by its profile id | `@claude-fast`, `@default-model` (the server's own) | That model (Settings → Models) |
+| A model, by its profile id | `@claude-fast`, `@default-model` (the server's own) | That model (Settings → Models). A model's id follows its name: renaming it renames the id, mentions included ([llm-settings.md](llm-settings.md)) |
 | A provider | `@anthropic` | The organization's models from that provider |
 | A skill | `@skill:incident-postmortems` | That skill ([skills.md](skills.md)): the workspace's own, else the organization's |
 | Knowledge | `@knowledge:refund-policy.docx`, `@knowledge:on-call-rota` | That document or fact ([memory.md](memory.md)): the workspace's own, else the organization's |
@@ -131,6 +139,24 @@ Stages are autonomous within their limits:
 | Helpers can't spawn | Helpers get no `spawn_agent` tool and a `MaxChildren` of 0. |
 | The spawn result states the cost | For example: "This helper may spend up to 150,000 tokens / $0.75, paid from the workspace's shared daily budget (412,000 tokens / $1.64 left today)." |
 | A stage that stops without reporting fails | Nothing else would ever wake it, so waiting would stall the run. |
+
+## Variables
+
+A workspace's **Variables** tab holds named values every stage can use, so a setting like who to
+email lives in one place instead of in each stage's instructions:
+
+| Stage | How it uses `email_recipient` |
+|---|---|
+| Action | `{{ vars.email_recipient }}` in its arguments, like any other expression |
+| Script | `data["vars"]["email_recipient"]` (Python) or `data.vars.email_recipient` (JavaScript) |
+| Agent | `{{ vars.email_recipient }}` in its instructions is filled in, and every variable is listed in its context |
+
+- Names are lowercase letters, digits and `_`, starting with a letter (40 at most); up to 50
+  variables of up to 4,000 characters each. In an agent's instructions only `{{ vars.… }}` is filled
+  in: other `{{ … }}`, and variables that aren't set, stay as written.
+- A run takes the values it starts with, so editing a variable doesn't change a run in progress.
+- Clones and templates copy the variables. Changes are in the audit log, by name.
+- They aren't secrets: agents and run data see them. API keys and passwords go in a connection.
 
 ## Running out of budget
 
@@ -211,8 +237,10 @@ list and the side panel start hidden. Pending approvals still show when the head
 - **Center bottom:** **Run** with an input, and the runs, newest first, with pause, resume and
   cancel for runs in progress and a link to each run's full page.
 - **Right:** Agents (of recent runs), Files, Skills & knowledge (the workspace's own skills and
-  knowledge files and facts, counted on the tab like files), Triggers (schedules,
-  webhooks, watches), Integrations, Safety and Events. Clicking an agent, on either canvas or in
+  knowledge files and facts, counted on the tab like files), Variables, Triggers (schedules,
+  webhooks, watches), Integrations (each connection with its service's logo), Safety and Events
+  (each event with a short coloured label, e.g. *Stage start*, *Run*, *Pipeline*; hover a label
+  for the full event type). Clicking an agent, on either canvas or in
   the list, opens its details beside the canvas.
 - **Chat:** a button in the bottom-right corner opens the conversation over the page and hides it
   again; whether it's open is remembered. While it's hidden, the button counts new messages since
@@ -251,14 +279,14 @@ workspace visible to the organization before handing it over.
 ## Cloning, templates and deleting
 
 - **Clone** (header) makes a new workspace with this one's setup, ready to run: goal, pipeline and
-  stage settings, triggers (webhooks get new secret URLs), safety policy, daily budget, and the
+  stage settings, variables, triggers (webhooks get new secret URLs), safety policy, daily budget, and the
   workspace's own skills and knowledge (unless turned off). Integrations are copied with their
   secrets for Admins: the secrets are copied inside the server and never sent to the browser.
   Adding integrations needs the Admin role, so for anyone else they're listed for an Admin to add.
   A tool switched off on an integration stays off in the copy. **Runs, their results, files, chat
   and approvals are never copied.**
 - **Save as template** saves the setup as one of the organization's templates
-  ([templates.md](templates.md)): no secrets, knowledge, runs or files.
+  ([templates.md](templates.md)), variables included: no secrets, knowledge, runs or files.
 - **Delete** (Admins, archived workspaces only) removes the workspace with its integrations and
   their secrets, triggers, skills, knowledge and its own files. Its runs' history (with their files)
   and the audit log are kept as the record of what happened. A study's workspace is deleted with
@@ -274,7 +302,7 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?, visibility?}`; without `pipeline`, one is drafted from `goal`. `visibility`: `Organization` (default) or `Private` |
+| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?, blank?, visibility?}`; without `pipeline`, one is drafted from `goal`. `blank: true` starts with an empty canvas (then `goal` is optional). `visibility`: `Organization` (default) or `Private` |
 | `PUT` | `/api/workspaces/{id}/visibility` | `{visibility}`: owner only (403 otherwise). See [private workspaces](#private-workspaces) |
 | `GET` | `/api/workspaces` | List |
 | `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of recent runs (each run's own entry first), triggers, budget |
@@ -296,6 +324,7 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 | `POST` | `/api/workspaces/{id}/scripts/test` | Member; `{language, code, data, timeout_seconds?}`: run a script stage's code in the sandbox: `{ok, output, error, logs, duration_ms}` |
 | `DELETE` | `/api/workspaces/{id}/triggers/{triggerId}` | |
 | `PUT` | `/api/workspaces/{id}/budget` | `{daily_token_limit?, daily_cost_limit_usd?}` |
+| `PUT` | `/api/workspaces/{id}/variables` | `{variables: {name: value}}` replaces them all; `400` with the problems when a name or value isn't allowed |
 | `POST` | `/api/workspaces/{id}/pause` \| `resume` \| `archive` | |
 | `POST` | `/api/workspaces/{id}/clone` | `{name, copy_skills_and_knowledge}`: the setup, not the activity. Reports each integration and trigger, and the new webhook URLs. |
 | `POST` | `/api/workspaces/{id}/export-template` | `{name, description, category}`: an organization template. |

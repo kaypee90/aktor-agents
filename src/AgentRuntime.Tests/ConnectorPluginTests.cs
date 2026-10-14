@@ -446,4 +446,69 @@ public sealed class ConnectorPluginTests
         Assert.DoesNotContain(await plugin.ListToolsAsync(connection, default), t => t.Name == "update_issue");
         Assert.False((await plugin.ExecuteToolAsync(connection, "update_issue", Call("update_issue", new { issue_id = "42", status = "resolved" }))).Success);
     }
+
+    // ---- Slack ----
+
+    [Fact]
+    public async Task Slack_with_a_bot_token_posts_to_channels_and_reads_them_by_name()
+    {
+        var stub = new Stub((r, _) => r.RequestUri!.AbsolutePath switch
+        {
+            "/api/chat.postMessage" => (HttpStatusCode.OK, """{ "ok": true, "channel": "C1", "ts": "1700.01" }"""),
+            "/api/conversations.list" => (HttpStatusCode.OK, """{ "ok": true, "channels": [ { "id": "C1", "name": "alerts", "is_member": true } ], "response_metadata": { "next_cursor": "" } }"""),
+            "/api/conversations.history" => (HttpStatusCode.OK, """{ "ok": true, "messages": [ { "ts": "1700.00", "user": "U1", "text": "deploy failed" } ] }"""),
+            _ => (HttpStatusCode.OK, """{ "ok": false, "error": "unknown_method" }""")
+        });
+        var plugin = new SlackPlugin(stub);
+        var connection = Connection(new() { ["default_channel"] = "#alerts" }, new() { ["bot_token"] = "xoxb-1" });
+
+        Assert.Equal(["post_message", "list_channels", "read_messages"], (await plugin.ListToolsAsync(connection, default)).Select(t => t.Name));
+
+        var posted = await plugin.ExecuteToolAsync(connection, "post_message", Call("post_message", new { text = "Run done", thread_ts = "1700.00" }));
+        Assert.True(posted.Success, posted.ErrorMessage);
+        Assert.Equal("1700.01", JsonNode.Parse(posted.ResultJson)!["ts"]!.GetValue<string>());
+        var post = JsonNode.Parse(stub.Requests[0].Body!)!;
+        Assert.Equal("#alerts", post["channel"]!.GetValue<string>());
+        Assert.Equal("1700.00", post["thread_ts"]!.GetValue<string>());
+        Assert.Equal("Bearer xoxb-1", stub.Requests[0].Auth);
+
+        // History takes an id, so a #name is looked up first.
+        var read = await plugin.ExecuteToolAsync(connection, "read_messages", Call("read_messages", new { channel = "#alerts", limit = 5 }));
+        Assert.True(read.Success, read.ErrorMessage);
+        Assert.Equal("deploy failed", JsonNode.Parse(read.ResultJson)!["messages"]![0]!["text"]!.GetValue<string>());
+        Assert.EndsWith("conversations.history?channel=C1&limit=5", stub.Requests[^1].Url);
+    }
+
+    [Fact]
+    public async Task Slack_explains_errors_it_answers_with_200()
+    {
+        var stub = new Stub((_, _) => (HttpStatusCode.OK, """{ "ok": false, "error": "not_in_channel" }"""));
+        var plugin = new SlackPlugin(stub);
+        var connection = Connection([], new() { ["bot_token"] = "xoxb-1" });
+
+        var result = await plugin.ExecuteToolAsync(connection, "post_message", Call("post_message", new { text = "hi", channel = "C9" }));
+        Assert.False(result.Success);
+        Assert.Contains("/invite", result.ErrorMessage);
+
+        // No channel given and no default: an argument mistake, not a request.
+        var missing = await plugin.ExecuteToolAsync(connection, "post_message", Call("post_message", new { text = "hi" }));
+        Assert.False(missing.Success);
+        Assert.Single(stub.Requests);
+    }
+
+    [Fact]
+    public async Task Slack_with_only_a_webhook_posts_there_and_offers_nothing_else()
+    {
+        var stub = new Stub((_, _) => (HttpStatusCode.OK, "ok"));
+        var plugin = new SlackPlugin(stub);
+        var connection = Connection([], new() { ["webhook_url"] = "https://hooks.slack.com/services/T/B/x" });
+
+        Assert.True((await plugin.ValidateAsync(connection, default)).Ok);
+        Assert.Equal(["post_message"], (await plugin.ListToolsAsync(connection, default)).Select(t => t.Name));
+        Assert.True((await plugin.ExecuteToolAsync(connection, "post_message", Call("post_message", new { text = "hi" }))).Success);
+        Assert.Equal("https://hooks.slack.com/services/T/B/x", stub.Requests[0].Url);
+        Assert.False((await plugin.ExecuteToolAsync(connection, "list_channels", Call("list_channels", new { }))).Success);
+
+        Assert.False((await plugin.ValidateAsync(Connection([], []), default)).Ok);
+    }
 }

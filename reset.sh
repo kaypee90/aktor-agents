@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Clears all tasks, agents, messages, events, tool calls, artifacts, and the live agent registry,
-# so the next submitted goal starts from a clean slate. The API and Postgres containers keep
+# Clears all tasks, agents, messages, events, tool calls, artifacts, workspaces, memory and the live
+# agent registry, so the next submitted goal starts from a clean slate. Accounts and each
+# organization's model settings (models, their prices and API keys) are kept. The API and Postgres containers keep
 # running — this hits POST /api/admin/reset rather than tearing the stack down.
 set -euo pipefail
 

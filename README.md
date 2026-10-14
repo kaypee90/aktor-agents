@@ -195,7 +195,8 @@ Set `PLATFORM_ADMIN_EMAIL` to that email to be the operator, who can reset the s
 **Starting over**: `./reset.sh` (operators only; it asks for your email and password, or reads
 `AKTOR_EMAIL`/`AKTOR_PASSWORD`), or the "Reset all" button in the dashboard header, deletes every
 task, agent, message, event, tool call, and artifact and clears the live agent registry, without
-tearing the containers down. See §11.
+tearing the containers down. Accounts and each organization's model settings (models, their prices
+and API keys) are kept. See §11.
 
 ### Option B — run the pieces yourself
 
@@ -372,8 +373,10 @@ produces.
 
 `./reset.sh` (prompts for confirmation; `./reset.sh -y` skips it) or the "Reset all" button in the
 dashboard header calls `POST /api/admin/reset`, which deletes every task/agent/message/event/
-tool-call/artifact row, clears the in-memory agent registry, and removes files from the workspace
-volume — all without restarting the containers. Existing agent grain activations (if any were
+tool-call/artifact row, workspaces with their connections and connection secrets, memory and the
+audit log, clears the in-memory agent registry, and removes files from the workspace volume — all
+without restarting the containers. It keeps accounts, organizations and their plans, and every
+organization's model settings (Settings → Models: the models, their custom prices and API keys). Existing agent grain activations (if any were
 somehow still mid-turn) are simply left to idle out; nothing references their old ids once the
 registry and history are both cleared.
 
@@ -419,12 +422,12 @@ Open-ended worlds (`/api/worlds`) remain available over the API but no longer ha
 
 ## 10b-2. Workspaces: reusable agent pipelines
 
-Open **Workspaces** in the dashboard (`/workspaces`) and describe a job you want done again and
+Open **Workspaces** in the dashboard (`/workspaces`) and set up a job you want done again and
 again: market research reports, support-ticket triage, code reviews, incident investigation, and so
-on. Nothing is domain-specific; your description, stages and connections decide what a workspace
-does.
+on. Nothing is domain-specific; your stages and connections decide what a workspace does.
 
-- A **pipeline** of agents is drafted from your description: stages, each an agent with a role,
+- A new workspace starts on a **blank canvas** you build on, or choose **Describe it** and a
+  **pipeline** of agents is drafted from your description: stages, each an agent with a role,
   instructions and tools, connected into a graph (parallel branches merge where a stage takes
   several inputs).
 - **Change it in plain language** ("add a fact checker after Research", "use `@claude-fast` for
@@ -436,6 +439,8 @@ does.
   with `@` in any text box, so a weaker model doesn't have to guess what you mean.
 - **Skills & knowledge** tab: the workspace's own skills and knowledge, counted in the header like
   its files. The workspace chat floats in a widget you can hide; it marks new messages.
+- **Variables** tab: values every stage uses, set once (`email_recipient`, `company_name`), as
+  `{{ vars.name }}` in an action's arguments or an agent's instructions, and `vars` in a script.
 - **Each stage can run on its own model**, and shared knowledge its agents save stays in the
   workspace unless they share it with the whole organization.
 - **Run it** with an input, or let **triggers** run it: schedules (intervals or cron), webhooks
@@ -445,7 +450,8 @@ does.
   tool with data from the run (once, or once per item), and a **script** stage runs Python or
   JavaScript in a network-less sandbox to reshape data. Outputs flow between stages as JSON, and
   `{{ expressions }}` fill in an action's arguments. On the canvas each agent shows its model,
-  tools and memory, and the triggers that start the pipeline sit on the left. See
+  tools and memory, each action the logo of the service it calls, and the triggers that start the
+  pipeline sit on the left. See
   [docs/workflows.md](docs/workflows.md).
 - Inside a stage the agent is autonomous within limits: tools, helpers through a plan, quick
   questions to other stages. The runtime starts stages when their inputs are done, retries
@@ -458,8 +464,8 @@ does.
   intelligence, contract review and candidate screening.
 - **Private or shared:** a workspace is visible to your whole organization, or only to you. A
   private one, with its runs, files and spend, is hidden from everyone else, admins included.
-- **Clone** a workspace to start a new one with the same setup (pipeline, triggers, integrations,
-  skills, knowledge, policy) but none of its runs or files; **Save as template** to share it with
+- **Clone** a workspace to start a new one with the same setup (pipeline, variables, triggers,
+  integrations, skills, knowledge, policy) but none of its runs or files; **Save as template** to share it with
   the organization on the Templates page; **Delete** an archived one (its runs and audit trail
   stay).
 
@@ -469,8 +475,9 @@ See [docs/workspaces.md](docs/workspaces.md) and [docs/templates.md](docs/templa
 
 In a workspace's **Integrations** tab you can connect services, and you can add your own plugins.
 - **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Google
-  Sheets, Google BigQuery, Airtable, Zoho CRM, Sentry, Slack, SMS (Twilio), email (SMTP, Brevo,
-  SendGrid), SMS through Brevo, and Telegram.
+  Sheets, Google BigQuery, Airtable, Zoho CRM, Sentry, Slack (a bot token for any channel, threads
+  and reading messages, or an incoming webhook), SMS (Twilio), email (SMTP, Brevo, SendGrid), SMS
+  through Brevo, and Telegram. Each shows its logo on the Integrations tab and the canvas.
 - **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`). For a REST API,
   add its endpoints by hand or import them from an OpenAPI document, and each becomes a typed tool
   (`store__get_order {order_id}`).

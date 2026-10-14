@@ -26,6 +26,18 @@ const TYPE_COLORS: Record<string, string> = {
   TaskCompleted: "text-emerald-700 dark:text-emerald-300 font-semibold",
   ArtifactCreated: "text-teal-600 dark:text-teal-400",
   EnvironmentChanged: "text-zinc-500",
+  WorldCreated: "text-sky-600 dark:text-sky-400",
+  WorldTick: "text-zinc-500",
+  WorldActivity: "text-indigo-600 dark:text-indigo-400",
+  WorldEnded: "text-zinc-500",
+  WorkspaceCreated: "text-sky-700 dark:text-sky-300 font-semibold",
+  WorkspaceMessage: "text-fuchsia-600 dark:text-fuchsia-400",
+  TriggerFired: "text-amber-600 dark:text-amber-400",
+  WorkspaceChanged: "text-zinc-500",
+  PipelineChanged: "text-brand-600 dark:text-brand-400",
+  PipelineRunUpdated: "text-zinc-500",
+  PipelineStageStarted: "text-sky-600 dark:text-sky-400",
+  PipelineStageFinished: "text-emerald-600 dark:text-emerald-400",
 };
 
 /** Friendlier names for the runtime's event types. */
@@ -52,6 +64,18 @@ const LABELS: Record<string, string> = {
   TaskCompleted: "Task done",
   ArtifactCreated: "File",
   EnvironmentChanged: "Environment",
+  WorldCreated: "World",
+  WorldTick: "Tick",
+  WorldActivity: "Activity",
+  WorldEnded: "World ended",
+  WorkspaceCreated: "Created",
+  WorkspaceMessage: "Chat",
+  TriggerFired: "Trigger",
+  WorkspaceChanged: "Workspace",
+  PipelineChanged: "Pipeline",
+  PipelineRunUpdated: "Run",
+  PipelineStageStarted: "Stage start",
+  PipelineStageFinished: "Stage done",
 };
 
 export function EventStream({ events }: { events: RuntimeEvent[] }) {
@@ -72,8 +96,8 @@ export function EventStream({ events }: { events: RuntimeEvent[] }) {
       {events.map((evt) => (
         <div key={evt.event_id} className="group flex gap-2.5 px-4 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-900/60">
           <span className="w-14 shrink-0 whitespace-nowrap pt-px font-mono text-[10px] text-zinc-400">{new Date(evt.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })}</span>
-          <span className={`w-20 shrink-0 font-medium ${TYPE_COLORS[evt.type] ?? "text-zinc-500"}`}>{LABELS[evt.type] ?? evt.type}</span>
-          <span className="min-w-0 flex-1 text-zinc-700 dark:text-zinc-300">
+          <span title={evt.type} className={`w-20 shrink-0 truncate font-medium ${TYPE_COLORS[evt.type] ?? "text-zinc-500"}`}>{LABELS[evt.type] ?? evt.type}</span>
+          <span className="min-w-0 flex-1 break-words text-zinc-700 dark:text-zinc-300">
             {evt.summary}
             {evt.agent_id && <span className="ml-1 font-mono text-[10px] text-zinc-400">{evt.agent_id}</span>}
           </span>

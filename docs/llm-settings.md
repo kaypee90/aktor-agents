@@ -36,6 +36,13 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
    agents depend on it.
 6. **Make default** picks the model tasks use when they don't choose one.
 
+A model's **id** (its `@handle`, and what stages and tasks store) comes from its name: "GPT-5 mini
+(cheap)" is `gpt-5-mini-cheap`. Renaming a model gives it the id of its new name (unless another
+model has it), and the organization's workspace pipelines (every saved version, and `@mentions` in
+stage instructions), saved templates, and recorded tasks, agents and studies follow. The old id
+stays as an alias, so a running agent or anything still naming it gets the renamed model. A model
+renamed before ids followed names gets its new id the next time it's saved.
+
 ## Picking a model for a task
 
 - **When starting:** the task composer has a model picker showing each model's price. The cost
@@ -113,7 +120,7 @@ reasoning), or leave it out.
 |---|---|---|---|
 | GET | `/api/llm/settings` | any | The server default, the organization's models (never their keys) and the default. |
 | POST | `/api/llm/profiles` | Admin | `{name, description, provider, model, fast_model, base_url, api_key, price_per_input_token_usd, …, make_default}`. |
-| PUT / DELETE | `/api/llm/profiles/{id}` | Admin | Edit (a key left out is kept) or delete a model. |
+| PUT / DELETE | `/api/llm/profiles/{id}` | Admin | Edit (a key left out is kept; a new name renames the id) or delete a model. |
 | PUT | `/api/llm/default` | Admin | `{profile_id}`; `"server"` for the server's configuration. |
 | PUT | `/api/llm/agent-choice` | Admin | `{enabled}`: whether agents may pick models for the agents they spawn. |
 | DELETE | `/api/llm/settings` | Admin | Delete every model and key: back to the server default. |

@@ -19,8 +19,10 @@ const EXAMPLES = [
 ];
 
 export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => void }) {
-  const [name, setName] = useState(EXAMPLES[0].name);
-  const [goal, setGoal] = useState(EXAMPLES[0].goal);
+  // "describe": a pipeline is drafted from the goal; "blank": an empty canvas to build on.
+  const [mode, setMode] = useState<"describe" | "blank">("blank");
+  const [name, setName] = useState("New workspace");
+  const [goal, setGoal] = useState("");
   const [tokens, setTokens] = useState(500_000);
   const [dollars, setDollars] = useState(2);
   const [busy, setBusy] = useState(false);
@@ -51,7 +53,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
     setBusy(true);
     setError(null);
     try {
-      const { workspace_id } = await createWorkspace({ name, goal, daily_token_limit: tokens, daily_cost_limit_usd: dollars, visibility });
+      const { workspace_id } = await createWorkspace({ name, goal, blank: mode === "blank", daily_token_limit: tokens, daily_cost_limit_usd: dollars, visibility });
       onCreated(workspace_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create workspace");
@@ -71,8 +73,9 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
       <div>
         <h2 className="text-base font-semibold">New workspace</h2>
         <p className="text-xs text-zinc-500">
-          Describe a job you want done again and again. A pipeline of agents is drafted from it; change any stage in plain
-          language or on the canvas, then run it with an input, or add a schedule, webhook, watch or form to run it automatically.
+          A pipeline for a job you want done again and again. Build it on a blank canvas, or describe the job and have one
+          drafted. Change any stage in plain language or on the canvas, then run it with an input, or add a schedule,
+          webhook, watch or form to run it automatically.
         </p>
       </div>
       <div className="space-y-1 text-xs">
@@ -110,22 +113,43 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
           </label>
         </div>
       )}
-      <div className="flex flex-wrap gap-1">
-        {EXAMPLES.map((ex) => (
-          <button key={ex.name} type="button" onClick={() => { setName(ex.name); setGoal(ex.goal); }}
-            className="rounded-full border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
-            {ex.name}
+      <div className="inline-flex rounded-lg border border-zinc-200 p-0.5 text-xs dark:border-zinc-800" role="radiogroup" aria-label="How to start">
+        {([
+          { value: "blank", label: "Blank canvas", hint: "Start empty and build the pipeline yourself on the canvas" },
+          { value: "describe", label: "Describe it", hint: "A pipeline of agents is drafted from what you write" },
+        ] as const).map((m) => (
+          <button key={m.value} type="button" role="radio" aria-checked={mode === m.value} title={m.hint} disabled={busy}
+            onClick={() => {
+              setMode(m.value);
+              // The examples' goals describe a pipeline to draft; a blank canvas starts with none.
+              if (m.value === "blank" && EXAMPLES.some((ex) => ex.goal === goal)) { setName("New workspace"); setGoal(""); }
+              if (m.value === "describe" && !goal.trim()) { setName(EXAMPLES[0].name); setGoal(EXAMPLES[0].goal); }
+            }}
+            className={`rounded-md px-3 py-1 font-medium ${mode === m.value ? "bg-brand-500 text-white" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"}`}>
+            {m.label}
           </button>
         ))}
       </div>
+      {mode === "describe" && (
+        <div className="flex flex-wrap gap-1">
+          {EXAMPLES.map((ex) => (
+            <button key={ex.name} type="button" onClick={() => { setName(ex.name); setGoal(ex.goal); }}
+              className="rounded-full border border-zinc-300 px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+              {ex.name}
+            </button>
+          ))}
+        </div>
+      )}
       <label className="block space-y-1 text-xs">
         <span className="text-zinc-500">Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} className={input} />
       </label>
       <label className="block space-y-1 text-xs">
-        <span className="text-zinc-500">What is this pipeline for?</span>
+        <span className="text-zinc-500">What is this pipeline for?{mode === "blank" && " (optional)"}</span>
         <MentionTextarea value={goal} onValueChange={setGoal} rows={4} className={`${input} block`} mentionables={models}
-          placeholder="e.g. Turn each new support ticket into a drafted reply; use @default-model for the drafting. (@ to mention a model or skill)" />
+          placeholder={mode === "blank"
+            ? "Optional: a line about what it's for, so its agents know the purpose."
+            : "e.g. Turn each new support ticket into a drafted reply; use @default-model for the drafting. (@ to mention a model or skill)"} />
       </label>
       <div className="grid grid-cols-2 gap-3 text-xs">
         <label className="space-y-1">
@@ -142,8 +166,8 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
         runtime enforces it, not the agents.
       </p>
       {error && <div className="rounded border border-rose-300 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">{error}</div>}
-      <button type="submit" disabled={busy || !goal.trim()} className="rounded bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-        {busy ? "Drafting the pipeline…" : "Create workspace"}
+      <button type="submit" disabled={busy || (mode === "describe" && !goal.trim())} className="rounded bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+        {mode === "blank" ? (busy ? "Creating…" : "Create with a blank canvas") : busy ? "Drafting the pipeline…" : "Create workspace"}
       </button>
     </form>
   );

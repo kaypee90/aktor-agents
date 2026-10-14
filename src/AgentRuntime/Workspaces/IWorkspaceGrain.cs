@@ -62,6 +62,10 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// <summary>Makes an earlier version current again (as a new version).</summary>
     Task<PipelineChangeResult> RestorePipelineVersion(int version, string changedBy);
 
+    /// <summary>A model profile got a new id: stages on it (in every saved version) and mentions of
+    /// it follow, in place, without a new version. True when anything named it.</summary>
+    Task<bool> RenameModelProfile(string oldId, string newId);
+
     /// <summary>Starts a run with <paramref name="input"/>, or queues it if the pipeline's
     /// runs-at-once limit is reached or the workspace is paused.</summary>
     Task<RunStartResult> StartRun(string input, string startedBy);
@@ -125,6 +129,10 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     Task SetVisibility(WorkspaceVisibility visibility, string changedBy);
 
     Task UpdateBudget(int? dailyTokenLimit, decimal? dailyCostLimitUsd);
+
+    /// <summary>Replaces the workspace's variables (<see cref="WorkspaceVariables"/>); the problems
+    /// when they can't be saved (nothing changes then). Runs already started keep the old values.</summary>
+    Task<List<string>> SetVariables(Dictionary<string, string> variables, string changedBy);
 
     Task Pause();
 

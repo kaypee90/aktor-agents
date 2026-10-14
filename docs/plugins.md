@@ -28,7 +28,7 @@ flowchart LR
 |---|---|---|---|---|
 | **MCP server** (`mcp`) | the server's tools | | | Any MCP server over Streamable HTTP (or SSE). Launched-as-a-command (stdio) servers run in an isolated Docker container and must be enabled with `Integrations:AllowStdioMcp`. |
 | **HTTP API** (`http-api`) | `get`, and `send` if writes are allowed; plus one tool per [endpoint](#endpoints-for-an-http-api) you add | | | Any REST API behind one base URL and auth header, e.g. **Shopify Admin** (`X-Shopify-Access-Token`) or Stripe. |
-| **Slack** (`slack`) | `post_message` | ✓ | | Incoming webhook. |
+| **Slack** (`slack`) | `post_message`; with a bot token also `list_channels`, `read_messages` | ✓ | | Bot token (`xoxb-`, any channel the bot is in, thread replies, a default channel for notifications) or an incoming webhook (one channel, post only). |
 | **SMS (Twilio)** (`twilio-sms`) | `send_sms` | ✓ | ✓ | Verifies `X-Twilio-Signature` when `PUBLIC_BASE_URL` is set. |
 | **Email (SMTP)** (`email-smtp`) | `send_email` | ✓ | | STARTTLS on 587. A stable Message-ID per notification lets receivers spot retried duplicates. |
 | **Telegram** (`telegram`) | `send_message` | ✓ | ✓ | Registers its webhook with a per-connection secret token when `PUBLIC_BASE_URL` is set. |
@@ -42,7 +42,16 @@ flowchart LR
 
 The data connectors (Sheets, BigQuery, Airtable, Zoho CRM) are described in
 [workflows.md](workflows.md#connectors), along with action stages that call their tools without a
-model.
+model. Each built-in plugin shows its logo on the Integrations tab (where services are picked from
+a grid of logos) and on the canvas; a plugin from the plugins folder gets a lettered tile.
+
+**Slack setup.** For a bot token: create an app at api.slack.com/apps, add the bot scopes
+`chat:write`, `channels:read` and `channels:history` (`groups:*` too for private channels), install
+it, paste the `xoxb-` token, and `/invite` the bot to its channels. `post_message` takes a channel
+id or `#name` (else the default channel) and an optional `thread_ts` to reply in a thread;
+`read_messages` returns recent messages as untrusted input. Slack's own errors come back readable
+("the bot isn't in that channel. /invite it there first"). A connection with only an incoming
+webhook posts to that webhook's channel and offers `post_message` alone.
 
 Nothing in the platform is tied to a particular business domain. Connections, tools, watches,
 schedules and webhooks are general building blocks, and what a workspace does comes from your
@@ -50,18 +59,20 @@ instructions plus the services you connect. Two examples:
 
 ### Example: support triage (webhook, no polling)
 
-1. Create a workspace: "For each support ticket: classify its urgency, find the relevant help-centre
-   answer, and draft a reply." A pipeline is drafted (e.g. Classify → Research → Draft).
+1. Create a workspace with **Describe it**: "For each support ticket: classify its urgency, find the
+   relevant help-centre answer, and draft a reply." A pipeline is drafted (e.g. Classify → Research
+   → Draft). (A new workspace starts on a blank canvas unless you pick *Describe it*.)
 2. **Triggers → Webhook**: its secret URL is shown once. Point your helpdesk's "new ticket" webhook
    at it.
 3. Connect **Slack** (notifications: everything) and **SMS** (notifications: urgent only), and set
-   the pipeline's result urgency (Run settings).
+   the pipeline's result urgency (Run settings). With a Slack bot token, notifications go to the
+   connection's default channel; with a webhook, to the webhook's channel.
 4. Each ticket starts a run with the ticket as untrusted input; the result goes to Slack, and to
    your phone when urgent.
 
 ### Example: a store inventory monitor
 
-1. Create a workspace: "Work out reorder quantities for low-stock products, with a draft purchase
+1. Create a workspace with **Describe it**: "Work out reorder quantities for low-stock products, with a draft purchase
    order."
 2. **Integrations → Add connection → HTTP API**:
    - name `shop`

@@ -27,6 +27,26 @@ public static partial class Mentions
     [GeneratedRegex(@"(?<![\w.@])@([A-Za-z0-9][A-Za-z0-9._:/-]*[A-Za-z0-9]|[A-Za-z0-9])")]
     private static partial Regex Handle();
 
+    /// <summary><paramref name="text"/> with every <c>@oldId</c> mention written as <c>@newId</c>.</summary>
+    public static string RenameHandle(string text, string oldId, string newId) =>
+        string.IsNullOrEmpty(text) ? text : Handle().Replace(text, m => Same(m.Groups[1].Value, oldId) ? "@" + newId : m.Value);
+
+    /// <summary>A pipeline with a renamed model profile: stages that run on it, and mentions of it in
+    /// their instructions. The same pipeline (by reference) when nothing names it.</summary>
+    public static PipelineDefinition RenameModel(PipelineDefinition pipeline, string oldId, string newId)
+    {
+        var changed = false;
+        var stages = pipeline.Stages.Select(stage =>
+        {
+            var instructions = RenameHandle(stage.Instructions, oldId, newId);
+            var profile = stage.ModelProfileId == oldId ? newId : stage.ModelProfileId;
+            if (instructions == stage.Instructions && profile == stage.ModelProfileId) return stage;
+            changed = true;
+            return stage with { Instructions = instructions, ModelProfileId = profile };
+        }).ToList();
+        return changed ? pipeline with { Stages = stages } : pipeline;
+    }
+
     /// <summary>The distinct handles in <paramref name="text"/>, in order, without the @.</summary>
     public static List<string> Find(string? text) =>
         string.IsNullOrEmpty(text)

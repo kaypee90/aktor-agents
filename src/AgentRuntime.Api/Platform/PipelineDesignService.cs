@@ -81,6 +81,12 @@ public sealed class PipelineDesignService(
         if (proposal is null) return new PipelineProposal { BaseVersion = current?.Version ?? 0, Errors = [error!] };
 
         var applied = PipelineEditor.Apply(current ?? new PipelineDefinition(), proposal.Ops, options.Value);
+        // A person may clear the canvas; the editor is asked for a pipeline, so it must leave one.
+        if (applied.Pipeline is { Stages.Count: 0 })
+        {
+            applied = applied with { Pipeline = null, Errors = [.. applied.Errors, "The proposal leaves the pipeline with no stages."] };
+        }
+
         if (applied.Pipeline?.Stages.Select(s => s.ModelProfileId).FirstOrDefault(m => m is not null && !models.Any(x => x.Id == m)) is { } unknown)
         {
             applied = applied with { Pipeline = null, Errors = [.. applied.Errors, $"There's no model '{unknown}'. Use one of: {string.Join(", ", models.Select(m => m.Id))}."] };

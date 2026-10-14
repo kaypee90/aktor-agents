@@ -38,7 +38,7 @@ function parse(json: string | null | undefined): unknown {
 }
 
 /** The data a stage would see in `run`: what a script can be tried on before it's saved. */
-function sampleFor(stage: Pick<PipelineStage, "inputs">, run: PipelineRunView) {
+function sampleFor(stage: Pick<PipelineStage, "inputs">, run: PipelineRunView, vars: Record<string, string>) {
   const stages: Record<string, unknown> = {};
   for (const s of run.stages) if (s.status === "Completed") stages[s.stage_id] = s.output_json ? parse(s.output_json) : { summary: s.summary };
   return {
@@ -46,6 +46,7 @@ function sampleFor(stage: Pick<PipelineStage, "inputs">, run: PipelineRunView) {
     stages,
     previous: stage.inputs.length === 1 ? stages[stage.inputs[0]] ?? null : null,
     run: { id: run.run_id, number: run.number, source: run.source, trigger: run.trigger_name },
+    vars,
   };
 }
 
@@ -156,7 +157,6 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   const onInsert = useCallback((where: { after?: string; before?: string }) => setInserting(where), []);
   const onRemove = useCallback((stageId: string) => {
     const name = pipeline.stages.find((s) => s.stage_id === stageId)?.name ?? stageId;
-    if (pipeline.stages.length <= 1) { setError("A pipeline needs at least one stage."); return; }
     if (!confirm(`Remove '${name}'? The stages around it are joined up.`)) return;
     setSelected(null);
     void apply([{ op: "remove_stage", stage_id: stageId }], pipeline.version);
@@ -221,6 +221,7 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   const selectedStage = selected ? shown.stages.find((s) => s.stage_id === selected) : undefined;
   const trigger = selectedTrigger === "manual" ? null : workspace.triggers.find((t) => t.trigger_id === selectedTrigger);
   const stageIds = pipeline.stages.map((s) => s.stage_id);
+  const variableNames = Object.keys(workspace.variables ?? {}).sort();
   const formUrl = (triggerId: string) => `/forms?workspace=${encodeURIComponent(workspaceId)}&trigger=${encodeURIComponent(triggerId)}`;
   const selectedRun = selected && run ? run.stages.find((s) => s.stage_id === selected) : undefined;
 
@@ -396,7 +397,8 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
                   workspaceId={workspaceId}
                   connections={connections}
                   stageIds={stageIds.filter((id) => id !== selectedStage.stage_id)}
-                  sampleData={latestRun ? sampleFor(selectedStage, latestRun) : undefined}
+                  variables={variableNames}
+                  sampleData={latestRun ? sampleFor(selectedStage, latestRun, workspace.variables ?? {}) : undefined}
                   focus={focus === "model" || focus === "tools" ? focus : null}
                   submitLabel="Save stage"
                   busy={busy === "edit"}
@@ -424,8 +426,8 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
       >
         {inserting && (
           <StageEditor stage={newStage(inserting.kind)} submitLabel="Add stage" busy={busy === "edit"} onSubmit={addStage} onCancel={() => setInserting(null)}
-            mentionables={mentionables} workspaceId={workspaceId} connections={connections} stageIds={stageIds}
-            sampleData={latestRun ? sampleFor({ inputs: inserting.inputs ?? (inserting.after ? [inserting.after] : []) }, latestRun) : undefined} />
+            mentionables={mentionables} workspaceId={workspaceId} connections={connections} stageIds={stageIds} variables={variableNames}
+            sampleData={latestRun ? sampleFor({ inputs: inserting.inputs ?? (inserting.after ? [inserting.after] : []) }, latestRun, workspace.variables ?? {}) : undefined} />
         )}
       </Modal>
 

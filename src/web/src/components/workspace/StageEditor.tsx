@@ -8,6 +8,7 @@ import { MentionTextarea, useModelChoices, type Mentionable } from "@/components
 import { apiErrorMessage, testScript, type ScriptTestResult } from "@/lib/api";
 import { StageKindIcon } from "./StageKindIcon";
 import { STAGE_COLORS, type StageColor } from "./stageColors";
+import { ConnectorIcon } from "./ConnectorIcon";
 
 /** A blank stage for the "add a stage" form. */
 export const NEW_STAGE: StagePatch & { name: string } = {
@@ -25,7 +26,7 @@ export const NEW_STAGE: StagePatch & { name: string } = {
 
 export const SCRIPT_TEMPLATES: Record<ScriptLanguage, string> = {
   python: `# data has: input (the run's input), stages (earlier stages' outputs by id),
-# previous (the output of the stage before this one) and run.
+# previous (the output of the stage before this one), run and vars (the workspace's variables).
 # What you return is this stage's output.
 rows = (data.get("previous") or {}).get("rows", [])
 return [
@@ -34,7 +35,7 @@ return [
     if r.get("Email")
 ]`,
   javascript: `// data has: input (the run's input), stages (earlier stages' outputs by id),
-// previous (the output of the stage before this one) and run.
+// previous (the output of the stage before this one), run and vars (the workspace's variables).
 // What you return is this stage's output.
 const rows = data.previous?.rows ?? [];
 return rows
@@ -85,7 +86,7 @@ function jsonProblem(text: string): string | null {
  * freedom it has. An action: which connected service's tool it calls and with what. A script: its
  * code, which can be tried on sample data before saving. The runtime checks every value when saved.
  */
-export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel, onRemove, busy, mentionables = [], workspaceId, connections = [], stageIds = [], sampleData, focus }: {
+export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel, onRemove, busy, mentionables = [], workspaceId, connections = [], stageIds = [], variables = [], sampleData, focus }: {
   stage: StagePatch & { name: string };
   /** Names of the stages this one takes input from, to show where it sits. */
   stageNames?: string[];
@@ -102,6 +103,8 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
   connections?: ConnectionView[];
   /** The pipeline's stage ids, for expressions like stages.<id>. */
   stageIds?: string[];
+  /** The workspace's variable names, for expressions like vars.<name>. */
+  variables?: string[];
   /** Data to try a script on (the latest run's, when there is one). */
   sampleData?: unknown;
   /** Which part of the stage to scroll to (an agent's model or tools, from the canvas). */
@@ -121,7 +124,7 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
   // The API lists tools as agents see them ("sheets__read_rows"); older responses had the plugin's own name.
   const tools = useMemo(() => connections.flatMap((c) => c.tools.filter((t) => t.enabled).map((t) => {
     const exposed = t.name.includes("__") ? t.name : `${c.name}__${t.name}`;
-    return { ...t, name: exposed.slice(exposed.indexOf("__") + 2), connection: c.name, exposed };
+    return { ...t, name: exposed.slice(exposed.indexOf("__") + 2), connection: c.name, pluginId: c.plugin_id, exposed };
   })), [connections]);
   const chosenTool = tools.find((t) => t.exposed === draft.tool);
   const argsProblem = kind === "Action" ? jsonProblem(draft.arguments ?? "") : null;
@@ -180,7 +183,8 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
               <input className={inputClass} value={draft.role ?? ""} onChange={(e) => set("role", e.target.value)} placeholder="e.g. Security reviewer" />
             </Field>
           </div>
-          <Field label="Instructions" hint="What the agent does with the run's input and earlier stages' results, for whom, to what standard.">
+          <Field label="Instructions" hint={`What the agent does with the run's input and earlier stages' results, for whom, to what standard.${
+            variables.length > 0 ? ` {{ vars.name }} is filled in from the workspace's variables (${variables.join(", ")}).` : ""}`}>
             <MentionTextarea className={cx(inputClass, "min-h-28 resize-y")} value={draft.instructions ?? ""} onValueChange={(v) => set("instructions", v)}
               mentionables={mentionables.filter((m) => m.kind === "agent" || m.kind === "skill")}
               placeholder="Review @backend's changes for security issues (auth, injection, secrets) and list what must be fixed before release. Type @ to mention a stage or a skill: the agent loads a mentioned skill first." />
@@ -236,7 +240,7 @@ export function StageEditor({ stage, stageNames, submitLabel, onSubmit, onCancel
               placeholder={kind === "Action" ? "e.g. Add to the leads sheet" : "e.g. Clean up the rows"} autoFocus />
           </Field>
           {kind === "Action" ? (
-            <ActionFields draft={draft} set={set} tools={tools} chosen={chosenTool} argsProblem={argsProblem} stageIds={stageIds} />
+            <ActionFields draft={draft} set={set} tools={tools} chosen={chosenTool} argsProblem={argsProblem} stageIds={stageIds} variables={variables} />
           ) : (
             <ScriptFields draft={draft} set={set} workspaceId={workspaceId} sampleData={sampleData} />
           )}
@@ -283,10 +287,10 @@ function ColorPicker({ value, onChange }: { value: string | null; onChange: (col
 
 type Draft = StagePatch & { name: string };
 type Setter = <K extends keyof PipelineStage>(key: K, value: PipelineStage[K]) => void;
-type ToolChoice = { name: string; description: string; side_effects: string; connection: string; exposed: string };
+type ToolChoice = { name: string; description: string; side_effects: string; connection: string; pluginId: string; exposed: string };
 
-function ActionFields({ draft, set, tools, chosen, argsProblem, stageIds }: {
-  draft: Draft; set: Setter; tools: ToolChoice[]; chosen?: ToolChoice; argsProblem: string | null; stageIds: string[];
+function ActionFields({ draft, set, tools, chosen, argsProblem, stageIds, variables }: {
+  draft: Draft; set: Setter; tools: ToolChoice[]; chosen?: ToolChoice; argsProblem: string | null; stageIds: string[]; variables: string[];
 }) {
   const byConnection = useMemo(() => {
     const groups = new Map<string, ToolChoice[]>();
@@ -300,18 +304,21 @@ function ActionFields({ draft, set, tools, chosen, argsProblem, stageIds }: {
       <Field label="Call" hint="A tool of one of the workspace's connections (Integrations tab).">
         {tools.length === 0 ? (
           <p className="rounded-lg border border-dashed border-zinc-300 p-2 text-xs text-zinc-500 dark:border-zinc-700">
-            No connection tools yet. Add a connection (Google Sheets, Airtable, BigQuery, Zoho CRM, any REST API…) on the Integrations tab first.
+            No connection tools yet. Add a connection (Slack, Google Sheets, Airtable, BigQuery, Zoho CRM, any REST API…) on the Integrations tab first.
           </p>
         ) : (
-          <select className={inputClass} value={draft.tool ?? ""} onChange={(e) => set("tool", e.target.value)}>
-            <option value="" disabled>Choose a tool…</option>
-            {draft.tool && !chosen && <option value={draft.tool}>{draft.tool} (not available now)</option>}
-            {byConnection.map(([connection, list]) => (
-              <optgroup key={connection} label={connection}>
-                {list.map((t) => <option key={t.exposed} value={t.exposed}>{t.name}</option>)}
-              </optgroup>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            {chosen && <ConnectorIcon pluginId={chosen.pluginId} name={chosen.connection} className="h-5 w-5" />}
+            <select className={inputClass} value={draft.tool ?? ""} onChange={(e) => set("tool", e.target.value)}>
+              <option value="" disabled>Choose a tool…</option>
+              {draft.tool && !chosen && <option value={draft.tool}>{draft.tool} (not available now)</option>}
+              {byConnection.map(([connection, list]) => (
+                <optgroup key={connection} label={connection}>
+                  {list.map((t) => <option key={t.exposed} value={t.exposed}>{t.name}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
         )}
         {chosen && (
           <p className="mt-1 text-[11px] text-zinc-500">
@@ -329,12 +336,12 @@ function ActionFields({ draft, set, tools, chosen, argsProblem, stageIds }: {
         <input className={cx(inputClass, "font-mono text-xs")} value={draft.for_each ?? ""} onChange={(e) => set("for_each", e.target.value)}
           placeholder="e.g. previous.rows or input.contacts" />
       </Field>
-      <ExpressionHelp stageIds={stageIds} />
+      <ExpressionHelp stageIds={stageIds} variables={variables} />
     </>
   );
 }
 
-function ExpressionHelp({ stageIds }: { stageIds: string[] }) {
+function ExpressionHelp({ stageIds, variables }: { stageIds: string[]; variables: string[] }) {
   return (
     <details className="rounded-lg bg-zinc-50 p-2 text-[11px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
       <summary className="cursor-pointer select-none font-medium">What can {"{{ expressions }}"} use?</summary>
@@ -344,19 +351,21 @@ function ExpressionHelp({ stageIds }: { stageIds: string[] }) {
         <li><span className="text-brand-600 dark:text-brand-400">stages.&lt;id&gt;</span>: any earlier stage&apos;s output</li>
         <li><span className="text-brand-600 dark:text-brand-400">item</span>, <span className="text-brand-600 dark:text-brand-400">index</span>: with For each</li>
         <li><span className="text-brand-600 dark:text-brand-400">run</span>: id, number, source, trigger</li>
+        <li><span className="text-brand-600 dark:text-brand-400">vars</span>: the workspace&apos;s variables (vars.email_recipient), set on the Variables tab</li>
       </ul>
       <p className="mt-1.5">
         Paths: <code>.name</code>, <code>[0]</code>, <code>[&apos;Full name&apos;]</code>, <code>[*]</code>. A value that is only an expression keeps its type
         (a list stays a list); inside other text it&apos;s written in.
       </p>
       {stageIds.length > 0 && <p className="mt-1">Stage ids: {stageIds.map((id) => <code key={id} className="mr-1">{id}</code>)}</p>}
+      {variables.length > 0 && <p className="mt-1">Variables: {variables.map((v) => <code key={v} className="mr-1">vars.{v}</code>)}</p>}
     </details>
   );
 }
 
 function ScriptFields({ draft, set, workspaceId, sampleData }: { draft: Draft; set: Setter; workspaceId?: string; sampleData?: unknown }) {
   const language = (draft.language ?? "python") as ScriptLanguage;
-  const [sample, setSample] = useState(() => JSON.stringify(sampleData ?? { input: {}, stages: {}, previous: null, run: {} }, null, 2));
+  const [sample, setSample] = useState(() => JSON.stringify(sampleData ?? { input: {}, stages: {}, previous: null, run: {}, vars: {} }, null, 2));
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ScriptTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);

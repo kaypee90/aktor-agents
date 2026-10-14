@@ -288,7 +288,7 @@ public sealed class PipelineRunGrain(
             WorkspaceId = R.WorkspaceId,
             TenantId = R.TenantId,
             Stage = stage,
-            Goal = stage.Instructions,
+            Goal = PipelineExpressions.RenderVariables(stage.Instructions, R.Variables),
             InitialContext = BuildContext(stage, run),
             Budget = budget,
             // Helpers per stage; the run's own entry (depth 0) isn't checked against team rules.
@@ -572,6 +572,7 @@ public sealed class PipelineRunGrain(
             ["input"] = R.InputData is { } data ? ParseLenient(data) : JsonValue.Create(R.Input),
             ["stages"] = stages,
             ["previous"] = previous,
+            ["vars"] = new JsonObject(R.Variables.Select(v => KeyValuePair.Create(v.Key, (JsonNode?)JsonValue.Create(v.Value)))),
             ["run"] = new JsonObject
             {
                 ["id"] = RunId,
@@ -655,6 +656,14 @@ public sealed class PipelineRunGrain(
                 if (result.Artifacts.Count > 0) sb.AppendLine($"Files it saved (read them with filesystem_read): {string.Join(", ", result.Artifacts)}");
                 sb.AppendLine();
             }
+        }
+
+        if (R.Variables.Count > 0)
+        {
+            sb.AppendLine("## Workspace variables (settings for every stage; use these values rather than asking or searching for them)");
+            var each = Math.Max(200, budget / 6 / R.Variables.Count);
+            foreach (var (name, value) in R.Variables.OrderBy(v => v.Key)) sb.AppendLine($"- {name}: {Clip(value, each)}");
+            sb.AppendLine();
         }
 
         // "@diagnose" in the input or the instructions: say which stage that is.

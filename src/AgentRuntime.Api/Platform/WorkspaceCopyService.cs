@@ -84,7 +84,8 @@ public sealed class WorkspaceCopyService(
             SafetyPolicy = definition.SafetyPolicy,
             Pipeline = definition.Pipeline,
             CreatedBy = ownerId,
-            Visibility = visibility
+            Visibility = visibility,
+            Variables = definition.Variables
         });
 
         var connections = new List<object>();

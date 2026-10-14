@@ -31,6 +31,7 @@ import type { ModelChoice } from "@/lib/api";
 import { mentionsIn } from "@/components/ui/MentionTextarea";
 import { PartIcon, StageKindIcon, TriggerIcon } from "./StageKindIcon";
 import { colorOf } from "./stageColors";
+import { ConnectorIcon, connectionOfTool } from "./ConnectorIcon";
 
 const COLUMN = 290;
 const ROW = 150;
@@ -43,7 +44,10 @@ const TRIGGER_WIDTH = 170;
 /** The parts attached to an agent, as in n8n: what it thinks with, acts with, and remembers. */
 export type AgentPart = "model" | "tools" | "memory";
 
-type PartNodeData = { part: AgentPart; label: string; detail: string; title: string };
+/** A connection shown by its mark: on an action that calls it, and under an agent's tools. */
+type ConnectorMark = { pluginId: string; name: string };
+
+type PartNodeData = { part: AgentPart; label: string; detail: string; title: string; connectors?: ConnectorMark[] };
 type TriggerNodeData = { kind: string; name: string; detail: string };
 
 const KIND_STYLE: Record<StageKind, { icon: string; label: string }> = {
@@ -67,6 +71,10 @@ type StageNodeData = {
   onRemove?: () => void;
   /** Whether the agent's model, tools and memory hang below it. */
   parts?: boolean;
+  /** For an action: the connection whose tool it calls. */
+  connector?: ConnectorMark;
+  /** The model the stage's profile runs on (a profile keeps its id when its model changes). */
+  model?: { label: string; title: string };
 };
 
 type InsertEdgeData = { onInsert?: () => void; onDisconnect?: () => void; active: boolean };
@@ -152,7 +160,7 @@ function describe(stage: PipelineStage): { subtitle: string; body: string } {
   const kind = kindOf(stage);
   if (kind === "Action") {
     return {
-      subtitle: stage.tool ? stage.tool.replace("__", " · ") : "No tool chosen",
+      subtitle: stage.tool ? stage.tool.replace("__", " · ").replaceAll("_", " ") : "No tool chosen",
       body: stage.for_each ? `For each item of ${stage.for_each}` : "Calls the tool once per run",
     };
   }
@@ -190,8 +198,10 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
       <Handle type="target" id="in" position={Position.Left} isConnectable={editable} title={editable ? "Drop a connection here: this stage takes that stage's result" : undefined}
         className={editable ? "!h-3.5 !w-3.5 !border-2 !border-white !bg-zinc-400 hover:!bg-brand-500 dark:!border-zinc-900" : "!h-2 !w-2 !border-0 !bg-zinc-400 dark:!bg-zinc-600"} />
       <div className="flex items-center gap-2.5">
-        <span className={cx("relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", KIND_STYLE[kind].icon)}>
-          <StageKindIcon kind={kind} className="h-4.5 w-4.5" />
+        <span className={cx("relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+          data.connector ? "border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-100" : KIND_STYLE[kind].icon)}
+          title={data.connector ? `${data.connector.name} connection` : undefined}>
+          {data.connector ? <ConnectorIcon pluginId={data.connector.pluginId} name={data.connector.name} className="h-5 w-5" /> : <StageKindIcon kind={kind} className="h-4.5 w-4.5" />}
           {working && (
             <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5" title="Working on this run">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -219,7 +229,7 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
           </span>
         )}
         {!status && stage.max_helpers > 0 && <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">{stage.max_helpers} helper{stage.max_helpers > 1 ? "s" : ""}</span>}
-        {!status && stage.model_profile_id && <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" title="Runs on this model">@{stage.model_profile_id === "server" ? "default-model" : stage.model_profile_id}</span>}
+        {!status && data.model && <span className="max-w-full truncate rounded-full bg-violet-50 px-1.5 py-0.5 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" title={data.model.title}>{data.model.label}</span>}
         {!status && mentionsIn(stage.instructions).filter((h) => h.startsWith("skill:")).map((h) => (
           <span key={h} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" title="Loads and follows this skill">{h.slice(6)}</span>
         ))}
@@ -263,7 +273,18 @@ function PartNode({ data }: NodeProps & { data: PartNodeData }) {
         <PartIcon part={data.part} className="h-4 w-4" />
       </span>
       <span className="mt-1 text-[10px] font-medium text-zinc-700 dark:text-zinc-300">{data.label}</span>
-      <span className="w-full truncate text-[9px] leading-tight text-zinc-500">{data.detail}</span>
+      {data.connectors && data.connectors.length > 0 ? (
+        <span className="mt-0.5 flex items-center -space-x-1">
+          {data.connectors.slice(0, 3).map((c) => (
+            <span key={c.name} className="flex h-4 w-4 items-center justify-center rounded-full border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-100">
+              <ConnectorIcon pluginId={c.pluginId} name={c.name} className="h-2.5 w-2.5" />
+            </span>
+          ))}
+          {data.connectors.length > 3 && <span className="pl-1.5 text-[9px] text-zinc-500">+{data.connectors.length - 3}</span>}
+        </span>
+      ) : (
+        <span className="w-full truncate text-[9px] leading-tight text-zinc-500">{data.detail}</span>
+      )}
     </div>
   );
 }
@@ -335,12 +356,24 @@ const PART_ID = "part:";
 const TRIGGER_ID = "trigger:";
 const isStageNode = (id: string) => !id.startsWith(PART_ID) && !id.startsWith(TRIGGER_ID);
 
+/** An agent's chosen model as its stage shows it: the profile's model, not its id. */
+function modelOf(stage: PipelineStage, models: ModelChoice[]): StageNodeData["model"] {
+  const id = stage.model_profile_id;
+  if (!id) return undefined;
+  const profile = models.find((m) => m.id === id);
+  if (!profile) return { label: id === "server" ? "default model" : `@${id}`, title: id === "server" ? "Runs on the server's default model" : `Model profile '${id}' (no longer exists)` };
+  return { label: profile.model, title: `Runs on ${profile.name} (${profile.provider} · ${profile.model}). Mention: @${id === "server" ? "default-model" : id}` };
+}
+
+const markOf = (c?: ConnectionView): ConnectorMark | undefined => c && { pluginId: c.plugin_id, name: c.name };
+
 /** What an agent's parts say: which model it runs on, which tools it has, what it remembers. */
 function partsOf(stage: PipelineStage, models: ModelChoice[], connections: ConnectionView[]): PartNodeData[] {
   const chosen = stage.model_profile_id ? models.find((m) => m.id === stage.model_profile_id) : undefined;
   const fallback = models.find((m) => m.is_default) ?? models[0];
   const model = chosen ?? fallback;
-  const tools = stage.capabilities.length + connections.filter((c) => c.supports_tools).length;
+  const withTools = connections.filter((c) => c.supports_tools);
+  const tools = stage.capabilities.length + withTools.length;
   return [
     {
       part: "model",
@@ -352,7 +385,8 @@ function partsOf(stage: PipelineStage, models: ModelChoice[], connections: Conne
       part: "tools",
       label: "Tools",
       detail: `${tools} + files`,
-      title: `Capabilities: ${stage.capabilities.join(", ") || "none"}. Connections: ${connections.filter((c) => c.supports_tools).map((c) => c.name).join(", ") || "none"}. Click to change.`,
+      title: `Capabilities: ${stage.capabilities.join(", ") || "none"}. Connections: ${withTools.map((c) => c.name).join(", ") || "none"}. Click to change.`,
+      connectors: withTools.map((c) => ({ pluginId: c.plugin_id, name: c.name })),
     },
     {
       part: "memory",
@@ -468,6 +502,8 @@ function Canvas({
             entry: stage.inputs.length === 0,
             output: !hasDependents.has(stage.stage_id),
             parts: showParts && kindOf(stage) === "Agent",
+            connector: kindOf(stage) === "Action" ? markOf(connectionOfTool(stage.tool, connections)) : undefined,
+            model: modelOf(stage, models),
             onAddBefore: () => editing?.onInsert({ before: stage.stage_id }),
             onAddAfter: () => editing?.onInsert({ after: stage.stage_id }),
             onRemove: () => editing?.onRemove(stage.stage_id),
@@ -679,6 +715,16 @@ function Canvas({
               <span className={cx("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all", showParts ? "left-3.5" : "left-0.5")} />
             </span>
           </button>
+        </Panel>
+      )}
+      {pipeline.stages.length === 0 && (
+        <Panel position="top-center" className="!mt-24">
+          <div className="max-w-sm rounded-xl border border-dashed border-zinc-300 bg-white/90 p-4 text-center text-xs text-zinc-500 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/90">
+            <div className="mb-1 text-sm font-semibold text-zinc-700 dark:text-zinc-200">A blank canvas</div>
+            {editing
+              ? <>Drag a <b>New agent</b>, <b>Action</b> or <b>Script</b> from the top left onto the canvas (or click one), then connect stages by dragging between their dots. Or describe the pipeline you want above.</>
+              : "This pipeline has no stages yet."}
+          </div>
         </Panel>
       )}
       {editing && (

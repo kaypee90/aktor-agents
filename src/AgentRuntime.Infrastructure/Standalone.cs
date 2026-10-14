@@ -59,7 +59,13 @@ public sealed class InMemoryMemoryStore : IMemoryStore
         if (agentId is not null) results = results.Where(r => r.AgentId == agentId);
         if (!string.IsNullOrWhiteSpace(query))
         {
-            results = results.Where(r => r.Key.Contains(query, StringComparison.OrdinalIgnoreCase) || r.Value.Contains(query, StringComparison.OrdinalIgnoreCase));
+            // Any of the query's words (as the Postgres store matches), entries sharing more of them first.
+            var words = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Select(w => w.Trim('"', '\'', ',', '.', '?', '!', ':', ';', '(', ')')).Where(w => w.Length >= 3).ToList();
+            if (words.Count == 0) words = [query.Trim()];
+            int Hits(MemoryRecord r) => words.Count(w => r.Key.Contains(w, StringComparison.OrdinalIgnoreCase) || r.Value.Contains(w, StringComparison.OrdinalIgnoreCase));
+            return Task.FromResult<IReadOnlyList<MemoryRecord>>(results.Select(r => (Record: r, Hits: Hits(r))).Where(x => x.Hits > 0)
+                .OrderByDescending(x => x.Hits).ThenByDescending(x => x.Record.CreatedAt).Select(x => x.Record).ToList());
         }
 
         return Task.FromResult<IReadOnlyList<MemoryRecord>>(results.OrderByDescending(r => r.CreatedAt).ToList());

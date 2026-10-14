@@ -363,7 +363,7 @@ public sealed class TaskService(
         var id = profileId.Trim();
         if (id == LLM.ModelProfiles.ServerId) return id;
         var org = await models.GetAsync(tenantId, ct);
-        return org.Profiles.Any(p => p.Id == id) ? id
+        return org.ById(id) is { } profile ? profile.Id
             : throw new TaskServiceException($"No model '{id}'. Use one set up under Settings → AI model, or \"{LLM.ModelProfiles.ServerId}\".");
     }
 

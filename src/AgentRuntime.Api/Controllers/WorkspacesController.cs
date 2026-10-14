@@ -19,9 +19,10 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     Microsoft.Extensions.Options.IOptions<AgentRuntime.Infrastructure.Tools.ToolsOptions> toolsOptions, PipelineDesignService designer,
     Microsoft.Extensions.Options.IOptions<PipelineOptions> pipelineOptions) : ControllerBase
 {
-    /// <summary>Without a pipeline, one is drafted from the goal by the pipeline editor.</summary>
-    public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd, PipelineDefinition? Pipeline = null,
-        WorkspaceVisibility Visibility = WorkspaceVisibility.Organization);
+    /// <summary>Without a pipeline, one is drafted from the goal by the pipeline editor. <c>Blank</c>
+    /// starts with an empty canvas instead, and then the goal is optional.</summary>
+    public sealed record CreateWorkspaceBody(string Name, string? Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd, PipelineDefinition? Pipeline = null,
+        WorkspaceVisibility Visibility = WorkspaceVisibility.Organization, bool Blank = false);
     public sealed record VisibilityBody(WorkspaceVisibility Visibility);
     public sealed record PipelineBody(PipelineDefinition Pipeline, int BaseVersion, string? Note);
     public sealed record ProposeBody(string Request);
@@ -43,6 +44,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         // Forms (kind "form"): the fields to fill in.
         FormDefinition? Form = null);
     public sealed record BudgetBody(int? DailyTokenLimit, decimal? DailyCostLimitUsd);
+    public sealed record VariablesBody(Dictionary<string, string>? Variables);
 
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
 
@@ -50,7 +52,9 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> Create([FromBody] CreateWorkspaceBody body, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(body.Goal)) return BadRequest(new { error = "goal is required" });
+        if (string.IsNullOrWhiteSpace(body.Goal) && !body.Blank) return BadRequest(new { error = "goal is required" });
+        var name = string.IsNullOrWhiteSpace(body.Name) ? "Workspace" : body.Name;
+        var goal = string.IsNullOrWhiteSpace(body.Goal) ? name : body.Goal;
 
         // The organization's plan limits how many workspaces can be live at once.
         var caller = HttpContext.Caller();
@@ -63,11 +67,11 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
 
         // Configured by natural language: the goal describes what the workspace is for, and the
         // editor drafts the pipeline from it. If it can't, the workspace starts with one stage.
-        var pipeline = body.Pipeline;
+        var pipeline = body.Blank ? new PipelineDefinition() : body.Pipeline;
         string? draftNote = null;
         if (pipeline is null)
         {
-            var draft = await designer.ProposeAsync(caller.TenantId, null, body.Goal, null, body.Goal, ct);
+            var draft = await designer.ProposeAsync(caller.TenantId, null, goal, null, goal, ct);
             pipeline = draft.Valid ? draft.Preview : null;
             draftNote = draft.Valid ? draft.Summary : string.Join(" ", draft.Errors);
         }
@@ -79,8 +83,8 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         var id = WorkspaceIds.New();
         await Workspace(id).Create(new WorkspaceCreationRequest
         {
-            Name = string.IsNullOrWhiteSpace(body.Name) ? "Workspace" : body.Name,
-            Goal = body.Goal,
+            Name = name,
+            Goal = goal,
             DailyTokenLimit = body.DailyTokenLimit,
             DailyCostLimitUsd = body.DailyCostLimitUsd,
             TenantId = caller.TenantId,
@@ -370,6 +374,18 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
         await Workspace(id).UpdateBudget(body.DailyTokenLimit, body.DailyCostLimitUsd);
         return NoContent();
+    }
+
+    /// <summary>Replaces the workspace's variables: values every stage can use as {{ vars.name }}.</summary>
+    [HttpPut("{id}/variables")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> Variables(string id, [FromBody] VariablesBody body)
+    {
+        if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
+        var errors = await Workspace(id).SetVariables(body.Variables ?? [], HttpContext.Caller().ActorId);
+        return errors.Count > 0
+            ? BadRequest(new { error = string.Join(" ", errors), errors })
+            : Ok(new { variables = (await Workspace(id).GetSnapshot())?.Variables ?? [] });
     }
 
     [HttpPost("{id}/pause")]

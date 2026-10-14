@@ -69,6 +69,53 @@ public sealed class LlmSettingsTests
     }
 
     [Fact]
+    public async Task A_renamed_profile_keeps_its_key_and_default_and_its_old_id_still_resolves()
+    {
+        var secrets = new MemorySecrets();
+        var service = new LlmSettingsService(secrets, Options.Create(Server));
+        await service.SaveProfileAsync("org-a", Profile("gpt-4o-mini", "OpenAI", "gpt-6-luna") with { Name = "gpt-6-luna" }, "luna-key", makeDefault: true);
+        await service.SaveProfileAsync("org-a", Profile("other", "OpenAI", "gpt-5"), "other-key", makeDefault: false);
+        await service.SetAgentsMayChooseAsync("org-a", false);
+
+        Assert.False(await service.RenameProfileAsync("org-a", "gpt-4o-mini", "other")); // taken
+        Assert.True(await service.RenameProfileAsync("org-a", "gpt-4o-mini", "gpt-6-luna"));
+
+        var models = await service.GetAsync("org-a");
+        Assert.Equal(["gpt-6-luna", "other"], models.Profiles.Select(p => p.Id).Order());
+        Assert.Equal("gpt-6-luna", models.DefaultProfileId);
+        Assert.False(models.AgentsMayChoose);
+        Assert.Equal("luna-key", await service.GetApiKeyAsync("org-a", models.Profiles.Single(p => p.Id == "gpt-6-luna")));
+
+        // Anything still naming the old id (a running agent, an old pipeline version) gets the profile.
+        var old = await service.ResolveAsync("org-a", "gpt-4o-mini");
+        Assert.Equal(("gpt-6-luna", "gpt-6-luna", "luna-key"), (old.ProfileId, old.Model, old.ApiKey));
+        Assert.Equal("gpt-6-luna", models.Find("gpt-4o-mini").Profile?.Id);
+
+        // Renamed again, the first alias follows.
+        Assert.True(await service.RenameProfileAsync("org-a", "gpt-6-luna", "luna"));
+        Assert.Equal("luna", (await service.ResolveAsync("org-a", "gpt-4o-mini")).ProfileId);
+    }
+
+    [Fact]
+    public void A_renamed_model_follows_in_stages_and_mentions_only()
+    {
+        var pipeline = new AgentRuntime.Pipelines.PipelineDefinition
+        {
+            Stages =
+            [
+                new() { StageId = "a", Name = "A", Instructions = "Use @gpt-4o-mini, not @gpt-4o-mini-2 or me@gpt-4o-mini.", ModelProfileId = "gpt-4o-mini" },
+                new() { StageId = "b", Name = "B", Instructions = "Plain.", ModelProfileId = "other" }
+            ]
+        };
+
+        var renamed = AgentRuntime.Pipelines.Mentions.RenameModel(pipeline, "gpt-4o-mini", "gpt-6-luna");
+        Assert.Equal("Use @gpt-6-luna, not @gpt-4o-mini-2 or me@gpt-4o-mini.", renamed.Stages[0].Instructions);
+        Assert.Equal(["gpt-6-luna", "other"], renamed.Stages.Select(s => s.ModelProfileId));
+        Assert.Same(renamed.Stages[1], pipeline.Stages[1]);
+        Assert.Same(pipeline, AgentRuntime.Pipelines.Mentions.RenameModel(pipeline, "nobody", "x"));
+    }
+
+    [Fact]
     public async Task Calls_use_the_named_profile_else_the_default_else_the_server_and_keys_stay_with_their_profile()
     {
         var service = new LlmSettingsService(new MemorySecrets(), Options.Create(Server));

@@ -13,7 +13,8 @@ namespace AgentRuntime.Pipelines;
 /// <item><c>stages.&lt;id&gt;</c>: an earlier stage's output, e.g. <c>stages.read-sheet.rows[0].email</c>;</item>
 /// <item><c>previous</c>: the output of the stage's only input;</item>
 /// <item><c>item</c> and <c>index</c>: in a for-each, the current item and its position;</item>
-/// <item><c>run</c>: the run's id and number.</item>
+/// <item><c>run</c>: the run's id and number;</item>
+/// <item><c>vars</c>: the workspace's variables, e.g. <c>vars.email_recipient</c>.</item>
 /// </list>
 /// Paths use the same JSONPath subset as watches (<c>.name</c>, <c>['name']</c>, <c>[n]</c>, <c>[*]</c>).
 /// A string that is exactly one expression becomes that value with its type (a number, a list, an
@@ -21,7 +22,7 @@ namespace AgentRuntime.Pipelines;
 /// </summary>
 public static partial class PipelineExpressions
 {
-    public static readonly string[] Roots = ["input", "stages", "previous", "item", "index", "run"];
+    public static readonly string[] Roots = ["input", "stages", "previous", "item", "index", "run", "vars"];
 
     [GeneratedRegex(@"\{\{\s*(.*?)\s*\}\}", RegexOptions.Singleline)]
     private static partial Regex Placeholder();
@@ -38,7 +39,8 @@ public static partial class PipelineExpressions
         if (!Roots.Contains(root))
         {
             return $"'{{{{ {e} }}}}' doesn't say where the value comes from. Write {{{{ input.{e} }}}} for a value from the run's input " +
-                   $"(a form field, a webhook's JSON), {{{{ previous.{e} }}}} for the step before, or {{{{ stages.<step-id>.{e} }}}} for another step. " +
+                   $"(a form field, a webhook's JSON), {{{{ previous.{e} }}}} for the step before, {{{{ stages.<step-id>.{e} }}}} for another step, " +
+                   $"or {{{{ vars.{e} }}}} for a workspace variable. " +
                    $"Expressions start with one of: {string.Join(", ", Roots)}.";
         }
         try
@@ -113,6 +115,19 @@ public static partial class PipelineExpressions
                 return node?.DeepClone();
         }
     }
+
+    /// <summary>
+    /// Text with its <c>{{ vars.name }}</c> filled in from the workspace's variables, for an agent
+    /// stage's instructions. Only <c>vars</c>: other <c>{{ … }}</c> in instructions (a code example, a
+    /// template the agent should write) stay as they are, and so does a variable that isn't set.
+    /// </summary>
+    public static string RenderVariables(string text, IReadOnlyDictionary<string, string> variables) =>
+        string.IsNullOrEmpty(text) || variables.Count == 0 ? text
+        : Placeholder().Replace(text, m =>
+        {
+            var e = m.Groups[1].Value.Trim();
+            return e.StartsWith("vars.", StringComparison.Ordinal) && variables.TryGetValue(e[5..], out var value) ? value : m.Value;
+        });
 
     /// <summary>How a value reads inside text: strings as they are, anything else as JSON.</summary>
     public static string AsText(JsonNode? value) => value switch

@@ -43,11 +43,16 @@ With an embedding provider configured, every entry is embedded when it's written
 | Signal | How | Weight (`Memory:Search`) |
 |---|---|---|
 | Meaning | Cosine similarity between the query's and the entry's embeddings | `VectorWeight` 0.6 |
-| Words | Postgres full-text rank (English stemming), boosted for a literal substring match | `KeywordWeight` 0.3 |
+| Words | Postgres full-text rank (English stemming), boosted for a literal substring match. An entry with **any** of the query's words is a candidate; one with every word (or the whole query as a substring) scores up to 1, one with only some of them up to 0.5 | `KeywordWeight` 0.3 |
 | Recency | Halves every `RecencyHalfLifeDays` (30) | `RecencyWeight` 0.1 |
 
 - An entry must match by meaning (similarity ≥ `MinSimilarity`, 0.35) or by words to be returned at
   all; an empty query lists the most recent entries.
+- Matching by words takes any of the query's words, not all of them: an agent searching
+  "notification recipient" finds `{"email_recipient": "…"}` by "recipient". (Until October 2026
+  every word had to be in the entry, so a query with one word the entry lacked found nothing.)
+  Common words ("the", "for") are ignored, and entries sharing more of the query's words rank first.
+  The standalone store (no Postgres) matches the same way.
 - Vectors are only compared with vectors from the **same model** (`EmbeddingModel` is stored with
   each entry), so switching models never mixes vector spaces. Entries written under an older model
   are still found by words until they're written again.

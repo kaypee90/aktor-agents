@@ -25,7 +25,7 @@ public sealed class AdminController(
     IOptions<ToolsOptions> toolsOptions) : ControllerBase
 {
     /// <summary>Clears every task, agent, message, event, tool call, artifact, memory entry, and
-    /// agent scratch table, plus the live agent registry, so the next submitted goal starts from a clean slate. Existing
+    /// agent scratch table, plus the live agent registry (keeping model settings and prices), so the next submitted goal starts from a clean slate. Existing
     /// agent grain activations (if any are still mid-turn) are left to idle out naturally — nothing
     /// references their old ids once the registry and history are both cleared.</summary>
     [HttpPost("reset")]
@@ -67,7 +67,9 @@ public sealed class AdminController(
         await db.MemoryEntries.ExecuteDeleteAsync(ct);
         await db.Worlds.ExecuteDeleteAsync(ct);
         await db.Workspaces.ExecuteDeleteAsync(ct);
-        await db.Secrets.ExecuteDeleteAsync(ct);
+        // Model settings (profiles, their prices and API keys, scope "llm:<org>") survive a reset;
+        // connection secrets go with their workspaces.
+        await db.Secrets.Where(s => !s.Scope.StartsWith("llm:")).ExecuteDeleteAsync(ct);
         await db.AuditEntries.ExecuteDeleteAsync(ct);
         await db.AuditHeads.ExecuteDeleteAsync(ct);
 

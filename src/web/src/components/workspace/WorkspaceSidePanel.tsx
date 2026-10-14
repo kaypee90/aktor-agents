@@ -15,10 +15,11 @@ import { FilesPanel } from "./FilesPanel";
 import { pauseInfo } from "./pauseInfo";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
+import { VariablesPanel } from "./VariablesPanel";
 import { EMPTY_FORM, FormBuilder, cleanForm } from "./FormBuilder";
 import type { FormDefinition } from "@/lib/workspaceTypes";
 
-type Tab = "agents" | "files" | "knowhow" | "triggers" | "integrations" | "safety" | "events";
+type Tab = "agents" | "files" | "knowhow" | "variables" | "triggers" | "integrations" | "safety" | "events";
 
 function describeInterval(t: TriggerView) {
   if (t.cron) return `cron ${t.cron} (UTC)`;
@@ -57,6 +58,7 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
     ["agents", "Agents", workspace.agents.length || null],
     ["files", "Files", files.length || null],
     ["knowhow", "Skills & knowledge", knowhowCount || null],
+    ["variables", "Variables", Object.keys(workspace.variables ?? {}).length || null],
     ["triggers", "Triggers", workspace.triggers.length || null],
     ["integrations", "Integrations", workspace.connections?.length || null],
     ["safety", "Safety", pendingApprovals || null],
@@ -156,6 +158,12 @@ export function WorkspaceSidePanel({ workspace, events, onSelectAgent, onChanged
               )}
             </KnowhowSection>
           </div>
+        )}
+
+        {tab === "variables" && (
+          // Keyed by the saved values, so another person's change (or a reload) resets the form.
+          <VariablesPanel key={JSON.stringify(workspace.variables ?? {})} workspaceId={workspace.workspace_id}
+            variables={workspace.variables ?? {}} onChanged={onChanged} />
         )}
 
         {tab === "triggers" && <Triggers workspace={workspace} onChanged={onChanged} />}

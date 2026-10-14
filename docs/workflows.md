@@ -6,7 +6,7 @@ agents. Two other kinds are fixed steps with no model involved, which is how too
 | Stage | What does the work | Costs a model call? |
 |---|---|---|
 | **Agent** | An AI agent with a role, instructions and tools. | Yes |
-| **Action** | One call of a connection's tool (Google Sheets, Airtable, BigQuery, Zoho CRM, any REST API, an MCP server), with arguments built from the run's data. It can call the tool once per item of a list. | No |
+| **Action** | One call of a connection's tool (Google Sheets, Airtable, BigQuery, Zoho CRM, Slack, Brevo, any REST API, an MCP server), with arguments built from the run's data. It can call the tool once per item of a list. | No |
 | **Script** | Python or JavaScript that turns the run's data into new data, in a sandbox with no network. | No |
 
 You can mix them freely. For example, a **form** collects a lead, an **action** looks the company up
@@ -38,9 +38,12 @@ Action and script stages see the run's data as one object:
 | `previous` | The output of the stage's only input (null when it has several). |
 | `item`, `index` | In an action's *for each*: the current item and its position. |
 | `run` | `id`, `number`, `source`, `trigger`, `started_at`. |
+| `vars` | The workspace's [variables](workspaces.md#variables), e.g. `vars.email_recipient`, as they were when the run started. |
 
 Agent stages read earlier results as text: an action's or script's output is handed to them as
-`Output (JSON): …`.
+`Output (JSON): …`. They get the workspace's variables listed in their context, and
+`{{ vars.name }}` in their instructions is filled in (other `{{ … }}` in instructions stay as
+written).
 
 ## Action stages
 
@@ -51,7 +54,8 @@ a JSON object in which any string may contain `{{ expressions }}`.
 {
   "range": "Leads",
   "rows": "{{ previous }}",
-  "note": "Added by run {{ run.number }} for {{ input.email }}"
+  "note": "Added by run {{ run.number }} for {{ input.email }}",
+  "notify": "{{ vars.email_recipient }}"
 }
 ```
 
@@ -172,10 +176,17 @@ so check each with **Test connection** when you add it.
 ## The canvas
 
 - **Palette.** *New agent*, *Action* and *Script* can be dragged onto the canvas or clicked. Each
-  kind has its own icon: a bot, a plug, or brackets.
+  kind has its own icon: a bot, a plug, or brackets. An empty pipeline shows a hint in the middle of
+  the canvas on how to start.
+- **Connector logos.** An action shows the logo of the service it calls (Slack, Google Sheets,
+  Airtable, BigQuery, Zoho CRM, Sentry, Twilio, Telegram, Brevo, SendGrid, email, MCP, an HTTP
+  API); a plugin from the plugins folder gets a lettered tile. The same logos appear on the
+  Integrations tab, in its service picker, and next to an action's chosen tool.
 - **An agent's parts.** As in n8n, each agent shows what it's built from underneath it: its
   **Model** (the profile it runs on, or the workspace default), its **Tools** (capabilities plus
-  connections) and its **Memory** (the workspace's memory and knowledge, and the run's files).
+  connections, with the connections' logos) and its **Memory** (the workspace's memory and
+  knowledge, and the run's files). A stage that picks a model shows a tag with the model it runs
+  on (hover for the profile's name and its `@handle`).
   Clicking Model or Tools opens the stage at that setting. The **Model, tools & memory** switch
   at the canvas's top right shows or hides them, also while you look at a run; your browser
   remembers the choice.

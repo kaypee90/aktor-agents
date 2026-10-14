@@ -37,7 +37,8 @@ public class PipelineEditorTests
         var duplicate = new PipelineDefinition { Stages = [Stage("a"), Stage("a")] };
         Assert.Contains(PipelineValidator.Validate(duplicate, Options), e => e.Contains("Two stages"));
 
-        Assert.Contains(PipelineValidator.Validate(new PipelineDefinition(), Options), e => e.Contains("at least one"));
+        // A blank canvas can be saved (runs refuse it until it has a stage).
+        Assert.Empty(PipelineValidator.Validate(new PipelineDefinition(), Options));
     }
 
     [Fact]
@@ -248,5 +249,21 @@ public class MentionTests
         {
             State = state, AvailableTools = [], AutonomyLevel = AgentRuntime.Contracts.AutonomyLevel.Autonomous, EnvironmentSummary = "env", Skills = skills
         }));
+    }
+
+    [Fact]
+    public void Variables_are_an_expression_root_and_fill_in_only_vars_in_instructions()
+    {
+        Assert.Null(PipelineExpressions.CheckExpression("vars.email_recipient"));
+        var data = new System.Text.Json.Nodes.JsonObject { ["vars"] = new System.Text.Json.Nodes.JsonObject { ["to"] = "a@b.c" } };
+        Assert.Equal("a@b.c", PipelineExpressions.Render("""{ "to": "{{ vars.to }}" }""", data)["to"]!.GetValue<string>());
+
+        var vars = new Dictionary<string, string> { ["to"] = "a@b.c" };
+        Assert.Equal("Send to a@b.c, not {{ vars.cc }} or {{ input.x }}.",
+            PipelineExpressions.RenderVariables("Send to {{vars.to}}, not {{ vars.cc }} or {{ input.x }}.", vars));
+
+        Assert.Empty(AgentRuntime.Workspaces.WorkspaceVariables.Validate(vars));
+        Assert.NotEmpty(AgentRuntime.Workspaces.WorkspaceVariables.Validate(new Dictionary<string, string> { ["1st"] = "x" }));
+        Assert.NotEmpty(AgentRuntime.Workspaces.WorkspaceVariables.Validate(new Dictionary<string, string> { ["big"] = new string('x', 5000) }));
     }
 }

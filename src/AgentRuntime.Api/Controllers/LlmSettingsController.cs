@@ -16,7 +16,7 @@ namespace AgentRuntime.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/llm")]
-public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnectionTester tester, TenantAccess access) : ControllerBase
+public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnectionTester tester, TenantAccess access, ModelProfileRenamer renamer) : ControllerBase
 {
     public sealed record ProfileBody(
         string? Id,
@@ -68,7 +68,8 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         return await SaveAsync(id, body, isNew: true, ct);
     }
 
-    /// <summary>Edits a model. A key left out keeps the saved one.</summary>
+    /// <summary>Edits a model. A key left out keeps the saved one. A new name gives it a new id to
+    /// match (unless another model has it), and its workspaces, templates and history follow.</summary>
     [HttpPut("profiles/{id}")]
     [Authorize(Policies.Admin)]
     public async Task<IActionResult> Update(string id, [FromBody] ProfileBody body, CancellationToken ct)
@@ -76,7 +77,9 @@ public sealed class LlmSettingsController(LlmSettingsService settings, LlmConnec
         if (Disabled() is { } off) return off;
         var existing = await settings.GetAsync(access.TenantId, ct);
         if (existing.Profiles.All(p => p.Id != id)) return NotFound(new { error = $"No model '{id}'." });
-        return await SaveAsync(id, body, isNew: false, ct);
+        var saved = await SaveAsync(id, body, isNew: false, ct);
+        if (saved is not OkObjectResult) return saved;
+        return await renamer.SyncAsync(access.TenantId, id, ct) is null ? saved : Ok(await ViewAsync(ct));
     }
 
     /// <summary>Removes a model and its key. Running tasks on it continue on the default.</summary>

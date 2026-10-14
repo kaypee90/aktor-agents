@@ -51,6 +51,16 @@ public sealed record OrganizationModels
     /// runs on the task's model.</summary>
     public bool AgentsMayChoose { get; init; } = true;
 
+    /// <summary>Ids profiles had before they were renamed (old id → current id), so tasks, agents and
+    /// saved pipeline versions that still name an old id find the profile.</summary>
+    public Dictionary<string, string> Aliases { get; init; } = [];
+
+    /// <summary>The profile with this id, or the one it was renamed to.</summary>
+    public ModelProfile? ById(string? id) =>
+        id is null ? null
+        : Profiles.FirstOrDefault(p => p.Id == id)
+          ?? (Aliases.TryGetValue(id, out var renamed) ? Profiles.FirstOrDefault(p => p.Id == renamed) : null);
+
     /// <summary>A profile by id, or by name as people (and agents) write it; "server" for the
     /// server's configuration (returned as null with found = true).</summary>
     public (bool Found, ModelProfile? Profile) Find(string? idOrName)
@@ -60,6 +70,7 @@ public sealed record OrganizationModels
         if (key.Equals(ModelProfiles.ServerId, StringComparison.OrdinalIgnoreCase)
             || key.Equals("server default", StringComparison.OrdinalIgnoreCase)) return (true, null);
         var match = Profiles.FirstOrDefault(p => p.Id.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    ?? ById(key.ToLowerInvariant())
                     ?? Profiles.FirstOrDefault(p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
                     ?? Profiles.FirstOrDefault(p => p.Id == ModelProfiles.Slug(key));
         return (match is not null, match);
@@ -237,7 +248,40 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
             await secrets.PutAsync(Scope(tenant), KeyName(profile.Id), apiKey.Trim(), ct);
         }
 
-        await WriteAsync(tenant, new OrganizationModels { Profiles = profiles, DefaultProfileId = defaultId }, ct);
+        await WriteAsync(tenant, current with { Profiles = profiles, DefaultProfileId = defaultId }, ct);
+    }
+
+    /// <summary>
+    /// Gives a profile a new id, e.g. to match its new name. Its key moves with it, the default
+    /// follows it, and the old id stays as an alias so anything that still names it finds the
+    /// profile. Returns false when there's no such profile or the new id is taken.
+    /// </summary>
+    public async Task<bool> RenameProfileAsync(string tenantId, string oldId, string newId, CancellationToken ct = default)
+    {
+        var tenant = Tenancy.TenantIds.Normalize(tenantId);
+        var current = await LoadAsync(tenant, ct);
+        if (oldId == newId || !ModelProfiles.IsValidId(newId) || newId == ModelProfiles.ServerId) return false;
+        if (current.Profiles.FirstOrDefault(p => p.Id == oldId) is not { } profile || current.Profiles.Any(p => p.Id == newId)) return false;
+
+        if (await secrets.GetAsync(Scope(tenant), KeyName(oldId), ct) is { Length: > 0 } key)
+        {
+            await secrets.PutAsync(Scope(tenant), KeyName(newId), key, ct);
+            await secrets.PutAsync(Scope(tenant), KeyName(oldId), string.Empty, ct);
+        }
+
+        // Earlier aliases of this profile follow it; the new id is no longer anyone's alias.
+        var aliases = current.Aliases
+            .Where(a => a.Key != newId)
+            .ToDictionary(a => a.Key, a => a.Value == oldId ? newId : a.Value);
+        aliases[oldId] = newId;
+
+        await WriteAsync(tenant, current with
+        {
+            Profiles = [.. current.Profiles.Select(p => p.Id == oldId ? p with { Id = newId } : p)],
+            DefaultProfileId = current.DefaultProfileId == oldId ? newId : current.DefaultProfileId,
+            Aliases = aliases
+        }, ct);
+        return true;
     }
 
     /// <summary>Removes a profile and its key. Tasks that used it continue on the default.</summary>
@@ -248,10 +292,12 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
         if (current.Profiles.All(p => p.Id != profileId)) return false;
 
         await secrets.PutAsync(Scope(tenant), KeyName(profileId), string.Empty, ct);
-        await WriteAsync(tenant, new OrganizationModels
+        await WriteAsync(tenant, current with
         {
             Profiles = current.Profiles.Where(p => p.Id != profileId).ToList(),
-            DefaultProfileId = current.DefaultProfileId == profileId ? null : current.DefaultProfileId
+            DefaultProfileId = current.DefaultProfileId == profileId ? null : current.DefaultProfileId,
+            // Old ids of a deleted profile point nowhere: tasks on them use the default.
+            Aliases = current.Aliases.Where(a => a.Value != profileId).ToDictionary()
         }, ct);
         return true;
     }
@@ -308,7 +354,7 @@ public sealed class LlmSettingsService(ISecretStore secrets, IOptions<LlmOptions
         // The named profile, else the organization's default (also when the named one was deleted
         // mid-task), else the server's configuration.
         var profile = profileId == ModelProfiles.ServerId ? null
-            : models.Profiles.FirstOrDefault(p => p.Id == profileId)
+            : models.ById(profileId)
               ?? models.Profiles.FirstOrDefault(p => p.Id == models.DefaultProfileId);
         var resolved = profile is null
             ? server

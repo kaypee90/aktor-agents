@@ -92,6 +92,24 @@ public sealed class MemorySearchTests(MemorySearchTests.Fixture fixture, ITestOu
     }
 
     [Fact]
+    public async Task A_query_finds_entries_sharing_some_of_its_words_and_ranks_those_sharing_more_first()
+    {
+        if (Skip()) return;
+        var tenant = Tenant();
+        await KeywordOnlyStore.WriteAsync(Shared(tenant, "recipient", """{"email_recipient": "ops@example.com"}"""));
+        await KeywordOnlyStore.WriteAsync(Shared(tenant, "notification-policy", "Send a notification when a pipeline run completes, by email to the recipient."));
+        await KeywordOnlyStore.WriteAsync(Shared(tenant, "on-call", "On-call rotation changes every Monday."));
+
+        // "notification" isn't in the first entry: it's still found, by "recipient".
+        var results = await KeywordOnlyStore.SearchAsync(tenant, "notification recipient", MemoryKind.Shared);
+        Assert.Equal(["notification-policy", "recipient"], results.Select(r => r.Key));
+        Assert.True(results[0].Score > results[1].Score, string.Join(", ", results.Select(r => $"{r.Key} {r.Score:F3}")));
+
+        Assert.Equal("recipient", (await KeywordOnlyStore.SearchAsync(tenant, "who is the email recipient address?", MemoryKind.Shared))
+            .Select(r => r.Key).Intersect(["recipient"]).Single());
+    }
+
+    [Fact]
     public async Task Another_organizations_entries_are_never_returned()
     {
         if (Skip()) return;

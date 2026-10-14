@@ -148,7 +148,8 @@ plan a `StripePriceId`. Then:
 
 **Without Stripe**, an operator sets plans with `PUT /api/admin/tenants/{id}/plan {plan_id}`.
 Operators are the emails in `PLATFORM_ADMIN_EMAIL` / `Auth:PlatformAdmins`, and they're also the
-only ones who can use **Reset all**, which wipes every organization's work but keeps accounts.
+only ones who can use **Reset all**, which wipes every organization's work but keeps accounts and
+each organization's model settings (models, their prices and API keys).
 
 ## Security notes
 

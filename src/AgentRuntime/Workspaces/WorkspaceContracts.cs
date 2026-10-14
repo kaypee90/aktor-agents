@@ -77,6 +77,8 @@ public sealed record WorkspaceCreationRequest
     /// <summary>Who created it (a user id or "key:&lt;id&gt;"), recorded on the first pipeline version.</summary>
     [Id(9)] public string? CreatedBy { get; init; }
     [Id(10)] public WorkspaceVisibility Visibility { get; init; } = WorkspaceVisibility.Organization;
+    /// <summary>Variables to start with (from a copy or template).</summary>
+    [Id(11)] public Dictionary<string, string>? Variables { get; init; }
 }
 
 [GenerateSerializer]
@@ -213,6 +215,7 @@ public sealed record WorkspaceDefinition
     [Id(9)] public List<string> ConnectionsWithoutSecrets { get; init; } = [];
     /// <summary>Tools switched off per connection (by connection name), kept off in a copy.</summary>
     [Id(10)] public Dictionary<string, List<string>> DisabledTools { get; init; } = [];
+    [Id(11)] public Dictionary<string, string> Variables { get; init; } = [];
 }
 
 [GenerateSerializer]
@@ -316,6 +319,8 @@ public sealed class WorkspaceState
     /// <summary>Runs refused because the queue was full.</summary>
     [Id(39)] public long DroppedRuns { get; set; }
     [Id(40)] public WorkspaceVisibility Visibility { get; set; } = WorkspaceVisibility.Organization;
+    /// <summary>Values every stage can use ({{ vars.name }}); see <see cref="WorkspaceVariables"/>.</summary>
+    [Id(41)] public Dictionary<string, string> Variables { get; set; } = [];
 }
 
 /// <summary>One run in a workspace's history.</summary>
@@ -410,6 +415,7 @@ public sealed record WorkspaceSnapshot
     [Id(26)] public WorkspaceVisibility Visibility { get; init; }
     /// <summary>Who owns it: a user id, or "key:&lt;id&gt;" for one made with an API key.</summary>
     [Id(27)] public string OwnerId { get; init; } = string.Empty;
+    [Id(28)] public Dictionary<string, string> Variables { get; init; } = [];
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

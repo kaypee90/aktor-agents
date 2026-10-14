@@ -40,6 +40,20 @@ public sealed partial class WorkspaceGrain
     public Task<List<PipelineDefinition>> GetPipelineHistory() =>
         Task.FromResult(Exists ? S.PipelineHistory.AsEnumerable().Reverse().ToList() : []);
 
+    public async Task<bool> RenameModelProfile(string oldId, string newId)
+    {
+        if (!Exists || S.Pipeline is null) return false;
+        var current = Mentions.RenameModel(S.Pipeline, oldId, newId);
+        var history = S.PipelineHistory.Select(p => Mentions.RenameModel(p, oldId, newId)).ToList();
+        if (ReferenceEquals(current, S.Pipeline) && history.SequenceEqual(S.PipelineHistory, ReferenceEqualityComparer.Instance)) return false;
+
+        S.Pipeline = current;
+        S.PipelineHistory = history;
+        await SaveAsync();
+        await ChangedAsync($"model '{oldId}' is now '{newId}'");
+        return true;
+    }
+
     public async Task<PipelineChangeResult> SetPipeline(PipelineDefinition pipeline, int baseVersion, string changedBy, string note)
     {
         if (!Exists) return new PipelineChangeResult { Errors = ["No such workspace."] };
@@ -156,6 +170,7 @@ public sealed partial class WorkspaceGrain
     {
         if (!Exists || S.Pipeline is null) return new RunStartResult { Message = "No such workspace." };
         if (S.Status == WorkspaceStatus.Archived) return new RunStartResult { Message = "This workspace is archived." };
+        if (S.Pipeline.Stages.Count == 0) return new RunStartResult { Message = "The pipeline has no stages yet. Add one on the canvas first." };
         var text = Clip(input, _opts.MaxMessageLength, string.Empty);
         if (text.Length == 0) return new RunStartResult { Message = "A run needs an input: what should the pipeline do this time?" };
 
@@ -179,7 +194,8 @@ public sealed partial class WorkspaceGrain
             StageBudget = BuildPolicy().WorkerBudget,
             Team = S.SafetyPolicy.Team,
             Number = S.NextRunNumber,
-            InputData = inputData
+            InputData = inputData,
+            Variables = new Dictionary<string, string>(S.Variables)
         };
 
         var waiting = S.Status == WorkspaceStatus.Paused || S.ActiveRunIds.Count >= S.Pipeline.MaxConcurrentRuns;

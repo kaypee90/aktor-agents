@@ -130,6 +130,8 @@ export interface WorkspaceSnapshot {
   visibility?: WorkspaceVisibility;
   /** A user id, or "key:<id>" for one made with an API key. */
   owner_id?: string;
+  /** Values every stage can use as {{ vars.name }}. */
+  variables?: Record<string, string>;
 }
 
 export interface WorkspaceListItem {

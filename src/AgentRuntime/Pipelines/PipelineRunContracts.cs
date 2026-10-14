@@ -49,6 +49,8 @@ public sealed record PipelineRunRequest
     /// <summary>The input as data, when it came as data: a form's answers, a webhook's JSON body.
     /// Action and script stages see it as <c>input</c>; null: they see the text.</summary>
     [Id(12)] public string? InputData { get; init; }
+    /// <summary>The workspace's variables when the run started: a run isn't changed by later edits.</summary>
+    [Id(13)] public Dictionary<string, string> Variables { get; init; } = [];
 }
 
 [GenerateSerializer]

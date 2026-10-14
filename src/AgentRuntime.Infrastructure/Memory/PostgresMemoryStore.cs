@@ -123,6 +123,7 @@ public sealed class PostgresMemoryStore(
         command.Parameters.Add(new NpgsqlParameter("ws", NpgsqlDbType.Text) { Value = (object?)scope.WorkspaceId ?? DBNull.Value });
         command.Parameters.AddWithValue("wsonly", scope.WorkspaceOnly);
         command.Parameters.AddWithValue("q", query);
+        command.Parameters.AddWithValue("tsq", AnyWordQuery(query));
         command.Parameters.AddWithValue("like", "%" + EscapeLike(query) + "%");
         command.Parameters.AddWithValue("halflife", Math.Max(0.01, _search.RecencyHalfLifeDays));
         command.Parameters.AddWithValue("wv", _search.VectorWeight);
@@ -197,6 +198,15 @@ public sealed class PostgresMemoryStore(
         return rows.Select(r => (r.Key, r.AgentId)).ToList();
     }
 
+    /// <summary>
+    /// The query's words joined with "or" for <c>websearch_to_tsquery</c>: an entry matches when it
+    /// shares any of them, and ranks higher the more it shares. With "and" (websearch's default) one
+    /// word the entry lacks hid it: "notification recipient" missed {"email_recipient": "…"}.
+    /// </summary>
+    public static string AnyWordQuery(string query) =>
+        string.Join(" or ", System.Text.RegularExpressions.Regex.Matches(query, @"[\p{L}\p{N}][\p{L}\p{N}@._'-]*")
+            .Select(m => m.Value).Where(w => !w.Equals("or", StringComparison.OrdinalIgnoreCase)));
+
     private static string BuildSearchSql(bool useVectors)
     {
         var vec = useVectors
@@ -204,12 +214,13 @@ public sealed class PostgresMemoryStore(
             : "0";
         return $"""
             SELECT "MemoryId", "TenantId", "AgentId", "Kind", "Key", "Value", "CreatedAt",
-                   (@wv * vec + @wk * LEAST(1.0, kw * 10 + CASE WHEN sub THEN 0.5 ELSE 0 END) + @wr * rec)::float8 AS score,
+                   (@wv * vec + @wk * kwscore + @wr * rec)::float8 AS score,
                    "WorkspaceId"
             FROM (
                 SELECT m."MemoryId", m."TenantId", m."AgentId", m."Kind", m."Key", m."Value", m."CreatedAt", m."WorkspaceId",
                        ({vec})::float8 AS vec,
-                       CASE WHEN @q = '' THEN 0 ELSE ts_rank_cd(to_tsvector('english', m."Key" || ' ' || m."Value"), websearch_to_tsquery('english', @q)) END::float8 AS kw,
+                       CASE WHEN @q = '' THEN 0 ELSE ts_rank_cd(to_tsvector('english', m."Key" || ' ' || m."Value"), websearch_to_tsquery('english', @tsq)) END::float8 AS kw,
+                       CASE WHEN @q = '' THEN 0 ELSE ts_rank_cd(to_tsvector('english', m."Key" || ' ' || m."Value"), websearch_to_tsquery('english', @q)) END::float8 AS kwall,
                        (@q <> '' AND (m."Key" ILIKE @like OR m."Value" ILIKE @like)) AS sub,
                        EXP(-LN(2) * EXTRACT(EPOCH FROM (now() - m."CreatedAt")) / 86400.0 / @halflife)::float8 AS rec
                 FROM "MemoryEntries" m
@@ -222,6 +233,10 @@ public sealed class PostgresMemoryStore(
                          ELSE m."WorkspaceId" IS NULL OR m."WorkspaceId" = @ws
                        END)
             ) s
+            CROSS JOIN LATERAL (SELECT
+                -- Every word of the query (or the query as a substring): up to 1. Some of its words: up to 0.5.
+                CASE WHEN kwall > 0 OR sub THEN LEAST(1.0, 0.5 + kwall * 10 + CASE WHEN sub THEN 0.5 ELSE 0 END)
+                     ELSE LEAST(0.5, kw * 5) END AS kwscore) k
             WHERE @q = '' OR vec >= @minsim OR kw > 0 OR sub
             ORDER BY score DESC, "CreatedAt" DESC
             LIMIT @limit

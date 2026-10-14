@@ -371,6 +371,88 @@ public sealed class PipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_renamed_model_profile_follows_in_the_pipeline_and_its_saved_versions()
+    {
+        ScriptedLlmProviderRegistry.Current = Script();
+        var id = await CreateAsync(new PipelineDefinition { Stages = [Stage("research") with { ModelProfileId = "gpt-4o-mini", Instructions = "Research with @gpt-4o-mini." }] });
+        var edited = await Workspace(id).ApplyPipelineEdits(
+            [new PipelineEditOp { Op = PipelineEditOps.AddStage, After = "research", Stage = new PipelineStagePatch { Name = "Write", Instructions = "Write it." } }],
+            baseVersion: 1, "user-1", null);
+        Assert.True(edited.Success, string.Join("; ", edited.Errors));
+
+        Assert.True(await Workspace(id).RenameModelProfile("gpt-4o-mini", "gpt-6-luna"));
+        var pipeline = (await Workspace(id).GetPipeline())!;
+        Assert.Equal(2, pipeline.Version); // In place, not a new version.
+        Assert.Equal("gpt-6-luna", pipeline.Find("research")!.ModelProfileId);
+        Assert.Equal("Research with @gpt-6-luna.", pipeline.Find("research")!.Instructions);
+        Assert.All(await Workspace(id).GetPipelineHistory(), v => Assert.Equal("gpt-6-luna", v.Find("research")!.ModelProfileId));
+
+        Assert.False(await Workspace(id).RenameModelProfile("gpt-4o-mini", "gpt-6-luna"));
+    }
+
+    [Fact]
+    public void A_saved_templates_stages_follow_a_renamed_model()
+    {
+        const string json = """{"pipeline":{"stages":[{"stage_id":"a","instructions":"Use @gpt-4o-mini.","model_profile_id":"gpt-4o-mini"},{"stage_id":"b","model_profile_id":"other"}]}}""";
+        var renamed = AgentRuntime.Api.Platform.ModelProfileRenamer.RenameInJson(json, "gpt-4o-mini", "gpt-6-luna")!;
+        Assert.Contains("\"model_profile_id\":\"gpt-6-luna\"", renamed);
+        Assert.Contains("Use @gpt-6-luna.", renamed);
+        Assert.Contains("\"model_profile_id\":\"other\"", renamed);
+        Assert.Null(AgentRuntime.Api.Platform.ModelProfileRenamer.RenameInJson(json, "nobody", "x"));
+    }
+
+    [Fact]
+    public async Task Workspace_variables_reach_every_stage_and_a_run_keeps_the_values_it_started_with()
+    {
+        ScriptedLlmProviderRegistry.Current = Script();
+        var id = await CreateAsync(new PipelineDefinition
+        {
+            Stages = [Stage("notify") with { Instructions = "Email the result to {{ vars.email_recipient }}. Keep {{ vars.missing }} and {{ input }} as written." }]
+        });
+
+        Assert.NotEmpty(await Workspace(id).SetVariables(new() { ["Bad-Name"] = "x" }, "user-1"));
+        Assert.Empty(await Workspace(id).SetVariables(new() { ["email_recipient"] = "ops@example.com", ["company"] = "Acme" }, "user-1"));
+        Assert.Equal("Acme", (await Workspace(id).GetSnapshot())!.Variables["company"]);
+
+        await WaitForRunAsync((await Workspace(id).StartRun("weekly report", "user-1")).RunId!, Done);
+        var all = string.Join("\n", _requests.Single(r => RoleOf(r) == "notify").Messages.Select(m => m.Content));
+        Assert.Contains("Email the result to ops@example.com.", all);
+        Assert.Contains("Keep {{ vars.missing }} and {{ input }} as written.", all);
+        Assert.Contains("- company: Acme", all);
+
+        // A later change reaches the next run.
+        Assert.Empty(await Workspace(id).SetVariables(new() { ["email_recipient"] = "boss@example.com" }, "user-1"));
+        await WaitForRunAsync((await Workspace(id).StartRun("again", "user-1")).RunId!, Done);
+        var second = string.Join("\n", _requests.Where(r => RoleOf(r) == "notify").Last().Messages.Select(m => m.Content));
+        Assert.Contains("Email the result to boss@example.com.", second);
+        Assert.DoesNotContain("- company:", second);
+    }
+
+    [Fact]
+    public async Task A_blank_canvas_is_kept_but_cannot_run_until_it_has_a_stage()
+    {
+        ScriptedLlmProviderRegistry.Current = Script();
+        var id = await CreateAsync(new PipelineDefinition());
+        Assert.Empty((await Workspace(id).GetPipeline())!.Stages);
+
+        var refused = await Workspace(id).StartRun("go", "user-1");
+        Assert.False(refused.Success);
+        Assert.Contains("no stages", refused.Message);
+
+        var added = await Workspace(id).ApplyPipelineEdits(
+            [new PipelineEditOp { Op = PipelineEditOps.AddStage, Stage = new PipelineStagePatch { Name = "Research", Instructions = "Research it." } }],
+            baseVersion: 1, "user-1", null);
+        Assert.True(added.Success, string.Join("; ", added.Errors));
+        var run = await WaitForRunAsync((await Workspace(id).StartRun("go", "user-1")).RunId!, Done);
+        Assert.Equal(["research"], run.Stages.Select(s => s.StageId));
+
+        // Removing the last stage gives the blank canvas back.
+        var cleared = await Workspace(id).ApplyPipelineEdits([new PipelineEditOp { Op = PipelineEditOps.RemoveStage, StageId = "research" }], baseVersion: 2, "user-1", null);
+        Assert.True(cleared.Success, string.Join("; ", cleared.Errors));
+        Assert.Empty(cleared.Pipeline!.Stages);
+    }
+
+    [Fact]
     public async Task Knowledge_a_stage_shares_stays_in_its_workspace_and_its_runs_find_it()
     {
         // input "remember": the stage shares a fact; "recall": it searches. Its summary is the tool's result.

@@ -292,8 +292,9 @@ calibrated against the real renewal rate."
 
 ## Workspaces
 
-A workspace is a reusable agent pipeline: drafted from a description, changed in plain language or
-on the canvas, and run by hand or by triggers. Create one workspace for W1–W7 so they share it:
+A workspace is a reusable agent pipeline: built on a blank canvas or drafted from a description,
+changed in plain language or on the canvas, and run by hand or by triggers. Create one workspace for
+W1–W7 so they share it, with **Describe it** selected (the form starts on **Blank canvas**):
 
 - **Name:** `Candle shop`
 - **What is this pipeline for?** `Research a topic for my small online candle shop and write it up
@@ -310,6 +311,20 @@ on the canvas, and run by hand or by triggers. Create one workspace for W1–W7 
 - [ ] Clicking a stage opens its settings: name, role, instructions, tools, helpers, retries,
       "may message other stages", "keep going if it fails", max cost.
 - [ ] **History** lists version 1.
+
+### W1b. A blank canvas
+
+**Tests:** starting a workspace without a draft.
+
+**Check:**
+- [ ] **New workspace** opens on **Blank canvas**: the name is "New workspace", the description is
+      empty and marked optional, and there are no example chips. **Describe it** brings back the
+      first example.
+- [ ] **Create with a blank canvas** is instant (no model call). The canvas is empty with a hint in
+      the middle, and the chat says the workspace was created with a blank canvas.
+- [ ] **Run** answers "The pipeline has no stages yet. Add one on the canvas first."
+- [ ] Add an agent from the palette and run: it works. Remove that stage: the canvas is blank again
+      (no "needs at least one stage" error).
 
 ### W2. Run it
 
@@ -500,6 +515,27 @@ and a skill under **Skills** with the scope set to the workspace.
 - [ ] The workspace's stage agents list the skill under SKILLS; a task's agents don't.
 - [ ] With the scope set to **Whole organization**, neither the fact nor the skill is listed.
 - [ ] The workspace header counts the skills and knowledge, as it counts files.
+- [ ] Add a fact `{"email_recipient": "you@example.com"}` and run "Who should the notification go
+      to?": the stage finds it although "notification" isn't in it (search matches any word).
+- [ ] A stage whose instructions mention the fact with `@knowledge:` (pick it after typing `@know`)
+      reads it before anything else.
+
+### W9b. Variables
+
+**Tests:** values every stage uses ([workspaces.md](workspaces.md#variables)).
+On the **Variables** tab, add `email_recipient` = `you@example.com` and **Save**.
+
+**Check:**
+- [ ] A name with capitals or spaces is turned into lowercase with `_`; a duplicate or a name
+      starting with a digit is flagged, and **Save** stays off.
+- [ ] Clicking `{{ vars.email_recipient }}` copies it. The tab counts the variables.
+- [ ] An agent stage with "Send the result to {{ vars.email_recipient }}" in its instructions gets
+      the address (its details show it), and its context lists the variables.
+- [ ] An action with `"to": "{{ vars.email_recipient }}"` in its arguments sends to it; a script
+      returning `data["vars"]` returns the variables. The stage editor's expressions help lists them.
+- [ ] Change the value while a run is in progress: that run keeps the old value, the next one gets
+      the new one.
+- [ ] **Clone** the workspace: the copy has the variables.
 
 ### W10. The workspace screen
 
@@ -577,6 +613,23 @@ With a database from before this release, open an old workspace.
 - [ ] It now has a one-stage pipeline doing its purpose, and the chat explains the change.
 - [ ] Its schedules and webhooks start runs of it; its old agents show as finished.
 
+### W13. Connector logos and Slack
+
+**Tests:** logos per service, and the Slack connector ([plugins.md](plugins.md)).
+
+**Check:**
+- [ ] **Integrations → Add connection** shows the services as a grid of logos; each connection
+      card shows its logo.
+- [ ] An action stage on the canvas shows the logo of the service it calls; an agent's **Tools**
+      circle shows its connections' logos (up to 3, then "+N").
+- [ ] Connect Slack with a bot token and a default channel: **Connect** says which team and bot.
+      The connection offers `post_message`, `list_channels` and `read_messages`.
+- [ ] An action calling `post_message` with no channel posts to the default channel; with
+      `thread_ts` it replies in the thread. A channel the bot isn't in fails with "/invite it there first".
+- [ ] A Slack connection with only an incoming webhook offers `post_message` alone.
+- [ ] The **Events** tab shows short labels (*Stage start*, *Run*, *Pipeline*) that don't overlap
+      the messages.
+
 ---
 
 ## Dashboard
@@ -599,6 +652,11 @@ models, e.g. a strong cloud one and a cheap or local one.
 - [ ] A Member sees the models and can pick and switch, but can't add or edit them.
 - [ ] Start a goal that names models per kind of work ("use Careful for the market analysis, Quick for collecting competitor pricing"): the spawn events and agent cards show each specialist on the model named, and "By model" splits the spend.
 - [ ] Turn off **Let agents choose models**: a new run's agents all use the task's model.
+- [ ] Rename a model a workspace stage uses (e.g. its model changed to gpt-6-luna and its name with
+      it) and save: its id becomes the new name's (`gpt-6-luna`); the stage's tag on the canvas and
+      its `@` mentions follow, **Let agents choose models** keeps its setting, and a run still in
+      progress on the old id carries on with the renamed model.
+- [ ] **Reset all** (operator) keeps every model, its prices and its key.
 
 ### D2. Analytics
 

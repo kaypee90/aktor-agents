@@ -65,6 +65,7 @@ public sealed partial class WorkspaceGrain(
         s.DailyTokenLimit = Math.Max(1_000, request.DailyTokenLimit ?? _opts.DefaultDailyTokenLimit);
         s.DailyCostLimitUsd = Math.Max(0.01m, request.DailyCostLimitUsd ?? _opts.DefaultDailyCostLimitUsd);
         s.TemplateId = request.TemplateId;
+        if (request.Variables is { } variables && WorkspaceVariables.Validate(variables).Count == 0) s.Variables = new Dictionary<string, string>(variables);
         if (request.SafetyPolicy is { } policy)
         {
             s.SafetyPolicy = policy with { ApprovalTimeoutHours = Math.Clamp(policy.ApprovalTimeoutHours, 1, 24 * 30), Rules = policy.Rules.Take(50).ToList() };
@@ -73,9 +74,11 @@ public sealed partial class WorkspaceGrain(
         var pipeline = request.Pipeline is { } given && Pipelines.PipelineValidator.Validate(given, _pipelineOpts).Count == 0
             ? given
             : DefaultPipeline(s.Goal);
-        AppendChat(ChatAuthorKind.System, "system", "Workspace",
-            $"Workspace created with a {pipeline.Stages.Count}-stage pipeline: {string.Join(" → ", Pipelines.PipelineValidator.TopologicalOrder(pipeline)!.Select(st => st.Name))}. " +
-            $"Run it with an input, or add a trigger to run it automatically. Daily budget: {s.DailyTokenLimit:N0} tokens / ${s.DailyCostLimitUsd:F2}.");
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", pipeline.Stages.Count == 0
+            ? $"Workspace created with a blank canvas. Add agents, actions and scripts on the canvas, or describe the pipeline you want. " +
+              $"Daily budget: {s.DailyTokenLimit:N0} tokens / ${s.DailyCostLimitUsd:F2}."
+            : $"Workspace created with a {pipeline.Stages.Count}-stage pipeline: {string.Join(" → ", Pipelines.PipelineValidator.TopologicalOrder(pipeline)!.Select(st => st.Name))}. " +
+              $"Run it with an input, or add a trigger to run it automatically. Daily budget: {s.DailyTokenLimit:N0} tokens / ${s.DailyCostLimitUsd:F2}.");
         await CommitPipelineAsync(pipeline, request.CreatedBy ?? request.OwnerId, request.TemplateId is null ? "Created" : $"Created from the '{request.TemplateId}' template");
 
         await PublishAsync(RuntimeEventType.WorkspaceCreated, $"Workspace '{s.Name}' created.",
@@ -170,6 +173,32 @@ public sealed partial class WorkspaceGrain(
             $"Daily budget set to {S.DailyTokenLimit:N0} tokens / ${S.DailyCostLimitUsd:F2}.");
         await SaveAsync();
         await ChangedAsync("budget");
+    }
+
+    public async Task<List<string>> SetVariables(Dictionary<string, string> variables, string changedBy)
+    {
+        if (!Exists) return ["No such workspace."];
+        var next = variables.ToDictionary(v => v.Key.Trim(), v => v.Value ?? string.Empty);
+        var errors = WorkspaceVariables.Validate(next);
+        if (errors.Count > 0) return errors;
+
+        var added = next.Keys.Except(S.Variables.Keys).Order().ToList();
+        var removed = S.Variables.Keys.Except(next.Keys).Order().ToList();
+        var changed = next.Keys.Intersect(S.Variables.Keys).Where(k => next[k] != S.Variables[k]).Order().ToList();
+        if (added.Count + removed.Count + changed.Count == 0) return [];
+
+        S.Variables = next;
+        var what = string.Join("; ", new[]
+        {
+            added.Count > 0 ? "added " + string.Join(", ", added) : null,
+            changed.Count > 0 ? "changed " + string.Join(", ", changed) : null,
+            removed.Count > 0 ? "removed " + string.Join(", ", removed) : null
+        }.OfType<string>());
+        await SaveAsync();
+        // Names only: values may be long, and the audit log is kept for good.
+        await AuditAsync("user", changedBy, changedBy, "workspace.variables", what, "ok", $"Variables {what}");
+        await ChangedAsync($"variables ({what})");
+        return [];
     }
 
     // ---- Conversation -------------------------------------------------------
@@ -982,6 +1011,7 @@ public sealed partial class WorkspaceGrain(
         {
             Name = S.Name,
             Goal = S.Goal,
+            Variables = new Dictionary<string, string>(S.Variables),
             TemplateId = S.TemplateId,
             Pipeline = S.Pipeline,
             SafetyPolicy = S.SafetyPolicy,
@@ -1575,6 +1605,7 @@ public sealed partial class WorkspaceGrain(
             Status = S.Status,
             Visibility = S.Visibility,
             OwnerId = S.OwnerId,
+            Variables = new Dictionary<string, string>(S.Variables),
             CreatedAt = S.CreatedAt,
             UpdatedAt = S.UpdatedAt,
             Conversation = S.Conversation.ToList(),

@@ -95,7 +95,10 @@ public sealed class WorkspaceScopeApiTests(ApiTestHostFixture fixture, ITestOutp
             Found(await store.SearchAsync(org.TenantId, "", MemoryKind.Shared, scope: MemoryScope.ForAgentIn(ws))));
         Assert.Equal(["refund-policy"], Found(await store.SearchAsync(org.TenantId, "", MemoryKind.Shared, scope: MemoryScope.ForAgentIn(otherWs))));
         Assert.Empty(await store.SearchAsync(org.TenantId, "board", MemoryKind.Shared)); // a task agent: the organization's only
-        Assert.Equal(["board-dates"], Found(await store.SearchAsync(org.TenantId, "board meets", MemoryKind.Shared, scope: MemoryScope.ForAgentIn(ws))));
+        // Entries sharing any word are found (members.txt: "Board …"), the one with every word first.
+        var boardMeets = await store.SearchAsync(org.TenantId, "board meets", MemoryKind.Shared, scope: MemoryScope.ForAgentIn(ws));
+        Assert.Equal("board-dates", boardMeets[0].Key);
+        Assert.Subset(new HashSet<string> { "board-dates", "members.txt", "refund-policy" }, boardMeets.Select(r => r.Key).ToHashSet());
 
         using var other = Host.ClientFor(await Host.CreateOrganizationAsync("KnowledgeStranger"));
         Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync($"/api/memory?workspace={ws}")).StatusCode);

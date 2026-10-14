@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import type { ConnectionUpdateBody } from "@/lib/api";
 import type { ConnectionView, NotifyLevel, PluginInfo, SideEffects } from "@/lib/workspaceTypes";
+import { ConnectorIcon } from "./ConnectorIcon";
 import { EndpointsEditor, GatewaySettings, parseEndpoints, serializeEndpoints } from "./ApiEndpoints";
 
 const LEVELS: NotifyLevel[] = ["Off", "Urgent", "Warning", "All"];
@@ -159,9 +160,10 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
   return (
     <div className="space-y-2 rounded border border-zinc-200 p-2 dark:border-zinc-800">
       <div className="flex items-center justify-between gap-2">
-        <div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <ConnectorIcon pluginId={c.plugin_id} name={plugin?.name} className="h-4 w-4" />
           <span className="font-semibold">{c.name}</span>
-          <span className="ml-1 text-zinc-500">· {plugin?.name ?? c.plugin_id}</span>
+          <span className="text-zinc-500">· {plugin?.name ?? c.plugin_id}</span>
         </div>
         <div className="flex gap-2">
           {c.supports_tools && (
@@ -300,9 +302,17 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
 
   return (
     <form onSubmit={submit} className="space-y-2 rounded border border-dashed border-zinc-300 p-2 dark:border-zinc-700">
-      <select value={pluginId} onChange={(e) => choose(e.target.value)} className={field}>
-        {plugins.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
+      <div className="grid grid-cols-2 gap-1 sm:grid-cols-3" role="radiogroup" aria-label="Service">
+        {plugins.map((p) => (
+          <button key={p.id} type="button" role="radio" aria-checked={p.id === pluginId} onClick={() => choose(p.id)} title={p.description}
+            className={`flex min-w-0 items-center gap-1.5 rounded border px-1.5 py-1 text-left ${p.id === pluginId
+              ? "border-brand-500 bg-brand-50 dark:bg-brand-500/10"
+              : "border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700"}`}>
+            <ConnectorIcon pluginId={p.id} name={p.name} className="h-4 w-4" />
+            <span className="truncate">{p.name}</span>
+          </button>
+        ))}
+      </div>
       {plugin && (
         <>
           <div className="text-zinc-500">{plugin.description}</div>
