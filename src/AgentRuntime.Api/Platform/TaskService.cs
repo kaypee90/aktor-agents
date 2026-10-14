@@ -129,7 +129,8 @@ public sealed class TaskService(
     IEventPublisher publisher,
     IOptions<Infrastructure.Tools.ToolsOptions> toolsOptions,
     UploadStore uploads,
-    ILogger<TaskService> logger)
+    ILogger<TaskService> logger,
+    WorkspacePrivacy privacy)
 {
     /// <summary>Who an attachment is recorded as created by.</summary>
     public const string UserAuthor = "user";
@@ -292,7 +293,7 @@ public sealed class TaskService(
         IReadOnlyList<Durability.JournalStep> sourceSteps, CancellationToken ct = default, string? modelProfileId = null, string? startedBy = null)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var source = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == sourceTaskId && t.TenantId == tenantId, ct)
+        var source = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == sourceTaskId, ct)
                      ?? throw new TaskServiceException($"No task '{sourceTaskId}'.", StatusCodes.Status404NotFound);
         if (sourceSteps.Count == 0) throw new TaskServiceException("This task has no recorded steps to replay.", StatusCodes.Status409Conflict);
         if (mode == Durability.ReplayMode.Fork && forkAfterStep is null) throw new TaskServiceException("A fork needs fork_after_step.");
@@ -317,7 +318,7 @@ public sealed class TaskService(
     public async Task<string> SwitchModelAsync(string tenantId, string taskId, string profileId, string? by, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct)
+        var task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct)
                    ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
         // A finished task takes follow-ups, which run on the model chosen now. Pipeline and study
         // runs take none (they run again from their workspace or study), so for them it's moot.
@@ -384,7 +385,7 @@ public sealed class TaskService(
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct)
+        var task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct)
                    ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
         if (task.RootAgentId is null || task.Status == "Rejected")
         {
@@ -450,7 +451,7 @@ public sealed class TaskService(
         TaskRecord? task;
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
         {
-            task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
+            task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct);
         }
 
         if (task is null) throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
@@ -503,7 +504,7 @@ public sealed class TaskService(
 
         await using (var check = await dbFactory.CreateDbContextAsync(ct))
         {
-            if (!await check.Tasks.AnyAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct))
+            if (!await (await VisibleTasksAsync(check, tenantId, ct)).AnyAsync(t => t.TaskId == taskId, ct))
             {
                 throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
             }
@@ -663,7 +664,7 @@ public sealed class TaskService(
     public async Task<IReadOnlyList<TaskChatEntry>?> GetChatAsync(string tenantId, string taskId, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
+        var task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct);
         if (task is null) return null;
 
         var root = task.RootAgentId;
@@ -740,7 +741,8 @@ public sealed class TaskService(
     {
         var workspaceId = request.WorkspaceId!;
         var workspace = grains.GetGrain<IWorkspaceGrain>(workspaceId);
-        if (!WorkspaceIds.IsWorkspace(workspaceId) || !TenantIds.Same(await workspace.GetTenantId() ?? "\0", tenantId))
+        if (!WorkspaceIds.IsWorkspace(workspaceId) || !TenantIds.Same(await workspace.GetTenantId() ?? "\0", tenantId) ||
+            (await privacy.HiddenForCurrentCallerAsync()).Contains(workspaceId))
         {
             throw new TaskServiceException($"No such workspace '{workspaceId}'.", StatusCodes.Status404NotFound);
         }
@@ -762,7 +764,7 @@ public sealed class TaskService(
     public async Task<TaskView?> GetAsync(string tenantId, string taskId, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.TaskId == taskId && t.TenantId == tenantId, ct);
+        var task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct);
         if (task is null) return PipelineIds.IsRun(taskId) ? await GetUnsavedRunAsync(tenantId, taskId) : null;
 
         var agents = await db.Agents.AsNoTracking().Where(a => a.TaskId == taskId)
@@ -947,10 +949,20 @@ public sealed class TaskService(
 
     /// <summary>A run whose task row isn't written yet (it's written from the run's first event, a
     /// moment after it starts): reported from the run itself, if it belongs to the organization.</summary>
+    /// <summary>The organization's tasks the current caller may see: not runs of someone else's
+    /// private workspace (docs/workspaces.md#private-workspaces). Every protocol goes through here.</summary>
+    private async Task<IQueryable<TaskRecord>> VisibleTasksAsync(AgentDbContext db, string tenantId, CancellationToken ct)
+    {
+        var hidden = await privacy.HiddenForCurrentCallerAsync(ct);
+        var tasks = db.Tasks.AsNoTracking().Where(t => t.TenantId == tenantId);
+        return hidden.Count == 0 ? tasks : tasks.Where(t => t.WorkspaceId == null || !hidden.Contains(t.WorkspaceId));
+    }
+
     private async Task<TaskView?> GetUnsavedRunAsync(string tenantId, string runId)
     {
         var run = await grains.GetGrain<IPipelineRunGrain>(runId).GetView();
         if (run is null || !TenantIds.Same(await grains.GetGrain<IWorkspaceGrain>(run.WorkspaceId).GetTenantId() ?? "\0", tenantId)) return null;
+        if ((await privacy.HiddenForCurrentCallerAsync()).Contains(run.WorkspaceId)) return null;
         return new TaskView
         {
             TaskId = runId,

@@ -67,7 +67,8 @@ workspace. Filters live in the page's URL, so a filtered view can be bookmarked 
   **Local**. A member or key deleted since keeps its runs, under a short id.
 - A workspace pipeline's runs are reported in the **Workspaces** view, not under Tasks (though
   each run opens as a task). There, runs are attributed to whoever started them, or **Triggers
-  (automatic runs)** for runs a schedule, webhook or watch started.
+  (automatic runs)** for runs a schedule, webhook or watch started. A form's runs belong to the
+  member who submitted it.
 - Input tokens are the uncached ones: cache reads and cache writes are counted apart, so the four
   kinds add up to every token sent and received. Cache writes are recorded from this release on.
 - Up to 20,000 runs and 100,000 model calls per query are included (the response says

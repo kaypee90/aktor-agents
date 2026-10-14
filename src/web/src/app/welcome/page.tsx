@@ -49,7 +49,7 @@ const products = [
   {
     icon: Icons.Workspaces,
     title: "Workspaces",
-    body: "Reusable pipelines of agents you edit in plain language or on a canvas. Run them on schedules, webhooks and watches; clone them or share them as templates.",
+    body: "Reusable pipelines of agents you edit in plain language or on a canvas. Run them on schedules, webhooks, watches and forms, mix agents with actions and scripts that need no model, and clone or share them as templates.",
   },
   {
     icon: Icons.Simulation,

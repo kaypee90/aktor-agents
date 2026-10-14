@@ -32,6 +32,17 @@ flowchart LR
 | **SMS (Twilio)** (`twilio-sms`) | `send_sms` | ✓ | ✓ | Verifies `X-Twilio-Signature` when `PUBLIC_BASE_URL` is set. |
 | **Email (SMTP)** (`email-smtp`) | `send_email` | ✓ | | STARTTLS on 587. A stable Message-ID per notification lets receivers spot retried duplicates. |
 | **Telegram** (`telegram`) | `send_message` | ✓ | ✓ | Registers its webhook with a per-connection secret token when `PUBLIC_BASE_URL` is set. |
+| **Google Sheets** (`google-sheets`) | `list_sheets`, `read_rows`; with writes `append_rows`, `update_range`, `clear_range` | | | Service account key; share each sheet with its email. |
+| **Google BigQuery** (`bigquery`) | `list_datasets`, `list_tables`, `get_table_schema`, `query` (SELECT only, dry-run checked); with writes `insert_rows`, `run_statement` | | | Service account key; values as `@name` parameters. |
+| **Airtable** (`airtable`) | `list_tables`, `list_records`, `get_record`; with writes `create_records`, `update_records`, `upsert_records`, `delete_records` | | | Personal access token scoped to one base. |
+| **Brevo** (`brevo`) | `send_email`, `send_sms`, `get_contact`; with contact writes `upsert_contact` | ✓ (email, SMS or both) | | API key. Emails carry an idempotency key, so a retry within Brevo's window isn't sent twice. |
+| **SendGrid** (`sendgrid`) | `send_email` | ✓ (email) | | API key with Mail Send. EU accounts: region `eu`. |
+| **Sentry** (`sentry`) | `list_projects`, `list_issues`, `get_issue`, `get_latest_event`; with changes `update_issue` | | | Auth token; sentry.io (US/EU) or self-hosted. `list_issues` is read-only, so a watch can alert on new issues without the model. |
+| **Zoho CRM** (`zoho-crm`) | `list_modules`, `list_fields`, `search_records`, `get_records`, `get_record`; with writes `create_records`, `update_records`, `upsert_records` | | | Self-client refresh token; any data center. |
+
+The data connectors (Sheets, BigQuery, Airtable, Zoho CRM) are described in
+[workflows.md](workflows.md#connectors), along with action stages that call their tools without a
+model.
 
 Nothing in the platform is tied to a particular business domain. Connections, tools, watches,
 schedules and webhooks are general building blocks, and what a workspace does comes from your

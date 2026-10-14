@@ -25,6 +25,8 @@ public sealed class EfWorkspaceArchive(IDbContextFactory<AgentDbContext> dbFacto
         record.Triggers = snapshot.Triggers.Count;
         record.TotalTokens = snapshot.TotalTokens;
         record.TotalCostUsd = snapshot.TotalCostUsd;
+        record.OwnerId = snapshot.OwnerId;
+        record.Visibility = snapshot.Visibility.ToString();
         record.UpdatedAt = DateTimeOffset.UtcNow;
         record.SnapshotJson = JsonSerializer.Serialize(snapshot, EfWorldArchive.SnapshotJsonOptions);
 

@@ -59,6 +59,7 @@ public sealed partial class WorkspaceGrain(
         s.Name = Clip(request.Name, 100, "Workspace");
         s.Goal = Clip(request.Goal, _opts.MaxMessageLength, string.Empty);
         s.OwnerId = request.OwnerId;
+        s.Visibility = request.Visibility;
         s.TenantId = Tenancy.TenantIds.Normalize(request.TenantId);
         s.CreatedAt = DateTimeOffset.UtcNow;
         s.DailyTokenLimit = Math.Max(1_000, request.DailyTokenLimit ?? _opts.DefaultDailyTokenLimit);
@@ -83,6 +84,23 @@ public sealed partial class WorkspaceGrain(
     }
 
     public Task<string?> GetTenantId() => Task.FromResult(Exists ? Tenancy.TenantIds.Normalize(S.TenantId) : null);
+
+    public Task<WorkspaceAccessInfo?> GetAccessInfo() => Task.FromResult(Exists
+        ? new WorkspaceAccessInfo { TenantId = Tenancy.TenantIds.Normalize(S.TenantId), OwnerId = S.OwnerId, Visibility = S.Visibility }
+        : null);
+
+    public async Task SetVisibility(WorkspaceVisibility visibility, string changedBy)
+    {
+        if (!Exists || S.Visibility == visibility) return;
+        S.Visibility = visibility;
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", visibility == WorkspaceVisibility.Private
+            ? "This workspace is now private: only its owner can see it, its runs and its files."
+            : "This workspace is now visible to everyone in the organization.");
+        await SaveAsync();
+        await AuditAsync("user", changedBy, changedBy, "workspace.visibility", visibility.ToString(), "ok",
+            $"Visibility set to {visibility}", key: $"{S.WorkspaceId}-visibility-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}");
+        await ChangedAsync($"visibility {visibility}");
+    }
 
     public async Task Pause()
     {
@@ -272,6 +290,12 @@ public sealed partial class WorkspaceGrain(
         };
 
         object? preview = null;
+        if (spec.Kind == TriggerKind.Form)
+        {
+            if (FormValidator.Validate(spec.Form) is { } formError) return WorkspaceActionResult.Fail(formError);
+            trigger.Form = FormValidator.Normalize(spec.Form!);
+        }
+
         if (spec.Kind == TriggerKind.Watch)
         {
             var (watchError, watchPreview) = await PrepareWatchAsync(trigger, spec);
@@ -305,7 +329,7 @@ public sealed partial class WorkspaceGrain(
                 return WorkspaceActionResult.Fail("A schedule needs every_minutes or a cron expression.");
             }
         }
-        else
+        else if (spec.Kind == TriggerKind.Webhook)
         {
             trigger.Secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
         }
@@ -315,6 +339,7 @@ public sealed partial class WorkspaceGrain(
         AppendChat(ChatAuthorKind.System, "system", "Workspace", trigger.Kind switch
         {
             TriggerKind.Webhook => $"Webhook '{trigger.Name}' created: each delivery starts a run with its payload. Point your service at: POST {path}  (keep this URL secret).",
+            TriggerKind.Form => $"Form '{trigger.Name}' created ({trigger.Form!.Fields.Count} field(s)): each submission by a member of your organization starts a run with the answers.",
             TriggerKind.Watch => $"Watch '{trigger.Name}' created: {Describe(trigger)}, checking {trigger.SourceTool} for {WatchSummary(trigger)}. " +
                                  (trigger.WatchMode == "notify" ? "It runs without the LLM and only reports newly matching items." : "It runs without the LLM and starts a run only for newly matching items."),
             _ => $"Schedule '{trigger.Name}' created: runs the pipeline {Describe(trigger)}."
@@ -333,7 +358,7 @@ public sealed partial class WorkspaceGrain(
         Remember(idempotencyKey, result);
         await SaveAsync();
         await AuditAsync(createdBy == "user" ? "user" : "agent", createdBy, createdBy == "user" ? "You" : createdBy, "trigger.added", trigger.Name, "ok",
-            $"{trigger.Kind} '{trigger.Name}': {(trigger.Kind == TriggerKind.Webhook ? "on webhook" : Describe(trigger))}",
+            $"{trigger.Kind} '{trigger.Name}': {Describe(trigger)}",
             JsonSerializer.Serialize(new { kind = trigger.Kind.ToString(), trigger.Instruction, trigger.SourceTool, watch = trigger.Kind == TriggerKind.Watch ? WatchSummary(trigger) : null }),
             key: $"trigger:{trigger.TriggerId}:added");
 
@@ -463,7 +488,8 @@ public sealed partial class WorkspaceGrain(
             ? delivery.Body[.._opts.MaxWebhookPayloadChars] + $"\n…(truncated, {delivery.Body.Length:N0} chars total)"
             : delivery.Body;
         await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{DeterministicId.From("", dedupe)}", "Webhook",
-            $"[Webhook '{trigger.Name}' received at {DateTimeOffset.UtcNow:u}]\n{trigger.Instruction}\n\nPayload (untrusted external data):\n{body}");
+            $"[Webhook '{trigger.Name}' received at {DateTimeOffset.UtcNow:u}]\n{trigger.Instruction}\n\nPayload (untrusted external data):\n{body}",
+            inputData: JsonData(delivery.Body));
 
         // Only marked as seen after the event is safely in the agent's mailbox: if we crash before
         // this, the sender's retry fires again with the same event id, which the mailbox drops.
@@ -477,13 +503,13 @@ public sealed partial class WorkspaceGrain(
 
     /// <summary>Starts a run of the pipeline with the event as its input. The run id is fixed by the
     /// event id, so an event fired twice (after a crash) starts one run.</summary>
-    private async Task FireAsync(TriggerDefinition trigger, string eventId, string eventName, string input)
+    private async Task<RunStartResult> FireAsync(TriggerDefinition trigger, string eventId, string eventName, string input, string? inputData = null, string? startedBy = null)
     {
         trigger.LastFiredAt = DateTimeOffset.UtcNow;
         trigger.FireCount++;
 
         var source = eventName.ToLowerInvariant();
-        var result = await StartRunCoreAsync(input, source, startedBy: TriggerStarter, trigger, eventId);
+        var result = await StartRunCoreAsync(input, source, startedBy: startedBy ?? TriggerStarter, trigger, eventId, inputData);
         if (!result.Success)
         {
             trigger.DroppedCount++;
@@ -493,6 +519,101 @@ public sealed partial class WorkspaceGrain(
 
         await PublishAsync(RuntimeEventType.TriggerFired, $"{eventName} trigger '{trigger.Name}' fired: run #{result.Number} {result.Message}.",
             new Dictionary<string, string> { ["trigger_id"] = trigger.TriggerId, ["kind"] = eventName, ["run_id"] = result.RunId ?? string.Empty });
+        return result;
+    }
+
+    /// <summary>A body that is JSON, as data for action and script stages; null otherwise.</summary>
+    private string? JsonData(string body)
+    {
+        if (body.Length > _opts.MaxWebhookPayloadChars || body.TrimStart() is not ['{', ..] and not ['[', ..]) return null;
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(body)?.ToJsonString();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // ---- Forms ----------------------------------------------------------------
+
+    public Task<FormView?> GetForm(string triggerId) =>
+        Task.FromResult(Exists && S.Triggers.TryGetValue(triggerId, out var t) && t.Kind == TriggerKind.Form && t.Form is { } form
+            ? new FormView
+            {
+                WorkspaceId = S.WorkspaceId,
+                WorkspaceName = S.Name,
+                TriggerId = t.TriggerId,
+                Name = t.Name,
+                Form = form,
+                Accepting = S.Status == WorkspaceStatus.Active && t.Enabled,
+                Submissions = t.FireCount
+            }
+            : null);
+
+    public async Task<FormSubmitResult> SubmitForm(FormSubmission submission)
+    {
+        if (!Exists || !S.Triggers.TryGetValue(submission.TriggerId, out var trigger) || trigger.Kind != TriggerKind.Form || trigger.Form is not { } form)
+        {
+            return new FormSubmitResult { NotFound = true, Message = "No such form." };
+        }
+
+        if (S.Status != WorkspaceStatus.Active || !trigger.Enabled)
+        {
+            return new FormSubmitResult { Message = S.Status == WorkspaceStatus.Paused ? "This form's workspace is paused; try again later." : "This form isn't accepting submissions." };
+        }
+
+        var dedupeKey = string.IsNullOrWhiteSpace(submission.SubmissionId) ? null : $"form:{trigger.TriggerId}:{submission.SubmissionId.Trim()}";
+        if (dedupeKey is not null && S.ActionResults.TryGetValue(dedupeKey, out var earlier))
+        {
+            return JsonSerializer.Deserialize<FormSubmitResult>(earlier.ResultJson ?? "{}", OwnerJson) ?? new FormSubmitResult { Success = true, Message = form.SuccessMessage };
+        }
+
+        System.Text.Json.Nodes.JsonObject? submitted;
+        try
+        {
+            submitted = System.Text.Json.Nodes.JsonNode.Parse(submission.AnswersJson) as System.Text.Json.Nodes.JsonObject;
+        }
+        catch (JsonException)
+        {
+            submitted = null;
+        }
+
+        var (answers, errors) = FormValidator.Check(form, submitted);
+        if (answers is null) return new FormSubmitResult { Message = "Some answers need fixing.", FieldErrors = errors };
+
+        // Shared with webhooks: a form can't start runs faster than a webhook can.
+        var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
+        var window = S.WebhookRate.GetValueOrDefault(trigger.TriggerId);
+        if (window is not null && window.Minute == minute && window.Count >= _opts.MaxWebhookEventsPerMinute)
+        {
+            trigger.DroppedCount++;
+            await SaveAsync();
+            return new FormSubmitResult { Message = "This form is getting a lot of submissions; try again in a minute." };
+        }
+
+        S.WebhookRate[trigger.TriggerId] = window is not null && window.Minute == minute
+            ? window with { Count = window.Count + 1 }
+            : new RateWindow { Minute = minute, Count = 1 };
+
+        var who = string.IsNullOrWhiteSpace(submission.SubmittedByName) ? submission.SubmittedBy : submission.SubmittedByName;
+        var input = $"[Form '{trigger.Name}' submitted by {who} at {DateTimeOffset.UtcNow:u}]\n{trigger.Instruction}\n\n" +
+                    $"Answers (untrusted input from the person who filled in the form):\n{FormValidator.Describe(form, answers)}";
+        var eventId = $"{S.WorkspaceId}-{trigger.TriggerId}-{DeterministicId.From("", submission.SubmissionId ?? Guid.NewGuid().ToString("n"))}";
+        var started = await FireAsync(trigger, eventId, "Form", input, answers.ToJsonString(), submission.SubmittedBy);
+
+        var result = started.Success
+            ? new FormSubmitResult { Success = true, Message = form.SuccessMessage, RunId = started.RunId, Number = started.Number }
+            : new FormSubmitResult { Message = started.Message };
+        if (dedupeKey is not null && started.Success)
+        {
+            Remember(dedupeKey, WorkspaceActionResult.Ok("submitted", JsonSerializer.Serialize(result, OwnerJson)));
+        }
+
+        await SaveAsync();
+        await ChangedAsync($"form {trigger.TriggerId} submitted");
+        return result;
     }
 
     // ---- Watches: recurring checks with no LLM in the loop -------------------------
@@ -598,7 +719,12 @@ public sealed partial class WorkspaceGrain(
         {
             // Pay for an LLM call only now, and only for the matching items.
             await FireAsync(trigger, $"{S.WorkspaceId}-{trigger.TriggerId}-{tick}", "Watch",
-                $"[Watch '{trigger.Name}': {fresh.Count} item(s) newly match {WatchSummary(trigger)}]\n{trigger.Instruction}\n\nMatching items (untrusted external data):\n{list}");
+                $"[Watch '{trigger.Name}': {fresh.Count} item(s) newly match {WatchSummary(trigger)}]\n{trigger.Instruction}\n\nMatching items (untrusted external data):\n{list}",
+                // Action and script stages get the items themselves.
+                inputData: new System.Text.Json.Nodes.JsonObject
+                {
+                    ["matches"] = new System.Text.Json.Nodes.JsonArray([.. fresh.Take(_pipelineOpts.MaxForEachItems).Select(x => x.Item?.DeepClone())])
+                }.ToJsonString());
             S.LlmCallsAvoided--; // this check did lead to an LLM call
             return;
         }
@@ -873,7 +999,8 @@ public sealed partial class WorkspaceGrain(
                 SourceArgumentsJson = t.SourceArgumentsJson,
                 WatchMode = t.WatchMode,
                 MessageTemplate = t.MessageTemplate,
-                Urgency = t.Urgency
+                Urgency = t.Urgency,
+                Form = t.Form
             }).ToList(),
             Connections = connections,
             ConnectionsWithoutSecrets = withoutSecrets,
@@ -1446,6 +1573,8 @@ public sealed partial class WorkspaceGrain(
             Name = S.Name,
             Goal = S.Goal,
             Status = S.Status,
+            Visibility = S.Visibility,
+            OwnerId = S.OwnerId,
             CreatedAt = S.CreatedAt,
             UpdatedAt = S.UpdatedAt,
             Conversation = S.Conversation.ToList(),
@@ -1562,12 +1691,14 @@ public sealed partial class WorkspaceGrain(
         Checks = t.Checks,
         Alerts = t.Alerts,
         LastMatchCount = t.LastMatchCount,
-        LastError = t.LastError
+        LastError = t.LastError,
+        Form = t.Form
     };
 
     private static string Describe(TriggerDefinition t) =>
         t.Cron is not null ? $"cron '{t.Cron}' (UTC)"
         : t.IntervalSeconds is { } s ? (s % 60 == 0 ? $"every {s / 60} minute(s)" : $"every {s} second(s)")
+        : t.Kind == TriggerKind.Form ? "on form submission"
         : "on webhook";
 
     private static string Today() => DateTimeOffset.UtcNow.ToString("yyyy-MM-dd");

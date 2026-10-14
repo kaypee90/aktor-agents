@@ -179,7 +179,9 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
 
         using var response = await httpClientFactory.CreateClient("integrations").SendAsync(httpRequest, request.CancellationToken);
         var text = await response.Content.ReadAsStringAsync(request.CancellationToken);
-        var payload = JsonSerializer.Serialize(new { status = (int)response.StatusCode, body = Body(text) });
+        // What was called, so a 404 can be told apart from a wrong path at a glance. The credential
+        // travels in a header, never in the URL.
+        var payload = JsonSerializer.Serialize(new { status = (int)response.StatusCode, request = $"{method.Method} {uri}", body = Body(text) });
         return response.IsSuccessStatusCode ? ToolExecutionResult.Ok(payload) : ToolExecutionResult.Fail(payload);
     }
 
@@ -213,6 +215,14 @@ public sealed class HttpApiPlugin(IHttpClientFactory httpClientFactory) : IToolP
         if (Uri.TryCreate(path, UriKind.Absolute, out var absolute) && absolute.Scheme is "http" or "https" || path.StartsWith("//"))
         {
             error = "Use a path relative to the connection's base URL, not a full URL.";
+            return false;
+        }
+
+        // Braces left in a path are a placeholder nobody filled in: /users/{id} or /users/{1}.
+        if (path.Contains('{') || path.Contains('}'))
+        {
+            error = $"The path '{path}' has braces in it. Put the value itself in the path (\"/users/42\", or \"/users/{{{{ item }}}}\" in a step's arguments), " +
+                    "or add the URL as an endpoint with a {name} placeholder and pass name as an argument.";
             return false;
         }
 

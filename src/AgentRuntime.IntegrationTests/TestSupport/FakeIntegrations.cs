@@ -118,3 +118,30 @@ public static class TestAudit
 {
     public static readonly AgentRuntime.Safety.InMemoryAuditLog Log = new();
 }
+
+/// <summary>Script stages in tests: the code names a handler here, which gets the stage's data.</summary>
+public sealed class FakeScriptRunner : AgentRuntime.Pipelines.IScriptRunner
+{
+    public static readonly ConcurrentDictionary<string, Func<System.Text.Json.Nodes.JsonObject, System.Text.Json.Nodes.JsonNode?>> Handlers = new();
+    public static readonly ConcurrentQueue<string> Seen = new();
+
+    public Task<AgentRuntime.Pipelines.ScriptRunResult> RunAsync(AgentRuntime.Pipelines.ScriptRunRequest request, CancellationToken cancellationToken = default)
+    {
+        Seen.Enqueue(request.DataJson);
+        if (!Handlers.TryGetValue(request.Code.Trim(), out var handler))
+        {
+            return Task.FromResult(AgentRuntime.Pipelines.ScriptRunResult.Failed($"NameError: no test script '{request.Code.Trim()}'"));
+        }
+
+        try
+        {
+            var data = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(request.DataJson)!;
+            var output = handler(data);
+            return Task.FromResult(new AgentRuntime.Pipelines.ScriptRunResult { Ok = true, OutputJson = output?.ToJsonString() ?? "null", Logs = $"ran {request.Code.Trim()}" });
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult(AgentRuntime.Pipelines.ScriptRunResult.Failed($"{ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+}

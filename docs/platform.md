@@ -46,7 +46,7 @@ and the first account created on a server takes it over.
 
 | Role | Can |
 |---|---|
-| Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. |
+| Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. The exception is other people's [private workspaces](workspaces.md#private-workspaces), which no role can see. |
 | Member | Also create workspaces, tasks, studies and worlds, pick or switch a task's or study's model, clone workspaces and save them as templates, add knowledge and datasets, instruct agents, add triggers, and decide approvals. |
 | Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys, and delete knowledge, archived workspaces, studies and organization templates. |
 | Owner | Also manage billing and who is an owner. An organization always keeps at least one owner. |

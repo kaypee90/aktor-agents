@@ -9,13 +9,34 @@ public enum WorkspaceStatus
     Archived
 }
 
+/// <summary>Who in the organization can see a workspace.</summary>
+public enum WorkspaceVisibility
+{
+    /// <summary>Every signed-in member of the organization (their role decides what they may change).</summary>
+    Organization,
+    /// <summary>Only its owner: to everyone else it, its runs, files, events and spend don't exist.</summary>
+    Private
+}
+
+/// <summary>What the API needs to decide who may see a workspace.</summary>
+[GenerateSerializer]
+public sealed record WorkspaceAccessInfo
+{
+    [Id(0)] public required string TenantId { get; init; }
+    [Id(1)] public required string OwnerId { get; init; }
+    [Id(2)] public WorkspaceVisibility Visibility { get; init; }
+}
+
 public enum TriggerKind
 {
     Schedule,
     Webhook,
     /// <summary>A compiled check: the runtime calls a read-only tool on a schedule and evaluates a
     /// rule in code, with no LLM involved unless something matches.</summary>
-    Watch
+    Watch,
+    /// <summary>A form that signed-in members of the organization fill in; each submission starts
+    /// a run with the answers as its input.</summary>
+    Form
 }
 
 public enum ChatAuthorKind
@@ -55,6 +76,7 @@ public sealed record WorkspaceCreationRequest
     [Id(8)] public Pipelines.PipelineDefinition? Pipeline { get; init; }
     /// <summary>Who created it (a user id or "key:&lt;id&gt;"), recorded on the first pipeline version.</summary>
     [Id(9)] public string? CreatedBy { get; init; }
+    [Id(10)] public WorkspaceVisibility Visibility { get; init; } = WorkspaceVisibility.Organization;
 }
 
 [GenerateSerializer]
@@ -108,6 +130,9 @@ public sealed class TriggerDefinition
     [Id(24)] public string? LastError { get; set; }
     [Id(25)] public int ConsecutiveFailures { get; set; }
     [Id(26)] public int LastMatchCount { get; set; }
+
+    // ---- Form (TriggerKind.Form) ----
+    [Id(27)] public FormDefinition? Form { get; set; }
 }
 
 [GenerateSerializer]
@@ -126,6 +151,9 @@ public sealed record TriggerSpec
     [Id(9)] public string? WatchMode { get; init; }
     [Id(10)] public string? MessageTemplate { get; init; }
     [Id(11)] public string? Urgency { get; init; }
+
+    // Form
+    [Id(12)] public FormDefinition? Form { get; init; }
 }
 
 [GenerateSerializer]
@@ -150,6 +178,7 @@ public sealed record TriggerView
     [Id(16)] public long Alerts { get; init; }
     [Id(17)] public int LastMatchCount { get; init; }
     [Id(18)] public string? LastError { get; init; }
+    [Id(19)] public FormDefinition? Form { get; init; }
 }
 
 [GenerateSerializer]
@@ -286,6 +315,7 @@ public sealed class WorkspaceState
     [Id(38)] public int NextRunNumber { get; set; } = 1;
     /// <summary>Runs refused because the queue was full.</summary>
     [Id(39)] public long DroppedRuns { get; set; }
+    [Id(40)] public WorkspaceVisibility Visibility { get; set; } = WorkspaceVisibility.Organization;
 }
 
 /// <summary>One run in a workspace's history.</summary>
@@ -377,6 +407,9 @@ public sealed record WorkspaceSnapshot
     /// <summary>Recent runs, newest first.</summary>
     [Id(24)] public List<WorkspaceRunSummary> Runs { get; init; } = [];
     [Id(25)] public int QueuedRuns { get; init; }
+    [Id(26)] public WorkspaceVisibility Visibility { get; init; }
+    /// <summary>Who owns it: a user id, or "key:&lt;id&gt;" for one made with an API key.</summary>
+    [Id(27)] public string OwnerId { get; init; } = string.Empty;
 }
 
 /// <summary>Durable list of workspaces for the API (the grain holds the live state).</summary>

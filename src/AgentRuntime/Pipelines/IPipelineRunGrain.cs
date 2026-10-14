@@ -26,6 +26,10 @@ public interface IPipelineRunGrain : IGrainWithStringKey
     /// <summary>A message to the run: its stage agents' completion and failure notices.</summary>
     Task<AgentMessageAck> Deliver(AgentMessage message);
 
+    /// <summary>An action or script stage's step finished. Ignored unless <paramref name="stepId"/>
+    /// is the stage's attempt in progress.</summary>
+    Task OnStepFinished(string stageId, string stepId, StepResult result);
+
     [AlwaysInterleave]
     Task<PipelineRunView?> GetView();
 

@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.Configure<Integrations.IntegrationsOptions>(configuration.GetSection(Integrations.IntegrationsOptions.SectionName));
         services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
         services.Configure<Pipelines.PipelineOptions>(configuration.GetSection(Pipelines.PipelineOptions.SectionName));
+        services.Configure<Pipelines.ScriptOptions>(configuration.GetSection(Pipelines.ScriptOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
         services.Configure<Tenancy.BillingOptions>(configuration.GetSection(Tenancy.BillingOptions.SectionName));
         services.Configure<Studies.StudyOptions>(configuration.GetSection(Studies.StudyOptions.SectionName));
@@ -108,6 +109,10 @@ public static class ServiceCollectionExtensions
         // Safety: the audit log defaults to in-memory; the infrastructure layer makes it durable.
         services.TryAddSingleton<Safety.IAuditLog, Safety.InMemoryAuditLog>();
         services.AddSingleton<Integrations.IntegrationService>();
+
+        // Action and script stages of pipelines. Scripts are refused unless the host provides a sandbox.
+        services.TryAddSingleton<Pipelines.IScriptRunner, Pipelines.UnavailableScriptRunner>();
+        services.AddSingleton<Pipelines.PipelineStepExecutor>();
 
         services.AddSingleton<IAgentPromptBuilder, AgentPromptBuilder>();
         services.AddSingleton<ISystemPromptSection, RoleSection>();

@@ -1,6 +1,9 @@
 /** A workspace's pipeline (docs/workspaces.md), as the API returns it. */
 
 export type StageFailurePolicy = "FailRun" | "Continue";
+/** What does a stage's work: an AI agent, a fixed call to a connected service, or code. */
+export type StageKind = "Agent" | "Action" | "Script";
+export type ScriptLanguage = "python" | "javascript";
 export type PipelineRunStatus = "Queued" | "Running" | "Completed" | "Failed" | "Cancelled" | "TimedOut";
 export type StageRunStatus = "Pending" | "Running" | "Completed" | "Failed" | "Skipped";
 
@@ -18,7 +21,23 @@ export interface PipelineStage {
   retries: number;
   on_failure: StageFailurePolicy;
   max_cost_usd: number | null;
+  /** Missing in pipelines saved before stage kinds: an agent. */
+  kind?: StageKind;
+  /** Action: the connection tool to call, e.g. "sheets__append_rows". */
+  tool?: string | null;
+  /** Action: the tool's arguments as JSON, with {{ expressions }} over the run's data. */
+  arguments?: string | null;
+  /** Action: call the tool once per item of this list. */
+  for_each?: string | null;
+  /** Script: the language and the body of a function given `data`. */
+  language?: ScriptLanguage | null;
+  code?: string | null;
+  timeout_seconds?: number | null;
+  /** A color for the stage on the canvas; null: none. */
+  color?: string | null;
 }
+
+export const kindOf = (stage: Pick<PipelineStage, "kind">): StageKind => stage.kind ?? "Agent";
 
 /** Where a stage sits on the canvas. */
 export type StagePosition = { x: number; y: number };
@@ -92,6 +111,11 @@ export interface StageRunView {
   started_at: string | null;
   completed_at: string | null;
   inputs: string[];
+  kind?: StageKind;
+  /** What the stage produced, as JSON text. */
+  output_json?: string | null;
+  /** What a script printed. */
+  logs?: string | null;
 }
 
 export interface PipelineRunView {
@@ -110,6 +134,8 @@ export interface PipelineRunView {
   completed_at: string | null;
   summary: string | null;
   stages: StageRunView[];
+  /** The input as data (a form's answers, a webhook's JSON), when it came as data. */
+  input_data?: string | null;
 }
 
 export interface RunStartResult {

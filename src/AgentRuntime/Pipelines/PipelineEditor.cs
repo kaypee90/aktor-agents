@@ -40,7 +40,9 @@ public static partial class PipelineValidator
             if (!IsValidStageId(stage.StageId)) errors.Add($"Stage id '{stage.StageId}' must be lowercase letters, digits and dashes (40 at most).");
             if (!ids.Add(stage.StageId)) errors.Add($"Two stages have the id '{stage.StageId}'.");
             if (string.IsNullOrWhiteSpace(stage.Name)) errors.Add($"Stage '{stage.StageId}' needs a name.");
-            if (string.IsNullOrWhiteSpace(stage.Instructions)) errors.Add($"Stage '{label}' needs instructions.");
+            if (stage.Kind == StageKind.Action) ValidateAction(stage, label, options, errors);
+            else if (stage.Kind == StageKind.Script) ValidateScript(stage, label, options, errors);
+            else if (string.IsNullOrWhiteSpace(stage.Instructions)) errors.Add($"Stage '{label}' needs instructions.");
             if (stage.Instructions.Length > options.MaxInstructionsLength)
             {
                 errors.Add($"Stage '{label}' has instructions longer than {options.MaxInstructionsLength} characters.");
@@ -59,6 +61,10 @@ public static partial class PipelineValidator
             }
 
             if (stage.Inputs.Contains(stage.StageId, StringComparer.OrdinalIgnoreCase)) errors.Add($"Stage '{label}' can't take its own result as input.");
+            if (stage.Color is not null && !StageColors.IsKnown(stage.Color))
+            {
+                errors.Add($"Stage '{label}' has an unknown color '{stage.Color}'. Use one of: {string.Join(", ", StageColors.All)}.");
+            }
         }
 
         foreach (var stage in pipeline.Stages)
@@ -75,6 +81,39 @@ public static partial class PipelineValidator
         }
 
         return errors;
+    }
+
+    /// <summary>Whether the tool and arguments make sense. Whether the tool exists is checked when the
+    /// stage runs, since connections come and go independently of the pipeline.</summary>
+    private static void ValidateAction(PipelineStage stage, string label, PipelineOptions options, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(stage.Tool) || !Integrations.ConnectionNames.IsConnectionTool(stage.Tool))
+        {
+            errors.Add($"Action '{label}' needs a connection tool to call, e.g. sheets__append_rows.");
+        }
+
+        var arguments = stage.Arguments ?? "{}";
+        if (arguments.Length > options.MaxArgumentsLength)
+        {
+            errors.Add($"Action '{label}' has arguments longer than {options.MaxArgumentsLength} characters.");
+        }
+        else if (PipelineExpressions.CheckTemplate(arguments) is { } problem)
+        {
+            errors.Add($"Action '{label}': {problem}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(stage.ForEach) && PipelineExpressions.CheckExpression(stage.ForEach) is { } forEachProblem)
+        {
+            errors.Add($"Action '{label}' for each: {forEachProblem}");
+        }
+    }
+
+    private static void ValidateScript(PipelineStage stage, string label, PipelineOptions options, List<string> errors)
+    {
+        if (!ScriptLanguages.IsKnown(stage.Language)) errors.Add($"Script '{label}' needs a language: {string.Join(" or ", ScriptLanguages.All)}.");
+        if (string.IsNullOrWhiteSpace(stage.Code)) errors.Add($"Script '{label}' needs code.");
+        else if (stage.Code.Length > options.MaxCodeLength) errors.Add($"Script '{label}' has code longer than {options.MaxCodeLength} characters.");
+        if (stage.TimeoutSeconds is < 1 or > 300) errors.Add($"Script '{label}' may run between 1 and 300 seconds.");
     }
 
     /// <summary>The stages in an order where every stage comes after its inputs; null if there's a cycle.</summary>
@@ -261,7 +300,15 @@ public static partial class PipelineEditor
         MayMessageStages = patch.MayMessageStages ?? stage.MayMessageStages,
         Retries = patch.Retries ?? stage.Retries,
         OnFailure = patch.OnFailure ?? stage.OnFailure,
-        MaxCostUsd = patch.MaxCostUsd is null ? stage.MaxCostUsd : patch.MaxCostUsd <= 0 ? null : patch.MaxCostUsd
+        MaxCostUsd = patch.MaxCostUsd is null ? stage.MaxCostUsd : patch.MaxCostUsd <= 0 ? null : patch.MaxCostUsd,
+        Kind = patch.Kind ?? stage.Kind,
+        Tool = patch.Tool is null ? stage.Tool : patch.Tool.Trim() is { Length: > 0 } tool ? tool : null,
+        Arguments = patch.Arguments ?? stage.Arguments,
+        ForEach = patch.ForEach is null ? stage.ForEach : patch.ForEach.Trim() is { Length: > 0 } each ? each : null,
+        Language = patch.Language?.Trim().ToLowerInvariant() ?? stage.Language,
+        Code = patch.Code ?? stage.Code,
+        TimeoutSeconds = patch.TimeoutSeconds is null ? stage.TimeoutSeconds : patch.TimeoutSeconds <= 0 ? null : patch.TimeoutSeconds,
+        Color = patch.Color is null ? stage.Color : patch.Color.Trim().ToLowerInvariant() is { Length: > 0 } color ? color : null
     };
 
     private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);

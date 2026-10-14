@@ -86,7 +86,10 @@ public static class Policies
     {
         options.FallbackPolicy = new AuthorizationPolicyBuilder(AktorAuthenticationHandler.SchemeName).RequireAuthenticatedUser().Build();
         options.AddPolicy(Member, p => AtLeast(p, TenantRole.Member));
-        options.AddPolicy(Admin, p => AtLeast(p, TenantRole.Admin));
+        // Admins, or the owner of the private workspace the request is about: nobody else can see a
+        // private workspace, so its owner must be able to run it fully (budget, connections, deletion).
+        options.AddPolicy(Admin, p => p.AddAuthenticationSchemes(AktorAuthenticationHandler.SchemeName)
+            .RequireAuthenticatedUser().AddRequirements(new AdminOrPrivateOwnerRequirement()));
         options.AddPolicy(Owner, p => AtLeast(p, TenantRole.Owner));
         options.AddPolicy(PlatformAdmin, p => p.AddAuthenticationSchemes(AktorAuthenticationHandler.SchemeName)
             .RequireAuthenticatedUser().RequireClaim("platform_admin", "true"));
@@ -102,4 +105,30 @@ public static class CallerHttpExtensions
     /// <summary>The authenticated caller. Only call from endpoints that require authentication.</summary>
     public static Caller Caller(this HttpContext http) =>
         AktorAuthenticationHandler.CallerOf(http) ?? throw new InvalidOperationException("The request isn't authenticated.");
+}
+
+/// <summary>See <see cref="Policies.Admin"/>.</summary>
+public sealed class AdminOrPrivateOwnerRequirement : IAuthorizationRequirement;
+
+public sealed class AdminOrPrivateOwnerHandler(WorkspacePrivacy privacy, IGrainFactory grains) : AuthorizationHandler<AdminOrPrivateOwnerRequirement>
+{
+    protected override async Task HandleRequirementAsync(AuthorizationHandlerContext context, AdminOrPrivateOwnerRequirement requirement)
+    {
+        if (!Enum.TryParse<TenantRole>(context.User.FindFirstValue(ClaimTypes.Role), out var role)) return;
+        if (role >= TenantRole.Admin)
+        {
+            context.Succeed(requirement);
+            return;
+        }
+
+        if (role < TenantRole.Member || context.Resource is not HttpContext http || AktorAuthenticationHandler.CallerOf(http) is not { } caller) return;
+        var id = http.GetRouteValue("workspaceId") as string ?? http.GetRouteValue("id") as string;
+        if (id is null || !AgentRuntime.Workspaces.WorkspaceIds.IsWorkspace(id)) return;
+        var info = await grains.GetGrain<AgentRuntime.Workspaces.IWorkspaceGrain>(id).GetAccessInfo();
+        if (info is { Visibility: AgentRuntime.Workspaces.WorkspaceVisibility.Private } && TenantIds.Same(info.TenantId, caller.TenantId) &&
+            await privacy.OwnsAsync(caller, info.OwnerId))
+        {
+            context.Succeed(requirement);
+        }
+    }
 }

@@ -243,6 +243,10 @@ public sealed class WorkspaceRecord
     public string SnapshotJson { get; set; } = "{}";
     /// <summary>"pipeline", or "study" for a study's workspace, which the Workspaces page doesn't list.</summary>
     public string Kind { get; set; } = "pipeline";
+    /// <summary>Who owns it: a user id, or "key:&lt;id&gt;".</summary>
+    public string OwnerId { get; set; } = string.Empty;
+    /// <summary>"Organization" or "Private" (only the owner sees it).</summary>
+    public string Visibility { get; set; } = "Organization";
 }
 
 /// <summary>An encrypted connection secret (see Secrets/SecretProtector). Never plaintext.</summary>

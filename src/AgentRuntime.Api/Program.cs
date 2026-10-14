@@ -37,6 +37,8 @@ builder.Services.AddOpenApi(o => o.AddDocumentTransformer((doc, _, _) =>
 // Platform: every request is authenticated (session cookie or API key) and scoped to one
 // organization (docs/platform.md). Secret-URL endpoints (webhooks, channels) opt out explicitly.
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<WorkspacePrivacy>();
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, AdminOrPrivateOwnerHandler>();
 builder.Services.AddScoped<TenantAccess>();
 builder.Services.AddAuthentication(AktorAuthenticationHandler.SchemeName)
     .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, AktorAuthenticationHandler>(AktorAuthenticationHandler.SchemeName, null);
@@ -131,10 +133,22 @@ AgentRuntime.Api.Interop.A2aEndpoint.MapA2a(app);
 AgentRuntime.Api.Interop.AcpEndpoint.MapAcp(app);
 
 // Real-time event stream (CLAUDE.md sections 29, 31, 46) via Server-Sent Events.
-app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, AgentRuntime.Infrastructure.Persistence.AgentDbContext db, string? taskId, CancellationToken ct) =>
+app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, AgentRuntime.Infrastructure.Persistence.AgentDbContext db, TenantAccess access,
+    WorkspacePrivacy privacy, string? taskId, CancellationToken ct) =>
 {
-    // Each viewer sees their own organization's events only.
+    // Each viewer sees their own organization's events only, and none from other people's private
+    // workspaces (or their runs).
     var tenant = http.Caller().TenantId;
+    var caller = http.Caller();
+    if (taskId is not null && !await access.ScopeAsync(taskId, ct))
+    {
+        http.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var hiddenWorkspaces = await access.HiddenWorkspacesAsync(ct);
+    var hidden = await access.HiddenScopesAsync(ct);
+    var hiddenCheckedAt = DateTimeOffset.UtcNow;
     http.Response.Headers.ContentType = "text/event-stream";
     http.Response.Headers.CacheControl = "no-cache";
     http.Response.Headers["X-Accel-Buffering"] = "no";
@@ -158,6 +172,31 @@ app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, AgentRunt
     await foreach (var evt in stream.Subscribe(ct))
     {
         if (!AgentRuntime.Tenancy.TenantIds.Same(evt.TenantId, tenant)) continue;
+
+        // Workspaces made private (or public) since: look again now and then.
+        if (DateTimeOffset.UtcNow - hiddenCheckedAt > TimeSpan.FromSeconds(30))
+        {
+            hiddenWorkspaces = await privacy.HiddenWorkspacesAsync(caller, ct, fresh: true);
+            hidden = [.. hiddenWorkspaces, .. await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
+                Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(db.Tasks)
+                    .Where(t => t.TenantId == tenant && t.WorkspaceId != null && hiddenWorkspaces.Contains(t.WorkspaceId))
+                    .Select(t => t.TaskId), ct)];
+            hiddenCheckedAt = DateTimeOffset.UtcNow;
+        }
+
+        // A hidden workspace's new run: its events are hidden from the start.
+        if (evt.Data.GetValueOrDefault("workspace_id") is { } eventWorkspace && hiddenWorkspaces.Contains(eventWorkspace) && evt.TaskId is not null)
+        {
+            hidden.Add(evt.TaskId);
+        }
+
+        if (evt.Type == AgentRuntime.Contracts.RuntimeEventType.PipelineRunUpdated && evt.TaskId is not null && hiddenWorkspaces.Contains(evt.TaskId) &&
+            evt.Data.GetValueOrDefault("run_id") is { } hiddenRun)
+        {
+            hidden.Add(hiddenRun);
+        }
+
+        if (evt.TaskId is not null && hidden.Contains(evt.TaskId)) continue;
         if (taskId is not null)
         {
             if (evt.Type == AgentRuntime.Contracts.RuntimeEventType.PipelineRunUpdated && evt.TaskId == taskId && evt.Data.GetValueOrDefault("run_id") is { } runId)

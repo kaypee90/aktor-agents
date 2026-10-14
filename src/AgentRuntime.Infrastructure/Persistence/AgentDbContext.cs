@@ -199,6 +199,10 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(w => w.WorkspaceId);
             b.HasIndex(w => new { w.TenantId, w.CreatedAt });
             b.Property(w => w.Kind).HasDefaultValue("pipeline");
+            b.Property(w => w.OwnerId).HasDefaultValue("");
+            b.Property(w => w.Visibility).HasDefaultValue("Organization");
+            // Finding the private workspaces of an organization that someone else owns.
+            b.HasIndex(w => new { w.TenantId, w.Visibility });
         });
 
         // Studies (docs/studies.md).

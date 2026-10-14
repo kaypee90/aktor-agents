@@ -9,12 +9,15 @@ import {
   cloneWorkspace,
   deleteWorkspace,
   exportWorkspaceTemplate,
+  setWorkspaceVisibility,
   simulateWorkspaceAlert,
   updateWorkspaceBudget,
   workspaceAction,
   type WorkspaceCopyResult,
 } from "@/lib/api";
-import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
+import type { WorkspaceSnapshot, WorkspaceVisibility } from "@/lib/workspaceTypes";
+import { Icons } from "@/components/ui/icons";
+import { VisibilityChoice } from "./VisibilityChoice";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { atLeast, type Role } from "@/lib/platformTypes";
 import { Button, ErrorBanner, Field, Modal, Toggle, inputClass } from "@/components/ui";
@@ -118,8 +121,11 @@ function BudgetBanner({ workspace, onChanged }: { workspace: WorkspaceSnapshot; 
 export function WorkspaceHeader({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
   const router = useRouter();
   const { me } = useAuth();
-  const role = (me?.role ?? "Viewer") as Role;
-  const [dialog, setDialog] = useState<"clone" | "template" | null>(null);
+  const isOwner = !!me?.user?.user_id && me.user.user_id === workspace.owner_id;
+  const isPrivate = workspace.visibility === "Private";
+  // Nobody else can see a private workspace, so its owner has an admin's say over it.
+  const role = (isPrivate && isOwner ? "Admin" : me?.role ?? "Viewer") as Role;
+  const [dialog, setDialog] = useState<"clone" | "template" | "visibility" | null>(null);
   const tone: Record<string, string> = {
     Active: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
     Paused: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
@@ -135,6 +141,20 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
           <div className="flex items-center gap-2">
             <span className="truncate whitespace-nowrap text-sm font-semibold text-zinc-900 dark:text-zinc-100">{workspace.name}</span>
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${tone[workspace.status]}`}>{workspace.status}</span>
+            <button
+              type="button"
+              onClick={() => isOwner && setDialog("visibility")}
+              disabled={!isOwner}
+              title={isOwner ? "Change who can see this workspace" : isPrivate ? "Only its owner can see this workspace" : "Everyone in your organization can see this workspace; only its owner can change that"}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                isPrivate ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                  : "border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              } ${isOwner ? "hover:border-brand-400" : "cursor-default"}`}
+            >
+              {isPrivate ? <Icons.Lock className="h-3 w-3" /> : <Icons.Users className="h-3 w-3" />}
+              {isPrivate ? "Only you" : "Organization"}
+              {isOwner && <Icons.ChevronDown className="h-3 w-3" />}
+            </button>
           </div>
           <div className="max-w-xl truncate text-zinc-500" title={workspace.goal}>{withoutTemplateTag(workspace.goal)}</div>
         </div>
@@ -189,6 +209,7 @@ export function WorkspaceHeader({ workspace, onChanged }: { workspace: Workspace
       <BudgetBanner key={`${workspace.daily_token_limit}:${workspace.daily_cost_limit_usd}`} workspace={workspace} onChanged={onChanged} />
       {dialog === "clone" && <CloneDialog workspace={workspace} isAdmin={atLeast(role, "Admin")} onClose={() => setDialog(null)} />}
       {dialog === "template" && <TemplateDialog workspace={workspace} onClose={() => setDialog(null)} />}
+      {dialog === "visibility" && <VisibilityDialog workspace={workspace} onClose={() => setDialog(null)} onChanged={onChanged} />}
     </>
   );
 }
@@ -316,4 +337,34 @@ function TemplateDialog({ workspace, onClose }: { workspace: WorkspaceSnapshot; 
 /** A template's goal starts with "[template-id template]"; the name already says that. */
 export function withoutTemplateTag(goal: string) {
   return goal.replace(/^\[[^\]]+ template\]\s*/, "");
+}
+
+/** Who can see the workspace; only its owner gets here. */
+function VisibilityDialog({ workspace, onClose, onChanged }: { workspace: WorkspaceSnapshot; onClose: () => void; onChanged: () => void }) {
+  const [value, setValue] = useState<WorkspaceVisibility>(workspace.visibility ?? "Organization");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await setWorkspaceVisibility(workspace.workspace_id, value);
+      onChanged();
+      onClose();
+    } catch (e) {
+      setError(apiErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Who can see this workspace"
+      description="Private hides it, with its runs, files, events and spend, from everyone else in your organization, admins included. Agents and triggers keep working either way."
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" onClick={save} disabled={busy || value === (workspace.visibility ?? "Organization")}>{busy ? "Saving…" : "Save"}</Button></>}>
+      <VisibilityChoice value={value} onChange={setValue} disabled={busy} />
+      {error && <div className="mt-3"><ErrorBanner error={error} onClose={() => setError(null)} /></div>}
+    </Modal>
+  );
 }

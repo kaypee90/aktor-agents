@@ -15,6 +15,38 @@ public static class PipelineIds
     public static string RunFor(string eventId) => Contracts.DeterministicId.From(RunPrefix, eventId);
 }
 
+/// <summary>What does a stage's work.</summary>
+public enum StageKind
+{
+    /// <summary>An AI agent with a role, instructions and tools.</summary>
+    Agent,
+    /// <summary>One call (or one per item) of a connection's tool, with arguments built from the
+    /// run's data. No LLM involved.</summary>
+    Action,
+    /// <summary>Python or JavaScript code that turns the run's data into new data, in a sandbox
+    /// with no network. No LLM involved.</summary>
+    Script
+}
+
+/// <summary>Languages a script stage can be written in.</summary>
+public static class ScriptLanguages
+{
+    public const string Python = "python";
+    public const string JavaScript = "javascript";
+
+    public static readonly string[] All = [Python, JavaScript];
+
+    public static bool IsKnown(string? language) => language is Python or JavaScript;
+}
+
+/// <summary>Colors a person can give a stage on the canvas (presentation only).</summary>
+public static class StageColors
+{
+    public static readonly string[] All = ["slate", "red", "orange", "amber", "green", "teal", "sky", "blue", "indigo", "violet", "pink"];
+
+    public static bool IsKnown(string? color) => color is not null && All.Contains(color);
+}
+
 /// <summary>What a stage does when its agent fails after its retries.</summary>
 public enum StageFailurePolicy
 {
@@ -25,10 +57,11 @@ public enum StageFailurePolicy
 }
 
 /// <summary>
-/// One step of a workspace's pipeline: an agent with a role, instructions and tools, that runs
-/// once its inputs have finished and hands its result to the stages that take it as input.
-/// Inside its step the agent is autonomous (tools, helpers, messages to other stages) within
-/// the limits set here and by the workspace's policy.
+/// One step of a workspace's pipeline, which runs once its inputs have finished and hands its
+/// result to the stages that take it as input. Most stages are an agent with a role, instructions
+/// and tools, autonomous inside its step within the limits set here and by the workspace's
+/// policy. An <see cref="StageKind.Action"/> or <see cref="StageKind.Script"/> stage does a fixed
+/// step instead (call a connection's tool, transform data) without a model.
 /// </summary>
 [GenerateSerializer]
 public sealed record PipelineStage
@@ -57,8 +90,33 @@ public sealed record PipelineStage
     [Id(10)] public StageFailurePolicy OnFailure { get; init; } = StageFailurePolicy.FailRun;
     /// <summary>Most this stage may spend per run, in US dollars; null: the workspace's per-agent budget.</summary>
     [Id(11)] public decimal? MaxCostUsd { get; init; }
+    [Id(12)] public StageKind Kind { get; init; } = StageKind.Agent;
+
+    // ---- Action stages ----
+    /// <summary>The connection tool to call, as agents see it, e.g. "sheets__append_rows".</summary>
+    [Id(13)] public string? Tool { get; init; }
+    /// <summary>The tool's arguments as a JSON object, in which strings may hold
+    /// <c>{{ expression }}</c>s over the run's data (see <see cref="PipelineExpressions"/>).</summary>
+    [Id(14)] public string? Arguments { get; init; }
+    /// <summary>An expression for a list: the tool is called once per item, with the item as
+    /// <c>item</c> (and its position as <c>index</c>). Empty: called once.</summary>
+    [Id(15)] public string? ForEach { get; init; }
+
+    // ---- Script stages ----
+    /// <summary>"python" or "javascript".</summary>
+    [Id(16)] public string? Language { get; init; }
+    /// <summary>The body of a function given <c>data</c> (the run's input and earlier stages'
+    /// outputs); what it returns is the stage's output.</summary>
+    [Id(17)] public string? Code { get; init; }
+    /// <summary>Most seconds the script may run; null: the server's default.</summary>
+    [Id(18)] public int? TimeoutSeconds { get; init; }
+
+    /// <summary>A color for the stage on the canvas (<see cref="StageColors"/>); null: none.</summary>
+    [Id(19)] public string? Color { get; init; }
 
     public string EffectiveRole => string.IsNullOrWhiteSpace(Role) ? Name : Role;
+
+    public bool IsAgent => Kind == StageKind.Agent;
 }
 
 /// <summary>Where a stage sits on the canvas (presentation only; runs don't depend on it).</summary>
@@ -150,6 +208,18 @@ public sealed record PipelineStagePatch
     [Id(9)] public int? Retries { get; init; }
     [Id(10)] public StageFailurePolicy? OnFailure { get; init; }
     [Id(11)] public decimal? MaxCostUsd { get; init; }
+    [Id(12)] public StageKind? Kind { get; init; }
+    /// <summary>"" clears it.</summary>
+    [Id(13)] public string? Tool { get; init; }
+    [Id(14)] public string? Arguments { get; init; }
+    /// <summary>"" clears it.</summary>
+    [Id(15)] public string? ForEach { get; init; }
+    [Id(16)] public string? Language { get; init; }
+    [Id(17)] public string? Code { get; init; }
+    /// <summary>0 or less clears it.</summary>
+    [Id(18)] public int? TimeoutSeconds { get; init; }
+    /// <summary>"" clears it.</summary>
+    [Id(19)] public string? Color { get; init; }
 }
 
 /// <summary>Limits a pipeline must stay within (configuration, never the LLM).</summary>
@@ -169,4 +239,13 @@ public sealed class PipelineOptions
     public int MaxContextChars { get; set; } = 12_000;
     /// <summary>Versions kept for undo.</summary>
     public int MaxVersionsKept { get; set; } = 30;
+    /// <summary>Most characters of a script stage's code.</summary>
+    public int MaxCodeLength { get; set; } = 20_000;
+    /// <summary>Most characters of an action stage's arguments template.</summary>
+    public int MaxArgumentsLength { get; set; } = 10_000;
+    /// <summary>Most items an action stage's for-each calls its tool for, per run.</summary>
+    public int MaxForEachItems { get; set; } = 100;
+    /// <summary>Most characters of a stage's JSON output kept and handed on; longer is refused
+    /// for scripts and truncated for agent summaries.</summary>
+    public int MaxStageOutputChars { get; set; } = 200_000;
 }

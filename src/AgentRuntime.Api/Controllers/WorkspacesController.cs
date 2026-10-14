@@ -20,13 +20,18 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     Microsoft.Extensions.Options.IOptions<PipelineOptions> pipelineOptions) : ControllerBase
 {
     /// <summary>Without a pipeline, one is drafted from the goal by the pipeline editor.</summary>
-    public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd, PipelineDefinition? Pipeline = null);
+    public sealed record CreateWorkspaceBody(string Name, string Goal, int? DailyTokenLimit, decimal? DailyCostLimitUsd, PipelineDefinition? Pipeline = null,
+        WorkspaceVisibility Visibility = WorkspaceVisibility.Organization);
+    public sealed record VisibilityBody(WorkspaceVisibility Visibility);
     public sealed record PipelineBody(PipelineDefinition Pipeline, int BaseVersion, string? Note);
     public sealed record ProposeBody(string Request);
     public sealed record EditsBody(List<PipelineEditOp> Ops, int BaseVersion, string? Note);
     public sealed record RestoreBody(int Version);
     public sealed record LayoutBody(Dictionary<string, StagePosition>? Layout);
-    public sealed record RunBody(string Input);
+    /// <summary>With <c>data</c> (any JSON), action and script stages see it as <c>input</c>.</summary>
+    public sealed record RunBody(string Input, JsonElement? Data = null);
+    public sealed record FormSubmitBody(JsonElement? Answers, string? SubmissionId);
+    public sealed record ScriptTestBody(string Language, string Code, JsonElement? Data, int? TimeoutSeconds);
     public sealed record MessageBody(string Text, string? ToAgentId, string? ClientMessageId);
     public sealed record CloneBody(string? Name, bool CopySkillsAndKnowledge = true);
     public sealed record ExportTemplateBody(string? Name, string? Description, string? Category);
@@ -34,7 +39,9 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     public sealed record TriggerBody(string Kind, string Name, string? Instruction, double? EveryMinutes, string? Cron,
         // Watches (kind "watch"): a read-only connection tool, where the items are, and the rule.
         string? SourceTool = null, JsonElement? SourceArguments = null, string? ItemsPath = null, List<WatchConditionBody>? Conditions = null,
-        string? KeyField = null, List<string>? DisplayFields = null, string? Mode = null, string? Message = null, string? Urgency = null);
+        string? KeyField = null, List<string>? DisplayFields = null, string? Mode = null, string? Message = null, string? Urgency = null,
+        // Forms (kind "form"): the fields to fill in.
+        FormDefinition? Form = null);
     public sealed record BudgetBody(int? DailyTokenLimit, decimal? DailyCostLimitUsd);
 
     private IWorkspaceGrain Workspace(string id) => grains.GetGrain<IWorkspaceGrain>(id);
@@ -79,16 +86,20 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
             TenantId = caller.TenantId,
             OwnerId = caller.ActorId,
             CreatedBy = caller.ActorId,
-            Pipeline = pipeline
+            Pipeline = pipeline,
+            Visibility = body.Visibility
         });
         return Ok(new { workspace_id = id, pipeline = await Workspace(id).GetPipeline(), draft = draftNote });
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct) =>
-        Ok(await db.Workspaces.AsNoTracking()
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        // Other people's private workspaces aren't listed.
+        var hidden = await access.HiddenWorkspacesAsync(ct);
+        return Ok(await db.Workspaces.AsNoTracking()
             // A study's workspace belongs to the study (docs/studies.md), not to this list.
-            .Where(w => w.TenantId == access.TenantId && w.Kind != "study")
+            .Where(w => w.TenantId == access.TenantId && w.Kind != "study" && !hidden.Contains(w.WorkspaceId))
             .OrderByDescending(w => w.CreatedAt)
             .Take(100)
             .Select(w => new
@@ -102,9 +113,23 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
                 total_tokens = w.TotalTokens,
                 total_cost_usd = w.TotalCostUsd,
                 created_at = w.CreatedAt,
-                updated_at = w.UpdatedAt
+                updated_at = w.UpdatedAt,
+                visibility = w.Visibility
             })
             .ToListAsync(ct));
+    }
+
+    /// <summary>Makes a workspace private to its owner, or visible to the organization. Only the
+    /// owner may change it (an admin who can see an organization-visible workspace still can't hide
+    /// it from its owner's colleagues on the owner's behalf).</summary>
+    [HttpPut("{id}/visibility")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> SetVisibility(string id, [FromBody] VisibilityBody body)
+    {
+        if (!await access.OwnsWorkspaceAsync(id)) return StatusCode(403, new { error = "Only the workspace's owner can change who sees it." });
+        await Workspace(id).SetVisibility(body.Visibility, HttpContext.Caller().ActorId);
+        return Ok(new { visibility = body.Visibility });
+    }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id)
@@ -199,8 +224,62 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
     public async Task<IActionResult> StartRun(string id, [FromBody] RunBody body)
     {
-        var result = await Workspace(id).StartRun(body.Input, HttpContext.Caller().ActorId);
+        var data = body.Data is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } d ? d.GetRawText() : null;
+        var input = string.IsNullOrWhiteSpace(body.Input) && data is not null ? data : body.Input;
+        var result = data is null
+            ? await Workspace(id).StartRun(input, HttpContext.Caller().ActorId)
+            : await Workspace(id).StartRunWithData(input, data, HttpContext.Caller().ActorId);
         return result.Success ? Ok(result) : BadRequest(new { error = result.Message });
+    }
+
+    // ---- Forms ------------------------------------------------------------------------
+
+    /// <summary>A form trigger's form, for its page. Members of the workspace's organization only.</summary>
+    [HttpGet("{id}/forms/{triggerId}")]
+    public async Task<IActionResult> Form(string id, string triggerId) =>
+        WorkspaceIds.IsWorkspace(id) && await Workspace(id).GetForm(triggerId) is { } form ? Ok(form) : NotFound();
+
+    /// <summary>Submits a form: the answers are checked against its fields, then a run starts with them.</summary>
+    [HttpPost("{id}/forms/{triggerId}/submissions")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> SubmitForm(string id, string triggerId, [FromBody] FormSubmitBody body)
+    {
+        if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
+        var caller = HttpContext.Caller();
+        // Forms are for people signed in to the organization; automation starts runs with /runs.
+        if (caller.IsApiKey) return StatusCode(403, new { error = "Forms are submitted by signed-in people. Use POST /api/workspaces/{id}/runs with data from code." });
+        var result = await Workspace(id).SubmitForm(new FormSubmission
+        {
+            TriggerId = triggerId,
+            AnswersJson = body.Answers is { ValueKind: JsonValueKind.Object } a ? a.GetRawText() : "{}",
+            SubmittedBy = caller.ActorId,
+            SubmittedByName = caller.Email,
+            SubmissionId = body.SubmissionId is { Length: > 0 and <= 100 } sid ? sid : null
+        });
+        if (result.NotFound) return NotFound();
+        return result.Success ? Ok(result) : BadRequest(new { error = result.Message, field_errors = result.FieldErrors });
+    }
+
+    // ---- Script stages ----------------------------------------------------------------
+
+    /// <summary>Runs a script stage's code in the sandbox with sample data, to try it before saving.</summary>
+    [HttpPost("{id}/scripts/test")]
+    [Microsoft.AspNetCore.Authorization.Authorize(AgentRuntime.Api.Platform.Policies.Member)]
+    public async Task<IActionResult> TestScript(string id, [FromBody] ScriptTestBody body, [FromServices] PipelineStepExecutor steps, CancellationToken ct)
+    {
+        if (!WorkspaceIds.IsWorkspace(id) || await Workspace(id).GetSnapshot() is null) return NotFound();
+        if (!ScriptLanguages.IsKnown(body.Language)) return BadRequest(new { error = $"language must be {string.Join(" or ", ScriptLanguages.All)}" });
+        if (string.IsNullOrWhiteSpace(body.Code) || body.Code.Length > pipelineOptions.Value.MaxCodeLength) return BadRequest(new { error = "code is empty or too long" });
+        var data = body.Data is { ValueKind: not (JsonValueKind.Undefined or JsonValueKind.Null) } d ? d.GetRawText() : "{}";
+        var result = await steps.TestScriptAsync(body.Language, body.Code, data, body.TimeoutSeconds, ct);
+        JsonElement? output = null;
+        if (result.Ok)
+        {
+            using var doc = JsonDocument.Parse(result.OutputJson);
+            output = doc.RootElement.Clone();
+        }
+
+        return Ok(new { ok = result.Ok, output, error = result.Error, logs = result.Logs, duration_ms = result.DurationMs });
     }
 
     [HttpGet("{id}/runs")]
@@ -244,7 +323,7 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
     public async Task<IActionResult> AddTrigger(string id, [FromBody] TriggerBody body)
     {
         if (!WorkspaceIds.IsWorkspace(id)) return NotFound();
-        if (!Enum.TryParse<TriggerKind>(body.Kind, ignoreCase: true, out var kind)) return BadRequest(new { error = "kind must be schedule, webhook or watch" });
+        if (!Enum.TryParse<TriggerKind>(body.Kind, ignoreCase: true, out var kind)) return BadRequest(new { error = "kind must be schedule, webhook, watch or form" });
 
         var result = await Workspace(id).AddTrigger(new TriggerSpec
         {
@@ -266,7 +345,8 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
                 : null,
             WatchMode = body.Mode,
             MessageTemplate = body.Message,
-            Urgency = body.Urgency
+            Urgency = body.Urgency,
+            Form = body.Form
         }, "user", idempotencyKey: string.Empty, revealSecret: true);
 
         return result.Success
@@ -316,7 +396,9 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         var caller = HttpContext.Caller();
         try
         {
-            var admin = caller.Role >= AgentRuntime.Tenancy.TenantRole.Admin;
+            // The owner of a private workspace has an admin's say over it (no admin can see it).
+            var admin = caller.Role >= AgentRuntime.Tenancy.TenantRole.Admin ||
+                        ((await Workspace(id).GetAccessInfo())?.Visibility == WorkspaceVisibility.Private && await access.OwnsWorkspaceAsync(id));
             return Ok(await copies.CloneAsync(access.TenantId, id, body?.Name, admin, body?.CopySkillsAndKnowledge ?? true, caller.ActorId, ct));
         }
         catch (AgentRuntime.Api.Platform.WorkspaceCopyException ex)

@@ -66,7 +66,8 @@ public sealed class WorkspaceCopyService(
     /// Adding connections needs the Admin role, as it does by hand: for anyone else they're listed,
     /// not added.</summary>
     public async Task<(string WorkspaceId, List<object> Connections, List<object> Triggers)> CreateFromDefinitionAsync(
-        string tenantId, string ownerId, WorkspaceDefinition definition, string name, string? templateId, bool addConnections, CancellationToken ct)
+        string tenantId, string ownerId, WorkspaceDefinition definition, string name, string? templateId, bool addConnections, CancellationToken ct,
+        WorkspaceVisibility visibility = WorkspaceVisibility.Organization)
     {
         await CheckPlanAsync(tenantId, ct);
         var id = WorkspaceIds.New();
@@ -82,7 +83,8 @@ public sealed class WorkspaceCopyService(
             TemplateId = templateId ?? definition.TemplateId,
             SafetyPolicy = definition.SafetyPolicy,
             Pipeline = definition.Pipeline,
-            CreatedBy = ownerId
+            CreatedBy = ownerId,
+            Visibility = visibility
         });
 
         var connections = new List<object>();
@@ -138,7 +140,9 @@ public sealed class WorkspaceCopyService(
         var definition = await source.ExportDefinition(includeSecrets: admin)
                          ?? throw new WorkspaceCopyException($"No workspace '{sourceId}'.", StatusCodes.Status404NotFound);
         var copyName = string.IsNullOrWhiteSpace(name) ? $"{definition.Name} (copy)" : name.Trim();
-        var (id, connections, triggers) = await CreateFromDefinitionAsync(tenantId, by, definition, copyName.Length > 100 ? copyName[..100] : copyName, null, admin, ct);
+        // A copy of a private workspace stays private (to whoever copied it, who only could if it was theirs).
+        var visibility = (await source.GetAccessInfo())?.Visibility ?? WorkspaceVisibility.Organization;
+        var (id, connections, triggers) = await CreateFromDefinitionAsync(tenantId, by, definition, copyName.Length > 100 ? copyName[..100] : copyName, null, admin, ct, visibility);
 
         int skillsCopied = 0, knowledgeCopied = 0;
         if (copyKnowhow)

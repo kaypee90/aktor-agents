@@ -14,7 +14,11 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
-        var agents = await orchestrator.FindAgentsAsync(new AgentRuntime.Contracts.FindAgentsQuery { TenantId = access.TenantId }, ct);
+        // Agents of other people's private workspaces' runs aren't listed (a run is its agents' root).
+        var hidden = await access.HiddenScopesAsync(ct);
+        var agents = (await orchestrator.FindAgentsAsync(new AgentRuntime.Contracts.FindAgentsQuery { TenantId = access.TenantId }, ct))
+            .Where(a => !hidden.Contains(a.RootAgentId) && !hidden.Contains(a.AgentId))
+            .ToList();
         // Agents given their own model at spawn (docs/llm-settings.md); the rest follow their task's.
         var ids = agents.Select(a => a.AgentId).ToList();
         var models = await db.Agents.AsNoTracking()
@@ -37,8 +41,8 @@ public sealed class AgentsController(IAgentOrchestrator orchestrator, AgentDbCon
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
-        var snapshot = await orchestrator.GetSnapshotAsync(id, ct);
-        return snapshot is null || !AgentRuntime.Tenancy.TenantIds.Same(snapshot.TenantId, access.TenantId) ? NotFound() : Ok(snapshot);
+        if (!await access.AgentAsync(id)) return NotFound();
+        return Ok(await orchestrator.GetSnapshotAsync(id, ct));
     }
 
     [HttpGet("{id}/children")]

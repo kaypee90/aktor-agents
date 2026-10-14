@@ -25,13 +25,32 @@ import {
 import "@xyflow/react/dist/style.css";
 import { cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import type { PipelineDefinition, PipelineStage, StagePosition, StageRunStatus, StageRunView } from "@/lib/pipelineTypes";
-import { BotIcon } from "../BotIcon";
+import { kindOf, type PipelineDefinition, type PipelineStage, type StageKind, type StagePosition, type StageRunStatus, type StageRunView } from "@/lib/pipelineTypes";
+import type { ConnectionView, TriggerView } from "@/lib/workspaceTypes";
+import type { ModelChoice } from "@/lib/api";
 import { mentionsIn } from "@/components/ui/MentionTextarea";
+import { PartIcon, StageKindIcon, TriggerIcon } from "./StageKindIcon";
+import { colorOf } from "./stageColors";
 
 const COLUMN = 290;
 const ROW = 150;
+/** Rows are further apart when agents show their model, tools and memory underneath. */
+const ROW_WITH_PARTS = 250;
 const NODE_WIDTH = 220;
+const PART_WIDTH = 64;
+const TRIGGER_WIDTH = 170;
+
+/** The parts attached to an agent, as in n8n: what it thinks with, acts with, and remembers. */
+export type AgentPart = "model" | "tools" | "memory";
+
+type PartNodeData = { part: AgentPart; label: string; detail: string; title: string };
+type TriggerNodeData = { kind: string; name: string; detail: string };
+
+const KIND_STYLE: Record<StageKind, { icon: string; label: string }> = {
+  Agent: { icon: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300", label: "" },
+  Action: { icon: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300", label: "Action" },
+  Script: { icon: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300", label: "Script" },
+};
 
 /** How a stage differs from the current pipeline, in a proposal's preview. */
 type Change = "added" | "changed" | "removed" | null;
@@ -46,11 +65,13 @@ type StageNodeData = {
   onAddBefore?: () => void;
   onAddAfter?: () => void;
   onRemove?: () => void;
+  /** Whether the agent's model, tools and memory hang below it. */
+  parts?: boolean;
 };
 
 type InsertEdgeData = { onInsert?: () => void; onDisconnect?: () => void; active: boolean };
 
-/** The drag-and-drop type of the palette's "new agent". */
+/** The drag-and-drop type of the palette's new stages; the data is the stage's kind. */
 const NEW_AGENT_DRAG = "application/x-aktor-new-agent";
 
 const RUN_STYLE: Record<StageRunStatus, { label: string; className: string; dot: string }> = {
@@ -62,7 +83,7 @@ const RUN_STYLE: Record<StageRunStatus, { label: string; className: string; dot:
 };
 
 /** Columns by how many stages come before: entry stages first, the output last. */
-export function layoutStages(stages: PipelineStage[]): Map<string, { x: number; y: number }> {
+export function layoutStages(stages: PipelineStage[], row = ROW): Map<string, { x: number; y: number }> {
   const byId = new Map(stages.map((s) => [s.stage_id, s]));
   const depth = new Map<string, number>();
   const visiting = new Set<string>();
@@ -83,8 +104,8 @@ export function layoutStages(stages: PipelineStage[]): Map<string, { x: number; 
   const tallest = Math.max(1, ...[...columns.values()].map((c) => c.length));
   const positions = new Map<string, { x: number; y: number }>();
   for (const [d, ids] of columns) {
-    const offset = ((tallest - ids.length) * ROW) / 2;
-    ids.forEach((id, i) => positions.set(id, { x: d * COLUMN, y: offset + i * ROW }));
+    const offset = ((tallest - ids.length) * row) / 2;
+    ids.forEach((id, i) => positions.set(id, { x: d * COLUMN, y: offset + i * row }));
   }
 
   return positions;
@@ -95,8 +116,8 @@ export function layoutStages(stages: PipelineStage[]): Map<string, { x: number; 
  * placed by hand, a new one goes between the stages it connects (or beside them), not where the
  * automatic layout would put it, which may be on top of a placed stage.
  */
-export function placeStages(stages: PipelineStage[], layout: Record<string, StagePosition> | undefined): Map<string, StagePosition> {
-  const auto = layoutStages(stages);
+export function placeStages(stages: PipelineStage[], layout: Record<string, StagePosition> | undefined, row = ROW): Map<string, StagePosition> {
+  const auto = layoutStages(stages, row);
   const placed = new Map(Object.entries(layout ?? {}).filter(([id]) => auto.has(id)));
   if (placed.size === 0) return auto;
   const positions = new Map(placed);
@@ -121,17 +142,40 @@ export function placeStages(stages: PipelineStage[], layout: Record<string, Stag
 function changed(a: PipelineStage, b: PipelineStage) {
   return a.name !== b.name || a.role !== b.role || a.instructions !== b.instructions || a.max_helpers !== b.max_helpers ||
     a.retries !== b.retries || a.on_failure !== b.on_failure || a.may_message_stages !== b.may_message_stages || a.model_profile_id !== b.model_profile_id ||
+    kindOf(a) !== kindOf(b) || (a.tool ?? "") !== (b.tool ?? "") || (a.arguments ?? "") !== (b.arguments ?? "") || (a.for_each ?? "") !== (b.for_each ?? "") ||
+    (a.language ?? "") !== (b.language ?? "") || (a.code ?? "") !== (b.code ?? "") || (a.color ?? "") !== (b.color ?? "") ||
     [...a.inputs].sort().join() !== [...b.inputs].sort().join() || [...a.capabilities].sort().join() !== [...b.capabilities].sort().join();
+}
+
+/** What a stage does, in a line: an agent's instructions, the tool an action calls, a script's language. */
+function describe(stage: PipelineStage): { subtitle: string; body: string } {
+  const kind = kindOf(stage);
+  if (kind === "Action") {
+    return {
+      subtitle: stage.tool ? stage.tool.replace("__", " · ") : "No tool chosen",
+      body: stage.for_each ? `For each item of ${stage.for_each}` : "Calls the tool once per run",
+    };
+  }
+  if (kind === "Script") {
+    const lines = (stage.code ?? "").split("\n");
+    const first = lines.find((l) => l.trim() && !/^\s*(#|\/\/)/.test(l))?.trim() ?? "";
+    return { subtitle: `${stage.language === "javascript" ? "JavaScript" : "Python"} · ${lines.length} line${lines.length === 1 ? "" : "s"}`, body: first };
+  }
+  return { subtitle: stage.role || stage.name, body: stage.instructions };
 }
 
 function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
   const { stage, change, run, editable } = data;
   const status = run ? RUN_STYLE[run.status] : null;
   const working = run?.status === "Running";
+  const kind = kindOf(stage);
+  const { subtitle, body } = describe(stage);
+  const color = colorOf(stage.color);
   return (
     <div
       className={cx(
-        "group relative rounded-xl border bg-white px-3 py-2.5 shadow-sm transition dark:bg-zinc-900",
+        "group relative rounded-xl border px-3 py-2.5 shadow-sm transition",
+        color ? cx(color.tint, "pl-4") : "bg-white dark:bg-zinc-900",
         selected ? "border-brand-500 ring-2 ring-brand-500/30"
           : change === "added" ? "border-emerald-400 ring-2 ring-emerald-400/30"
           : change === "changed" ? "border-amber-400 ring-2 ring-amber-400/30"
@@ -142,11 +186,12 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
       )}
       style={{ width: NODE_WIDTH }}
     >
-      <Handle type="target" position={Position.Left} isConnectable={editable} title={editable ? "Drop a connection here: this stage takes that stage's result" : undefined}
+      {color && <span aria-hidden className={cx("pointer-events-none absolute inset-y-0 left-0 w-1.5 rounded-l-xl", color.bar)} />}
+      <Handle type="target" id="in" position={Position.Left} isConnectable={editable} title={editable ? "Drop a connection here: this stage takes that stage's result" : undefined}
         className={editable ? "!h-3.5 !w-3.5 !border-2 !border-white !bg-zinc-400 hover:!bg-brand-500 dark:!border-zinc-900" : "!h-2 !w-2 !border-0 !bg-zinc-400 dark:!bg-zinc-600"} />
       <div className="flex items-center gap-2.5">
-        <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-          <BotIcon className="h-4.5 w-4.5" />
+        <span className={cx("relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", KIND_STYLE[kind].icon)}>
+          <StageKindIcon kind={kind} className="h-4.5 w-4.5" />
           {working && (
             <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5" title="Working on this run">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -156,10 +201,10 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
         </span>
         <div className="min-w-0 flex-1">
           <div className={cx("truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100", change === "removed" && "line-through")}>{stage.name}</div>
-          <div className="truncate text-[10px] text-zinc-500">{stage.role || stage.name}</div>
+          <div className="truncate text-[10px] text-zinc-500" title={subtitle}>{KIND_STYLE[kind].label && <span className="font-semibold uppercase tracking-wide">{KIND_STYLE[kind].label} · </span>}{subtitle}</div>
         </div>
       </div>
-      <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-zinc-600 dark:text-zinc-400" title={stage.instructions}>{stage.instructions}</p>
+      <p className={cx("mt-1.5 line-clamp-2 text-[11px] leading-snug text-zinc-600 dark:text-zinc-400", kind === "Script" && "font-mono")} title={body}>{body}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px]">
         {change && (
           <span className={cx("rounded-full px-1.5 py-0.5 font-medium uppercase",
@@ -201,9 +246,40 @@ function StageNode({ data, selected }: NodeProps & { data: StageNodeData }) {
           </button>
         </>
       )}
-      <Handle type="source" position={Position.Right} isConnectable={editable}
+      {data.parts && <Handle type="source" id="parts" position={Position.Bottom} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-zinc-400 dark:!bg-zinc-600" />}
+      <Handle type="source" id="out" position={Position.Right} isConnectable={editable}
         title={editable ? "Drag to a stage to hand it this result, or to empty space to add a new agent there" : undefined}
         className={editable ? "!h-3.5 !w-3.5 !border-2 !border-white !bg-brand-500 hover:!scale-125 dark:!border-zinc-900" : "!h-2 !w-2 !border-0 !bg-zinc-400 dark:!bg-zinc-600"} />
+    </div>
+  );
+}
+
+/** One of an agent's parts (model, tools, memory), hanging below it as in n8n. */
+function PartNode({ data }: NodeProps & { data: PartNodeData }) {
+  return (
+    <div className="group flex flex-col items-center text-center" style={{ width: PART_WIDTH }} title={data.title}>
+      <Handle type="target" position={Position.Top} isConnectable={false} className="!h-1 !w-1 !border-0 !bg-transparent" />
+      <span className="flex h-9 w-9 items-center justify-center rounded-full border border-dashed border-zinc-300 bg-white text-zinc-500 shadow-sm transition group-hover:border-brand-400 group-hover:text-brand-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+        <PartIcon part={data.part} className="h-4 w-4" />
+      </span>
+      <span className="mt-1 text-[10px] font-medium text-zinc-700 dark:text-zinc-300">{data.label}</span>
+      <span className="w-full truncate text-[9px] leading-tight text-zinc-500">{data.detail}</span>
+    </div>
+  );
+}
+
+/** What starts runs: a form, webhook, schedule or watch, or a person (the chat or Run). */
+function TriggerNode({ data }: NodeProps & { data: TriggerNodeData }) {
+  return (
+    <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-white py-1.5 pl-1.5 pr-3 shadow-sm hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-900" style={{ width: TRIGGER_WIDTH }}>
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+        <TriggerIcon kind={data.kind} className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">{data.name}</span>
+        <span className="block truncate text-[9px] uppercase tracking-wide text-zinc-500">{data.detail}</span>
+      </span>
+      <Handle type="source" position={Position.Right} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-amber-400" />
     </div>
   );
 }
@@ -239,7 +315,7 @@ function InsertEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
   );
 }
 
-const nodeTypes = { stage: StageNode };
+const nodeTypes = { stage: StageNode, part: PartNode, trigger: TriggerNode };
 const edgeTypes = { insert: InsertEdge };
 
 export type CanvasEditing = {
@@ -251,9 +327,41 @@ export type CanvasEditing = {
   onDisconnect: (from: string, to: string) => void;
   /** Stages were moved: every stage's position. Empty: back to the automatic layout. */
   onMove: (layout: Record<string, StagePosition>) => void;
-  /** A new agent dropped on the canvas at `position`, taking `inputs`' results. */
-  onAddAt: (position: StagePosition, inputs: string[]) => void;
+  /** A new stage dropped on the canvas at `position`, taking `inputs`' results. */
+  onAddAt: (position: StagePosition, inputs: string[], kind?: StageKind) => void;
 };
+
+const PART_ID = "part:";
+const TRIGGER_ID = "trigger:";
+const isStageNode = (id: string) => !id.startsWith(PART_ID) && !id.startsWith(TRIGGER_ID);
+
+/** What an agent's parts say: which model it runs on, which tools it has, what it remembers. */
+function partsOf(stage: PipelineStage, models: ModelChoice[], connections: ConnectionView[]): PartNodeData[] {
+  const chosen = stage.model_profile_id ? models.find((m) => m.id === stage.model_profile_id) : undefined;
+  const fallback = models.find((m) => m.is_default) ?? models[0];
+  const model = chosen ?? fallback;
+  const tools = stage.capabilities.length + connections.filter((c) => c.supports_tools).length;
+  return [
+    {
+      part: "model",
+      label: "Model",
+      detail: model ? model.model : stage.model_profile_id ?? "default",
+      title: model ? `${chosen ? "" : "Workspace default: "}${model.name} (${model.provider} · ${model.model}). Click to change.` : "The workspace's model.",
+    },
+    {
+      part: "tools",
+      label: "Tools",
+      detail: `${tools} + files`,
+      title: `Capabilities: ${stage.capabilities.join(", ") || "none"}. Connections: ${connections.filter((c) => c.supports_tools).map((c) => c.name).join(", ") || "none"}. Click to change.`,
+    },
+    {
+      part: "memory",
+      label: "Memory",
+      detail: "workspace",
+      title: "The workspace's shared memory and knowledge (read_memory, write_memory, search_knowledge), plus the run's files.",
+    },
+  ];
+}
 
 /**
  * A workspace's pipeline as a left-to-right graph. Editable (with `editing`):
@@ -271,6 +379,16 @@ export function PipelineCanvas(props: {
   editing?: CanvasEditing | null;
   selectedStageId: string | null;
   onSelectStage: (stageId: string | null) => void;
+  /** Agents show their model, tools and memory below them. */
+  showParts?: boolean;
+  /** Shows the switch for the agents' parts on the canvas; without it, there's no switch. */
+  onToggleParts?: () => void;
+  models?: ModelChoice[];
+  connections?: ConnectionView[];
+  /** Shown at the left, feeding the entry stages. */
+  triggers?: TriggerView[];
+  onSelectPart?: (stageId: string, part: AgentPart) => void;
+  onSelectTrigger?: (triggerId: string) => void;
 }) {
   return (
     <ReactFlowProvider>
@@ -286,8 +404,16 @@ function Canvas({
   editing,
   selectedStageId,
   onSelectStage,
+  showParts = false,
+  onToggleParts,
+  models = [],
+  connections = [],
+  triggers,
+  onSelectPart,
+  onSelectTrigger,
 }: Parameters<typeof PipelineCanvas>[0]) {
   const editable = !!editing;
+  const row = showParts ? ROW_WITH_PARTS : ROW;
   const flow = useReactFlow();
   // Re-fit when the canvas is resized (a divider dragged, a panel opened) or its stages change.
   const container = useRef<HTMLDivElement>(null);
@@ -311,20 +437,20 @@ function Canvas({
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({});
 
   const positions = useMemo(() => {
-    const placed = placeStages(pipeline.stages, pipeline.layout);
+    const placed = placeStages(pipeline.stages, pipeline.layout, row);
     if (local) for (const [id, p] of Object.entries(local)) if (placed.has(id)) placed.set(id, p);
     return placed;
-  }, [pipeline, local]);
+  }, [pipeline, local, row]);
 
   const { nodes, edges } = useMemo(() => {
     const removed = baseline ? baseline.stages.filter((b) => !pipeline.stages.some((s) => s.stage_id === b.stage_id)) : [];
     const all = new Map(positions);
     const lastColumn = Math.max(0, ...[...all.values()].map((p) => p.x));
-    removed.forEach((s, i) => all.set(s.stage_id, baseline?.layout?.[s.stage_id] ?? { x: lastColumn + COLUMN, y: i * ROW }));
+    removed.forEach((s, i) => all.set(s.stage_id, baseline?.layout?.[s.stage_id] ?? { x: lastColumn + COLUMN, y: i * row }));
     const runs = new Map((runStages ?? []).map((r) => [r.stage_id, r]));
     const hasDependents = new Set(pipeline.stages.flatMap((s) => s.inputs));
 
-    const nodes: Node<StageNodeData>[] = [
+    const nodes: Node<StageNodeData | PartNodeData | TriggerNodeData>[] = [
       ...pipeline.stages.map((stage) => {
         const before = baseline?.stages.find((b) => b.stage_id === stage.stage_id);
         const change: Change = !baseline ? null : !before ? "added" : changed(before, stage) ? "changed" : null;
@@ -341,6 +467,7 @@ function Canvas({
             editable,
             entry: stage.inputs.length === 0,
             output: !hasDependents.has(stage.stage_id),
+            parts: showParts && kindOf(stage) === "Agent",
             onAddBefore: () => editing?.onInsert({ before: stage.stage_id }),
             onAddAfter: () => editing?.onInsert({ after: stage.stage_id }),
             onRemove: () => editing?.onRemove(stage.stage_id),
@@ -367,7 +494,9 @@ function Canvas({
         return {
           id,
           source: input,
+          sourceHandle: "out",
           target: stage.stage_id,
+          targetHandle: "in",
           type: "insert",
           selected: id === selectedEdge,
           data: {
@@ -382,10 +511,71 @@ function Canvas({
         };
       }));
 
-    return { nodes, edges };
-  }, [pipeline, baseline, runStages, editing, editable, selectedStageId, selectedEdge, positions, measured]);
+    // An agent's parts hang below it and move with it.
+    if (showParts) {
+      for (const stage of pipeline.stages.filter((s) => kindOf(s) === "Agent")) {
+        const at = all.get(stage.stage_id)!;
+        const height = measured[stage.stage_id]?.height ?? 118;
+        partsOf(stage, models, connections).forEach((part, i) => {
+          const id = `${PART_ID}${stage.stage_id}:${part.part}`;
+          nodes.push({
+            id,
+            type: "part",
+            position: { x: at.x + 6 + i * ((NODE_WIDTH - PART_WIDTH - 12) / 2), y: at.y + height + 42 },
+            measured: measured[id],
+            draggable: false,
+            selectable: false,
+            deletable: false,
+            data: part,
+          });
+          edges.push({
+            id: `${stage.stage_id}->${id}`,
+            source: stage.stage_id,
+            sourceHandle: "parts",
+            target: id,
+            selectable: false,
+            deletable: false,
+            style: { stroke: "#a1a1aa", strokeDasharray: "4 4", strokeWidth: 1.25 },
+          });
+        });
+      }
+    }
 
-  const onNodesChange = useCallback((changes: NodeChange<Node<StageNodeData>>[]) => {
+    // Triggers feed the entry stages from the left.
+    const entries = pipeline.stages.filter((s) => s.inputs.length === 0);
+    if (triggers && entries.length > 0) {
+      const left = Math.min(...entries.map((s) => all.get(s.stage_id)!.x)) - TRIGGER_WIDTH - 90;
+      const top = Math.min(...entries.map((s) => all.get(s.stage_id)!.y));
+      const shown: (TriggerNodeData & { id: string })[] = [
+        { id: "manual", kind: "Manual", name: "You", detail: "chat or Run" },
+        ...triggers.map((t) => ({
+          id: t.trigger_id,
+          kind: t.kind,
+          name: t.name,
+          detail: t.kind === "Schedule" ? (t.cron ? `cron ${t.cron}` : `every ${Math.round((t.interval_seconds ?? 0) / 60)} min`) : t.kind.toLowerCase(),
+        })),
+      ];
+      shown.forEach((t, i) => {
+        const id = `${TRIGGER_ID}${t.id}`;
+        nodes.push({ id, type: "trigger", position: { x: left, y: top + i * 64 }, measured: measured[id], draggable: false, selectable: false, deletable: false, data: t });
+        for (const entry of entries) {
+          edges.push({
+            id: `${id}->${entry.stage_id}`,
+            source: id,
+            target: entry.stage_id,
+            targetHandle: "in",
+            selectable: false,
+            deletable: false,
+            style: { stroke: "#fbbf24", strokeDasharray: "2 4", strokeWidth: 1.25 },
+          });
+        }
+      });
+    }
+
+    return { nodes, edges };
+  }, [pipeline, baseline, runStages, editing, editable, selectedStageId, selectedEdge, positions, measured, row, showParts, models, connections, triggers]);
+
+  const onNodesChange = useCallback((changes: NodeChange<Node<StageNodeData | PartNodeData | TriggerNodeData>>[]) => {
     const sizes = changes.filter((c) => c.type === "dimensions" && c.dimensions);
     if (sizes.length > 0) {
       setMeasured((m) => {
@@ -394,7 +584,7 @@ function Canvas({
         return next;
       });
     }
-    const moves = changes.filter((c) => c.type === "position" && c.position);
+    const moves = changes.filter((c) => c.type === "position" && c.position && isStageNode(c.id));
     if (moves.length === 0) return;
     const next = { ...Object.fromEntries(positions), ...(local ?? {}) };
     for (const c of moves) if (c.type === "position" && c.position) next[c.id] = c.position;
@@ -408,12 +598,12 @@ function Canvas({
   }, []);
 
   const connect = useCallback((c: Connection) => {
-    if (c.source && c.target && c.source !== c.target) editing?.onConnect(c.source, c.target);
+    if (c.source && c.target && c.source !== c.target && isStageNode(c.source) && isStageNode(c.target)) editing?.onConnect(c.source, c.target);
   }, [editing]);
 
   // A connection dropped on empty space adds a new agent there, taking the source's result.
   const connectEnd = useCallback((event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
-    if (!editing || state.isValid || state.toNode || !state.fromNode) return;
+    if (!editing || state.isValid || state.toNode || !state.fromNode || !isStageNode(state.fromNode.id)) return;
     const point = "changedTouches" in event ? event.changedTouches[0] : event;
     const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
     editing.onAddAt({ x: at.x, y: at.y - 40 }, [state.fromNode.id]);
@@ -433,24 +623,35 @@ function Canvas({
         if (!editing || !e.dataTransfer.types.includes(NEW_AGENT_DRAG)) return;
         e.preventDefault();
         const at = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
-        editing.onAddAt({ x: at.x - NODE_WIDTH / 2, y: at.y - 40 }, []);
+        const kind = e.dataTransfer.getData(NEW_AGENT_DRAG);
+        editing.onAddAt({ x: at.x - NODE_WIDTH / 2, y: at.y - 40 }, [], kind === "Action" || kind === "Script" ? kind : "Agent");
       }}
     >
     <ReactFlow
-      key={`${size}|${pipeline.stages.map((s) => s.stage_id).join(",")}`}
+      key={`${size}|${pipeline.stages.map((s) => s.stage_id).join(",")}|${showParts}|${triggers?.length ?? -1}`}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      onNodeClick={(_, node) => onSelectStage(node.id)}
+      onNodeClick={(_, node) => {
+        if (node.id.startsWith(PART_ID)) {
+          const [stageId, part] = node.id.slice(PART_ID.length).split(":");
+          onSelectPart?.(stageId, part as AgentPart);
+        } else if (node.id.startsWith(TRIGGER_ID)) {
+          onSelectTrigger?.(node.id.slice(TRIGGER_ID.length));
+        } else {
+          onSelectStage(node.id);
+        }
+      }}
       onPaneClick={() => { onSelectStage(null); setSelectedEdge(null); }}
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={connect}
       onConnectEnd={connectEnd}
-      isValidConnection={(c) => c.source !== c.target && !pipeline.stages.find((s) => s.stage_id === c.target)?.inputs.includes(c.source)}
-      onEdgesDelete={(deleted) => deleted.forEach((e) => editing?.onDisconnect(e.source, e.target))}
-      onNodesDelete={(deleted) => deleted.slice(0, 1).forEach((n) => editing?.onRemove(n.id))}
+      isValidConnection={(c) => c.source !== c.target && isStageNode(c.source) && isStageNode(c.target) &&
+        !pipeline.stages.find((s) => s.stage_id === c.target)?.inputs.includes(c.source)}
+      onEdgesDelete={(deleted) => deleted.filter((e) => isStageNode(e.source) && isStageNode(e.target)).forEach((e) => editing?.onDisconnect(e.source, e.target))}
+      onNodesDelete={(deleted) => deleted.filter((n) => isStageNode(n.id)).slice(0, 1).forEach((n) => editing?.onRemove(n.id))}
       deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
       nodesDraggable={editable}
       nodesConnectable={editable}
@@ -463,17 +664,44 @@ function Canvas({
     >
       <Background gap={20} size={1} className="!bg-zinc-50 dark:!bg-zinc-950" />
       <Controls showInteractive={false} position="bottom-left" />
+      {onToggleParts && pipeline.stages.some((s) => kindOf(s) === "Agent") && (
+        <Panel position="top-right" className="!m-2">
+          <button
+            onClick={onToggleParts}
+            role="switch"
+            aria-checked={showParts}
+            title={showParts ? "Hide each agent's model, tools and memory" : "Show each agent's model, tools and memory"}
+            className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-600 shadow-sm hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+          >
+            <PartIcon part="model" className="h-3.5 w-3.5" />
+            Model, tools &amp; memory
+            <span className={cx("relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors", showParts ? "bg-brand-500" : "bg-zinc-300 dark:bg-zinc-600")}>
+              <span className={cx("absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-all", showParts ? "left-3.5" : "left-0.5")} />
+            </span>
+          </button>
+        </Panel>
+      )}
       {editing && (
         <Panel position="top-left" className="!m-2 flex items-center gap-1.5">
-          <button
-            draggable
-            onDragStart={(e) => { e.dataTransfer.setData(NEW_AGENT_DRAG, "1"); e.dataTransfer.effectAllowed = "copy"; }}
-            onClick={() => editing.onAddAt(freeSpot(), [])}
-            title="Drag onto the canvas to add an agent there, or click to add one"
-            className="inline-flex cursor-grab items-center gap-1.5 rounded-lg border border-dashed border-brand-300 bg-white px-2.5 py-1.5 text-xs font-medium text-brand-700 shadow-sm hover:border-brand-500 active:cursor-grabbing dark:border-brand-700 dark:bg-zinc-900 dark:text-brand-300"
-          >
-            <BotIcon className="h-4 w-4" /> New agent
-          </button>
+          {([
+            { kind: "Agent", label: "New agent", title: "An AI agent with instructions and tools" },
+            { kind: "Action", label: "Action", title: "Call a connected service (Sheets, Airtable, BigQuery, Zoho CRM, an API) with data from the run. No model." },
+            { kind: "Script", label: "Script", title: "Python or JavaScript that turns the run's data into new data. No model." },
+          ] as const).map((item) => (
+            <button
+              key={item.kind}
+              draggable
+              onDragStart={(e) => { e.dataTransfer.setData(NEW_AGENT_DRAG, item.kind); e.dataTransfer.effectAllowed = "copy"; }}
+              onClick={() => editing.onAddAt(freeSpot(), [], item.kind)}
+              title={`${item.title}. Drag onto the canvas, or click to add.`}
+              className={cx("inline-flex cursor-grab items-center gap-1.5 rounded-lg border border-dashed bg-white px-2.5 py-1.5 text-xs font-medium shadow-sm active:cursor-grabbing dark:bg-zinc-900",
+                item.kind === "Agent" ? "border-brand-300 text-brand-700 hover:border-brand-500 dark:border-brand-700 dark:text-brand-300"
+                  : item.kind === "Action" ? "border-sky-300 text-sky-700 hover:border-sky-500 dark:border-sky-700 dark:text-sky-300"
+                  : "border-violet-300 text-violet-700 hover:border-violet-500 dark:border-violet-700 dark:text-violet-300")}
+            >
+              <StageKindIcon kind={item.kind} className="h-4 w-4" /> {item.label}
+            </button>
+          ))}
           {pipeline.layout && Object.keys(pipeline.layout).length > 0 && (
             <button onClick={() => editing.onMove({})} title="Lay the stages out automatically again"
               className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-600 shadow-sm hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">

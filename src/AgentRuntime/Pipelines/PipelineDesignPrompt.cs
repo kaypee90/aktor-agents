@@ -99,6 +99,9 @@ public static class PipelineDesignPrompt
             - Instructions say what to produce, for whom, and to what standard, in two to four sentences.
             - Give a stage helpers (max_helpers) only for large, splittable work.
             - Change only what was asked. Keep ids of existing stages.
+            - Stages marked [action] (a fixed call to a connected service) or [script] (code that transforms
+              data) were set up by a person and run without a model. Keep them and their settings; you may
+              connect stages to them or add agent stages around them, but only add agent stages yourself.
             """);
         system.AppendLine($"Limits: at most {limits.MaxStages} stages, {limits.MaxHelpersPerStage} helpers per stage, {limits.MaxRetries} retries.");
         system.AppendLine($"Capabilities (grant tools): {string.Join(", ", AgentToolCatalog.KnownCapabilities)}. Every stage can read and write the run's files.");
@@ -127,6 +130,14 @@ public static class PipelineDesignPrompt
             user.AppendLine("The pipeline now:");
             foreach (var stage in PipelineValidator.TopologicalOrder(current) ?? current.Stages)
             {
+                if (!stage.IsAgent)
+                {
+                    user.AppendLine($"- {stage.StageId} \"{stage.Name}\" " +
+                                    (stage.Kind == StageKind.Action ? $"[action: calls {stage.Tool}{(stage.ForEach is { } each ? $" for each of {each}" : "")}]" : $"[script: {stage.Language}]") +
+                                    (stage.Inputs.Count > 0 ? $" ← {string.Join(", ", stage.Inputs)}" : " (entry)"));
+                    continue;
+                }
+
                 user.AppendLine($"- {stage.StageId} \"{stage.Name}\" ({stage.EffectiveRole})" +
                                 (stage.Inputs.Count > 0 ? $" ← {string.Join(", ", stage.Inputs)}" : " (entry)") +
                                 $": {Clip(stage.Instructions, 300)}" +

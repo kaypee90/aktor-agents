@@ -12,7 +12,7 @@ namespace AgentRuntime.Api.Controllers;
 [ApiController]
 public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbContext db, WorkspaceCopyService copies) : ControllerBase
 {
-    public sealed record FromTemplateBody(string Template, string? Name, bool UseDemoSystem = true);
+    public sealed record FromTemplateBody(string Template, string? Name, bool UseDemoSystem = true, WorkspaceVisibility Visibility = WorkspaceVisibility.Organization);
 
     /// <summary>The built-in templates, then the organization's own (made from its workspaces).</summary>
     [HttpGet("api/workspace-templates")]
@@ -105,7 +105,7 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
             {
                 var (workspaceId, ownConnections, triggers) = await copies.CreateFromDefinitionAsync(caller.TenantId, caller.ActorId,
                     WorkspaceCopyService.DefinitionOf(own), string.IsNullOrWhiteSpace(body.Name) ? own.Name : body.Name.Trim(), own.TemplateId,
-                    addConnections: caller.Role >= Tenancy.TenantRole.Admin, ct);
+                    addConnections: caller.Role >= Tenancy.TenantRole.Admin, ct, body.Visibility);
                 return Ok(new { workspace_id = workspaceId, template = own.TemplateId, connections = ownConnections, triggers, sample_input = own.SampleInput });
             }
             catch (WorkspaceCopyException ex)
@@ -136,7 +136,8 @@ public sealed class WorkspaceTemplatesController(IGrainFactory grains, AgentDbCo
             TemplateId = template.Id,
             SafetyPolicy = template.Safety,
             Pipeline = template.Pipeline,
-            CreatedBy = caller.ActorId
+            CreatedBy = caller.ActorId,
+            Visibility = body.Visibility
         });
 
         var connections = new List<object>();

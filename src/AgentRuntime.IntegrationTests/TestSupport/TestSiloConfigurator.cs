@@ -47,6 +47,7 @@ public sealed class TestSiloConfigurator : ISiloConfigurator
             // Integrations: a hermetic vault and a test plugin covering tools, notifications and inbound.
             services.AddSingleton<AgentRuntime.Integrations.ISecretStore, InMemorySecretStore>();
             services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, FakeCrmPlugin>();
+            services.AddSingleton<AgentRuntime.Pipelines.IScriptRunner, FakeScriptRunner>();
 
             // One audit log for the whole test run, so it outlives silo kills like a database would.
             services.AddSingleton<AgentRuntime.Safety.IAuditLog>(TestAudit.Log);

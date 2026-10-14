@@ -65,11 +65,12 @@ public static class ConnectionGatewayEndpoint
     }
 
     private static async Task HandleAsync(string workspaceId, string connectionId, HttpContext http, IGrainFactory grains,
-        IntegrationService integrations, IAuditLog audit, GatewayRateLimiter limiter, ILoggerFactory loggers, CancellationToken ct)
+        IntegrationService integrations, IAuditLog audit, GatewayRateLimiter limiter, ILoggerFactory loggers, WorkspacePrivacy privacy, CancellationToken ct)
     {
         var caller = http.Caller();
         var workspace = grains.GetGrain<IWorkspaceGrain>(workspaceId);
-        if (!WorkspaceIds.IsWorkspace(workspaceId) || !TenantIds.Same(await workspace.GetTenantId() ?? "\0", caller.TenantId))
+        // A private workspace's gateway answers only its owner (or keys the owner created).
+        if (!await privacy.CanSeeWorkspaceAsync(caller, workspaceId, ct))
         {
             http.Response.StatusCode = StatusCodes.Status404NotFound;
             return;

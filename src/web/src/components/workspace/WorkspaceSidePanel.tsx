@@ -15,6 +15,8 @@ import { FilesPanel } from "./FilesPanel";
 import { pauseInfo } from "./pauseInfo";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { SafetyPanel } from "./SafetyPanel";
+import { EMPTY_FORM, FormBuilder, cleanForm } from "./FormBuilder";
+import type { FormDefinition } from "@/lib/workspaceTypes";
 
 type Tab = "agents" | "files" | "knowhow" | "triggers" | "integrations" | "safety" | "events";
 
@@ -26,6 +28,7 @@ function describeInterval(t: TriggerView) {
 
 function describeSchedule(t: TriggerView) {
   if (t.kind === "Webhook") return "on webhook";
+  if (t.kind === "Form") return `form, ${t.form?.fields.length ?? 0} field${t.form?.fields.length === 1 ? "" : "s"}`;
   if (t.kind === "Watch") return `watch, ${describeInterval(t)}`;
   return describeInterval(t);
 }
@@ -178,7 +181,8 @@ function readOnlyTools(workspace: WorkspaceSnapshot) {
 
 function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onChanged: () => void }) {
   const mentionables = useWorkspaceMentionables(workspace);
-  const [kind, setKind] = useState<"schedule" | "webhook" | "watch">("schedule");
+  const [kind, setKind] = useState<"schedule" | "webhook" | "watch" | "form">("schedule");
+  const [form, setForm] = useState<FormDefinition>(EMPTY_FORM);
   const [name, setName] = useState("");
   const [instruction, setInstruction] = useState("");
   const [minutes, setMinutes] = useState(60);
@@ -223,14 +227,16 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
       } : {};
       const t = await addWorkspaceTrigger(workspace.workspace_id, {
         kind,
-        name: name || (kind === "webhook" ? "Webhook" : kind === "watch" ? "Watch" : "Schedule"),
+        name: name || (kind === "form" ? form.title.trim() || "Form" : kind === "webhook" ? "Webhook" : kind === "watch" ? "Watch" : "Schedule"),
         instruction,
-        ...(kind !== "webhook" ? (cron.trim() ? { cron: cron.trim() } : { every_minutes: minutes }) : {}),
+        ...(kind === "schedule" || kind === "watch" ? (cron.trim() ? { cron: cron.trim() } : { every_minutes: minutes }) : {}),
+        ...(kind === "form" ? { form: cleanForm(form) } : {}),
         ...watch,
       });
       setCreated(t);
       setName("");
       setInstruction("");
+      if (kind === "form") setForm(EMPTY_FORM);
       onChanged();
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -241,12 +247,12 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
 
   return (
     <div className="space-y-3 p-3 text-xs">
-      <p className="text-zinc-500">Schedules and webhooks run the pipeline: the instruction (and a webhook&apos;s payload) is the run&apos;s input. Watches check a connected service without the model, and alert you or run the pipeline when something matches.</p>
+      <p className="text-zinc-500">Schedules, webhooks and forms run the pipeline: the instruction (and a webhook&apos;s payload or a form&apos;s answers) is the run&apos;s input. Watches check a connected service without the model, and alert you or run the pipeline when something matches. Forms are filled in by signed-in members of your organization.</p>
       {workspace.triggers.length === 0 && <div className="text-zinc-500">No triggers yet.</div>}
       {workspace.triggers.map((t) => (
         <div key={t.trigger_id} className="rounded border border-zinc-200 p-2 dark:border-zinc-800">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold">{t.kind === "Webhook" ? "🔗" : t.kind === "Watch" ? "👁" : "⏰"} {t.name}</span>
+            <span className="font-semibold">{t.kind === "Webhook" ? "🔗" : t.kind === "Watch" ? "👁" : t.kind === "Form" ? "📝" : "⏰"} {t.name}</span>
             <button onClick={() => deleteWorkspaceTrigger(workspace.workspace_id, t.trigger_id).then(onChanged)} className="text-[10px] text-rose-600 hover:underline">delete</button>
           </div>
           <div className="text-zinc-500">{describeSchedule(t)}{t.kind !== "Watch" && " → runs the pipeline"}</div>
@@ -258,11 +264,18 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
               {t.checks} checks without the LLM · {t.alerts} alert{t.alerts === 1 ? "" : "s"} · matching now: {t.last_match_count}
             </div>
           )}
+          {t.kind === "Form" && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <Link href={`/forms?workspace=${encodeURIComponent(workspace.workspace_id)}&trigger=${encodeURIComponent(t.trigger_id)}`} target="_blank"
+                className="rounded bg-brand-500 px-2 py-0.5 font-medium text-white hover:bg-brand-600">Open form</Link>
+              <span className="text-[10px] text-zinc-500">{t.form?.fields.map((f) => f.label).join(" · ")}</span>
+            </div>
+          )}
           {t.last_error && <div className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-300">Last error: {t.last_error}</div>}
           {t.instruction && <div className="mt-0.5 text-zinc-600 dark:text-zinc-400">“{t.instruction}”</div>}
           <div className="mt-0.5 text-[10px] text-zinc-400">
             fired {t.fire_count}×{t.last_fired_at && ` · last ${new Date(t.last_fired_at).toLocaleTimeString()}`}
-            {t.next_due_at && t.kind !== "Webhook" && ` · next ${new Date(t.next_due_at).toLocaleString()}`}
+            {t.next_due_at && (t.kind === "Schedule" || t.kind === "Watch") && ` · next ${new Date(t.next_due_at).toLocaleString()}`}
             {t.dropped_count > 0 && ` · ${t.dropped_count} dropped`}
           </div>
         </div>
@@ -270,11 +283,12 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
 
       <form onSubmit={add} className="space-y-2 rounded border border-dashed border-zinc-300 p-2 dark:border-zinc-700">
         <div className="flex gap-1">
-          {(["schedule", "webhook", "watch"] as const).map((k) => (
+          {(["schedule", "webhook", "watch", "form"] as const).map((k) => (
             <button type="button" key={k} onClick={() => setKind(k)} className={`rounded px-2 py-0.5 capitalize ${kind === k ? "bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-500"}`}>{k}</button>
           ))}
         </div>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className={field} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "form" ? "Name (defaults to the form's title)" : "Name"} className={field} />
+        {kind === "form" && <FormBuilder value={form} onChange={setForm} field={field} />}
         {kind === "watch" && (
           tools.length === 0 ? (
             <p className="rounded bg-amber-50 p-2 text-amber-800 dark:bg-amber-950 dark:text-amber-200">Connect a service on the Integrations tab first: a watch calls one of its read-only tools.</p>
@@ -314,9 +328,11 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
         )}
         {(kind !== "watch" || mode === "run") && (
           <MentionTextarea value={instruction} onValueChange={setInstruction} rows={2} mentionables={mentionables}
-            placeholder={kind === "watch" ? "What the run should do with the matches" : "The run's input each time, e.g. Summarise yesterday's support tickets"} className={`${field} block`} />
+            placeholder={kind === "watch" ? "What the run should do with the matches"
+              : kind === "form" ? "What the run should do with each submission, e.g. Qualify this lead and add it to the CRM"
+              : "The run's input each time, e.g. Summarise yesterday's support tickets"} className={`${field} block`} />
         )}
-        {kind !== "webhook" && (
+        {(kind === "schedule" || kind === "watch") && (
           <div className="grid grid-cols-2 gap-2">
             <label className="flex items-center gap-1 whitespace-nowrap">
               every
@@ -328,7 +344,7 @@ function Triggers({ workspace, onChanged }: { workspace: WorkspaceSnapshot; onCh
           </div>
         )}
         {error && <div className="text-rose-600">{error}</div>}
-        <button type="submit" disabled={kind === "watch" && tools.length === 0} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600 disabled:opacity-50">Add {kind}</button>
+        <button type="submit" disabled={(kind === "watch" && tools.length === 0) || (kind === "form" && form.fields.some((f) => !f.label.trim()))} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600 disabled:opacity-50">Add {kind}</button>
         {created?.webhook_path && (
           <div className="rounded bg-amber-50 p-2 text-amber-900 dark:bg-amber-950 dark:text-amber-100">
             Point your service at this URL (POST). Keep it secret; it&apos;s also in the chat:

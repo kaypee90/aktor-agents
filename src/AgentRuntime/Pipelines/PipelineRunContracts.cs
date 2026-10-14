@@ -46,6 +46,9 @@ public sealed record PipelineRunRequest
     [Id(10)] public Safety.TeamPolicy? Team { get; init; }
     /// <summary>The run's number in its workspace (Run #12).</summary>
     [Id(11)] public int Number { get; init; }
+    /// <summary>The input as data, when it came as data: a form's answers, a webhook's JSON body.
+    /// Action and script stages see it as <c>input</c>; null: they see the text.</summary>
+    [Id(12)] public string? InputData { get; init; }
 }
 
 [GenerateSerializer]
@@ -65,6 +68,15 @@ public sealed class StageRun
     [Id(9)] public DateTimeOffset? CompletedAt { get; set; }
     /// <summary>Every agent that worked on the stage, one per attempt.</summary>
     [Id(10)] public List<string> AgentIds { get; set; } = [];
+    /// <summary>What the stage produced, as JSON: an action's tool result, a script's return value,
+    /// or an agent's summary and files. Later stages read it as <c>stages.&lt;id&gt;</c>.</summary>
+    [Id(11)] public string? OutputJson { get; set; }
+    /// <summary>What a script printed, for debugging.</summary>
+    [Id(12)] public string? Logs { get; set; }
+    /// <summary>The attempt of an action or script stage in progress (its step's id).</summary>
+    [Id(13)] public string? StepId { get; set; }
+    /// <summary>When the step in progress was handed to its executor.</summary>
+    [Id(14)] public DateTimeOffset? StepStartedAt { get; set; }
 }
 
 [GenerateSerializer]
@@ -103,6 +115,7 @@ public sealed record PipelineRunView
     [Id(12)] public DateTimeOffset? CompletedAt { get; init; }
     [Id(13)] public string? Summary { get; init; }
     [Id(14)] public List<StageRunView> Stages { get; init; } = [];
+    [Id(15)] public string? InputData { get; init; }
 }
 
 [GenerateSerializer]
@@ -120,6 +133,9 @@ public sealed record StageRunView
     [Id(9)] public DateTimeOffset? StartedAt { get; init; }
     [Id(10)] public DateTimeOffset? CompletedAt { get; init; }
     [Id(11)] public List<string> Inputs { get; init; } = [];
+    [Id(12)] public StageKind Kind { get; init; }
+    [Id(13)] public string? OutputJson { get; init; }
+    [Id(14)] public string? Logs { get; init; }
 }
 
 /// <summary>How an agent ended, for whoever is waiting on it (a pipeline run).</summary>
@@ -149,4 +165,45 @@ public sealed record StageAgentLaunch
     [Id(7)] public required ResourceBudget Budget { get; init; }
     [Id(8)] public Safety.TeamPolicy? Team { get; init; }
     [Id(9)] public string? CorrelationId { get; init; }
+}
+
+/// <summary>An action or script stage's attempt, as the run hands it to <see cref="IPipelineStepGrain"/>.</summary>
+[GenerateSerializer]
+public sealed record StepLaunch
+{
+    [Id(0)] public required string StepId { get; init; }
+    [Id(1)] public required string RunId { get; init; }
+    [Id(2)] public required int RunNumber { get; init; }
+    [Id(3)] public required string WorkspaceId { get; init; }
+    [Id(4)] public required string TenantId { get; init; }
+    [Id(5)] public required PipelineStage Stage { get; init; }
+    [Id(6)] public required int Attempt { get; init; }
+    /// <summary>What the stage sees: <c>input</c>, <c>stages</c>, <c>previous</c>, <c>run</c>.</summary>
+    [Id(7)] public required string DataJson { get; init; }
+}
+
+/// <summary>How an action or script step ended.</summary>
+[GenerateSerializer]
+public sealed record StepResult
+{
+    [Id(0)] public bool Success { get; init; }
+    [Id(1)] public string? OutputJson { get; init; }
+    [Id(2)] public string? Error { get; init; }
+    [Id(3)] public string? Logs { get; init; }
+    /// <summary>Whether running the step again could repeat an effect (a write whose outcome is
+    /// unknown): such a step is never retried blindly.</summary>
+    [Id(4)] public bool Retryable { get; init; } = true;
+    [Id(5)] public long DurationMs { get; init; }
+
+    public static StepResult Ok(string outputJson, string? logs, long ms) => new() { Success = true, OutputJson = outputJson, Logs = logs, DurationMs = ms };
+    public static StepResult Fail(string error, string? logs = null, bool retryable = true, long ms = 0) =>
+        new() { Success = false, Error = error, Logs = logs, Retryable = retryable, DurationMs = ms };
+}
+
+public enum StepState
+{
+    /// <summary>This activation never saw the step (it was lost, e.g. in a restart).</summary>
+    Unknown,
+    Running,
+    Finished
 }

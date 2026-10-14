@@ -27,9 +27,9 @@ flowchart LR
 | Piece | What it is |
 |---|---|
 | **Pipeline** | A graph of stages, versioned. Stages with no inputs start with the run; a stage starts once all its inputs have finished; stages nothing depends on give the run's result. Limits come from `Pipelines:*` (20 stages, 5 helpers per stage, 3 retries, 240 minutes per run). |
-| **Stage** | An agent with a name, role, instructions and tools (from capability words such as `research`, `http`, `shell`). Settings: helpers it may start (`max_helpers`), whether it may message the run's other stages, retries, what happens if it fails (`FailRun` or `Continue`), and an optional cost cap. Every stage can read and write the run's files and use the workspace's connections. |
+| **Stage** | Usually an agent; or an **action** (one call of a connection's tool, per item if you like) or a **script** (Python or JavaScript in a sandbox), which run without a model; see [workflows.md](workflows.md). An agent stage has a name, role, instructions and tools (from capability words such as `research`, `http`, `shell`). Settings: helpers it may start (`max_helpers`), whether it may message the run's other stages, retries, what happens if it fails (`FailRun` or `Continue`), and an optional cost cap. Every stage can read and write the run's files and use the workspace's connections. |
 | **Run** | One execution of the pipeline with an input: a task typed by a person, a schedule's instruction, a webhook's payload, or a watch's matches. A run is an actor (`PipelineRunGrain`) and the root of its agent tree, and it is also a task: `/api/tasks/{run_id}` and the dashboard's task view show its agent graph, files, events, spend and result. |
-| **Trigger** | A schedule (`every_minutes` or a 5-field UTC `cron`), a webhook, or a watch. Schedules and webhooks start a run; a watch alerts you, or starts a run with only the newly matching items. Schedules are Orleans reminders, so they survive crashes and restarts. |
+| **Trigger** | A schedule (`every_minutes` or a 5-field UTC `cron`), a webhook, a watch, or a [form](workflows.md#form-triggers) for members of your organization. Schedules, webhooks and forms start a run; a watch alerts you, or starts a run with only the newly matching items. Schedules are Orleans reminders, so they survive crashes and restarts. |
 | **Conversation** | Run notices and results, watch alerts, approvals and system notices. A message typed in the chat starts a run with it as the input; addressed to an agent of a run in progress, it reaches that agent instead. Results go to connected channels (SMS, Slack, email) by the pipeline's result urgency. |
 | **Daily budget** | One token and dollar limit for the whole workspace per UTC day, checked by the runtime before every LLM call of every run. At 80% the chat warns once. When it's used up, the chat says so once, a banner with a **Raise budget** button stays in the header, and agents that need to run are paused until midnight UTC or until the budget is raised. |
 
@@ -38,13 +38,16 @@ flowchart LR
 1. The workspace checks the pipeline's runs-at-once limit (`max_concurrent_runs`). With no free
    slot, or while the workspace is paused, the run waits in a queue (a run and its task row exist
    from the start, so callers can follow it). Queued runs start on the pipeline as it is then.
-2. The run starts every stage whose inputs are done. Each stage's agent gets its instructions as
-   its goal, plus the run's input, the summaries and files of its inputs, and who gets its result.
-   Independent stages run at the same time.
-3. A stage finishes with `complete_task`. Its summary and files are handed to the stages that take
-   it as input. A stage that fails (or stops without reporting) is retried with a note about what
-   went wrong; after its retries, `FailRun` stops the run and skips what's left, while `Continue`
-   lets later stages run, told it failed.
+2. The run starts every stage whose inputs are done. An agent stage's agent gets its instructions
+   as its goal, plus the run's input, the summaries and files of its inputs, and who gets its
+   result. An action or script stage gets the run's data as JSON (`input`, `stages`, `previous`;
+   see [workflows.md](workflows.md#data-between-stages)) and runs without a model. Independent
+   stages run at the same time.
+3. An agent stage finishes with `complete_task`; an action or script when its call or code does.
+   Every stage's output is kept as JSON and handed to the stages that take it as input. A stage
+   that fails (or an agent that stops without reporting) is retried with a note about what went
+   wrong, except an action that may already have written something; after its retries, `FailRun`
+   stops the run and skips what's left, while `Continue` lets later stages run, told it failed.
 4. When every stage has finished, failed or been skipped, the run's result is its output stages'
    summaries. It's recorded on the run and the task, posted in the chat, and forwarded to
    channels. The run times out after `max_run_minutes`.
@@ -216,6 +219,35 @@ list and the side panel start hidden. Pending approvals still show when the head
   you last had it open (pending approvals show in amber when nothing is unread), and a new message
   shows as a short preview beside it. Your own messages never count as new.
 
+## Private workspaces
+
+A workspace is visible either to **everyone in the organization** (the default) or **only to its
+owner**, the person who created it. Choose when you create it ("Who can see it"). Later, the owner
+can switch it with the pill next to the workspace's name (**Organization** / **Only you**).
+
+To everyone else, admins included, a private workspace looks exactly like one that doesn't exist:
+
+- it isn't in the Workspaces list, and its pages and API answer 404;
+- its runs aren't in the run history, and its agents, events (live and past), approvals and analytics
+  are left out;
+- its forms, files, knowledge, skills and MCP gateway are reachable only by the owner;
+- its runs can't be replayed, because a replay is an ordinary task that everyone would see.
+
+Other rules:
+
+- **The owner has an admin's say over a private workspace**, even with the Member role: budget,
+  connections, safety policy, archiving and deleting. Nobody else can see it to do that for them.
+- **Only the owner can change visibility.** An admin can't make someone else's workspace private or
+  shared.
+- **API keys act for the person who created them.** A private workspace's owner can reach it with
+  their own keys.
+- **Copies keep their visibility:** cloning a private workspace makes a private copy.
+- **Nothing about how it runs changes.** Triggers, agents, budgets and channels work the same; only
+  who sees it differs.
+
+If the owner leaves the organization, nobody can see their private workspaces any more. Make a
+workspace visible to the organization before handing it over.
+
 ## Cloning, templates and deleting
 
 - **Clone** (header) makes a new workspace with this one's setup, ready to run: goal, pipeline and
@@ -242,7 +274,8 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 
 | Method | Path | |
 |---|---|---|
-| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?}`; without `pipeline`, one is drafted from `goal` |
+| `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?, visibility?}`; without `pipeline`, one is drafted from `goal`. `visibility`: `Organization` (default) or `Private` |
+| `PUT` | `/api/workspaces/{id}/visibility` | `{visibility}`: owner only (403 otherwise). See [private workspaces](#private-workspaces) |
 | `GET` | `/api/workspaces` | List |
 | `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of recent runs (each run's own entry first), triggers, budget |
 | `GET` | `/api/workspaces/{id}/pipeline` | The pipeline |
@@ -252,12 +285,15 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 | `PUT` | `/api/workspaces/{id}/pipeline/layout` | `{layout: {stage_id: {x, y}}}`: where stages sit on the canvas, kept on the current version (no new version); `{}` lays it out automatically. An `add_stage` edit can carry a `position` too |
 | `GET` | `/api/workspaces/{id}/pipeline/history` | Earlier versions, newest first |
 | `POST` | `/api/workspaces/{id}/pipeline/restore` | `{version}` |
-| `POST` | `/api/workspaces/{id}/runs` | `{input}`: start (or queue) a run; follow it at `/api/tasks/{run_id}` |
+| `POST` | `/api/workspaces/{id}/runs` | `{input, data?}`: start (or queue) a run; follow it at `/api/tasks/{run_id}`. Action and script stages see `data` (any JSON) as `input` |
 | `GET` | `/api/workspaces/{id}/runs` | Recent runs |
-| `GET` | `/api/workspaces/{id}/runs/{runId}` | A run with each stage's status, attempts, result and agent |
+| `GET` | `/api/workspaces/{id}/runs/{runId}` | A run with each stage's kind, status, attempts, result, `output_json`, `logs` and agent, and the run's `input_data` |
 | `POST` | `/api/workspaces/{id}/runs/{runId}/pause` \| `resume` \| `cancel` | |
 | `POST` | `/api/workspaces/{id}/messages` | `{text, to_agent_id?, client_message_id?}`: starts a run (or reaches an agent of a run in progress); retries with the same `client_message_id` act once |
-| `GET` / `POST` | `/api/workspaces/{id}/triggers` | `{kind: schedule\|webhook\|watch, name, instruction, every_minutes?, cron?}`, plus for a watch `source_tool, items_path, conditions, key_field, display_fields, mode (notify\|run), message, urgency`; a created webhook's response includes its secret `webhook_path`, a watch's a `dry_run` |
+| `GET` / `POST` | `/api/workspaces/{id}/triggers` | `{kind: schedule\|webhook\|watch\|form, name, instruction, every_minutes?, cron?}`, plus for a watch `source_tool, items_path, conditions, key_field, display_fields, mode (notify\|run), message, urgency`, and for a form `form: {title, description, fields, submit_label, success_message}`; a created webhook's response includes its secret `webhook_path`, a watch's a `dry_run` |
+| `GET` | `/api/workspaces/{id}/forms/{triggerId}` | A form trigger's form, for its page (members of the organization) |
+| `POST` | `/api/workspaces/{id}/forms/{triggerId}/submissions` | Member; `{answers, submission_id}`: checked per field (`field_errors` on 400), then a run starts. API keys get 403 |
+| `POST` | `/api/workspaces/{id}/scripts/test` | Member; `{language, code, data, timeout_seconds?}`: run a script stage's code in the sandbox: `{ok, output, error, logs, duration_ms}` |
 | `DELETE` | `/api/workspaces/{id}/triggers/{triggerId}` | |
 | `PUT` | `/api/workspaces/{id}/budget` | `{daily_token_limit?, daily_cost_limit_usd?}` |
 | `POST` | `/api/workspaces/{id}/pause` \| `resume` \| `archive` | |

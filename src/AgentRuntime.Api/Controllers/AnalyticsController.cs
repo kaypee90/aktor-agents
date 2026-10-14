@@ -604,7 +604,9 @@ public sealed class AnalyticsController(AgentDbContext db, TenantAccess access) 
     private async Task<object> WorkspacesAsync(DateTimeOffset start, DateTimeOffset end, string? workspaceFilter, string? modelFilter, TimeSpan offset, CancellationToken ct)
     {
         var tenant = access.TenantId;
-        var workspaces = await db.Workspaces.AsNoTracking().Where(w => w.TenantId == tenant && w.Kind != "study")
+        // Other people's private workspaces, and so their runs, calls and tools, are left out.
+        var hidden = await access.HiddenWorkspacesAsync(ct);
+        var workspaces = await db.Workspaces.AsNoTracking().Where(w => w.TenantId == tenant && w.Kind != "study" && !hidden.Contains(w.WorkspaceId))
             .Select(w => new { w.WorkspaceId, w.Name, w.Status }).ToListAsync(ct);
         var ids = workspaces.Select(w => w.WorkspaceId).Where(id => string.IsNullOrEmpty(workspaceFilter) || id == workspaceFilter).ToList();
 

@@ -439,7 +439,14 @@ does.
 - **Each stage can run on its own model**, and shared knowledge its agents save stays in the
   workspace unless they share it with the whole organization.
 - **Run it** with an input, or let **triggers** run it: schedules (intervals or cron), webhooks
-  (e.g. from Shopify) and watches (checks in code, no model call until something matches).
+  (e.g. from Shopify), watches (checks in code, no model call until something matches) and
+  **forms** that members of your organization fill in.
+- **Not every stage needs a model**, as in n8n: an **action** stage calls a connected service's
+  tool with data from the run (once, or once per item), and a **script** stage runs Python or
+  JavaScript in a network-less sandbox to reshape data. Outputs flow between stages as JSON, and
+  `{{ expressions }}` fill in an action's arguments. On the canvas each agent shows its model,
+  tools and memory, and the triggers that start the pipeline sit on the left. See
+  [docs/workflows.md](docs/workflows.md).
 - Inside a stage the agent is autonomous within limits: tools, helpers through a plan, quick
   questions to other stages. The runtime starts stages when their inputs are done, retries
   failures, and enforces a time limit per run and one **daily budget** per workspace.
@@ -449,6 +456,8 @@ does.
 - **Templates** start you from real-world pipelines: incident response, support triage, market
   research, pull request review, lead research, content production, weekly competitive
   intelligence, contract review and candidate screening.
+- **Private or shared:** a workspace is visible to your whole organization, or only to you. A
+  private one, with its runs, files and spend, is hidden from everyone else, admins included.
 - **Clone** a workspace to start a new one with the same setup (pipeline, triggers, integrations,
   skills, knowledge, policy) but none of its runs or files; **Save as template** to share it with
   the organization on the Templates page; **Delete** an archived one (its runs and audit trail
@@ -459,8 +468,9 @@ See [docs/workspaces.md](docs/workspaces.md) and [docs/templates.md](docs/templa
 ## 10b-3. Integrations and plugins
 
 In a workspace's **Integrations** tab you can connect services, and you can add your own plugins.
-- **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Slack,
-  SMS (Twilio), email (SMTP) and Telegram.
+- **What you can connect:** MCP servers, REST APIs (e.g. your Shopify store's Admin API), Google
+  Sheets, Google BigQuery, Airtable, Zoho CRM, Sentry, Slack, SMS (Twilio), email (SMTP, Brevo,
+  SendGrid), SMS through Brevo, and Telegram.
 - **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`). For a REST API,
   add its endpoints by hand or import them from an OpenAPI document, and each becomes a typed tool
   (`store__get_order {order_id}`).

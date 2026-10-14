@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using AgentRuntime.Agents;
 using AgentRuntime.Contracts;
 using AgentRuntime.Events;
@@ -132,8 +134,10 @@ public sealed class PipelineRunGrain(
             return;
         }
 
+        await CheckStepsAsync();
+
         // A stage that finished but whose notice never arrived (lost, or the run was down).
-        foreach (var stage in S.Stages.Values.Where(st => st.Status == StageRunStatus.Running && st.AgentId is not null).ToList())
+        foreach (var stage in S.Stages.Values.Where(st => st.Status == StageRunStatus.Running && st.AgentId is not null && st.StepId is null).ToList())
         {
             var entry = await Registry.GetAsync(stage.AgentId!);
             if (entry is null || IsTerminal(entry.Status))
@@ -174,6 +178,7 @@ public sealed class PipelineRunGrain(
         if (!Exists || Finished) return;
         if (S.Status == PipelineRunStatus.Queued) S.Stages = R.Pipeline.Stages.ToDictionary(st => st.StageId, st => new StageRun { StageId = st.StageId });
         foreach (var agent in await LiveAgentsAsync()) await orchestrator.StopAsync(agent.AgentId);
+        await CancelStepsAsync();
         foreach (var stage in S.Stages.Values.Where(st => st.Status is StageRunStatus.Pending or StageRunStatus.Running))
         {
             stage.Status = StageRunStatus.Skipped;
@@ -260,6 +265,12 @@ public sealed class PipelineRunGrain(
 
     private async Task StartStageAsync(StageRun run, PipelineStage stage)
     {
+        if (!stage.IsAgent)
+        {
+            await StartStepAsync(run, stage);
+            return;
+        }
+
         run.Attempts++;
         var agentId = DeterministicId.From("stg-", $"{RunId}:{stage.StageId}:{run.Attempts}");
         var remaining = TimeSpan.FromMinutes(R.Pipeline.MaxRunMinutes) - (DateTimeOffset.UtcNow - S.StartedAt!.Value);
@@ -315,6 +326,7 @@ public sealed class PipelineRunGrain(
             run.Outcome = outcome.CompletionStatus ?? "completed";
             run.Summary = outcome.Summary;
             run.Artifacts = outcome.Artifacts;
+            run.OutputJson = AgentOutputJson(run.Outcome, outcome);
             run.Error = null;
             run.CompletedAt = DateTimeOffset.UtcNow;
             await state.WriteStateAsync();
@@ -355,6 +367,7 @@ public sealed class PipelineRunGrain(
         if (stage.OnFailure == StageFailurePolicy.FailRun)
         {
             foreach (var agent in await LiveAgentsAsync()) await orchestrator.StopAsync(agent.AgentId);
+            await CancelStepsAsync();
             foreach (var other in S.Stages.Values.Where(st => st.Status is StageRunStatus.Pending or StageRunStatus.Running))
             {
                 other.Status = StageRunStatus.Skipped;
@@ -369,6 +382,7 @@ public sealed class PipelineRunGrain(
     private async Task TimeOutAsync()
     {
         foreach (var agent in await LiveAgentsAsync()) await orchestrator.StopAsync(agent.AgentId);
+        await CancelStepsAsync();
         foreach (var stage in S.Stages.Values.Where(st => st.Status is StageRunStatus.Pending or StageRunStatus.Running))
         {
             stage.Status = StageRunStatus.Skipped;
@@ -415,6 +429,203 @@ public sealed class PipelineRunGrain(
         await state.WriteStateAsync();
         await StopRemindersAsync();
     }
+
+    // ---- Action and script stages ---------------------------------------------------
+
+    /// <summary>Hands an action or script stage's attempt to its step grain, one-way: the step reports
+    /// back with <see cref="OnStepFinished"/>, so the run never waits on it.</summary>
+    private async Task StartStepAsync(StageRun run, PipelineStage stage)
+    {
+        run.Attempts++;
+        var stepId = DeterministicId.From("stp-", $"{RunId}:{stage.StageId}:{run.Attempts}");
+        run.Status = StageRunStatus.Running;
+        run.StepId = stepId;
+        run.StepStartedAt = DateTimeOffset.UtcNow;
+        run.StartedAt ??= DateTimeOffset.UtcNow;
+        run.Error = null;
+        await state.WriteStateAsync();
+
+        await PublishAsync(RuntimeEventType.PipelineStageStarted,
+            $"{KindLabel(stage)} '{stage.Name}' started" + (run.Attempts > 1 ? $" (attempt {run.Attempts})." : "."),
+            new Dictionary<string, string> { ["stage_id"] = stage.StageId, ["attempt"] = run.Attempts.ToString(), ["kind"] = stage.Kind.ToString() });
+        await PublishRunUpdatedAsync();
+
+        await GrainFactory.GetGrain<IPipelineStepGrain>(stepId).Execute(new StepLaunch
+        {
+            StepId = stepId,
+            RunId = RunId,
+            RunNumber = R.Number,
+            WorkspaceId = R.WorkspaceId,
+            TenantId = R.TenantId,
+            Stage = stage,
+            Attempt = run.Attempts,
+            DataJson = BuildData(stage).ToJsonString()
+        });
+    }
+
+    public async Task OnStepFinished(string stageId, string stepId, StepResult result)
+    {
+        if (!Exists || Finished || !S.Stages.TryGetValue(stageId, out var run)) return;
+        if (run.Status != StageRunStatus.Running || run.StepId != stepId) return;
+        await ApplyStepResultAsync(run, result);
+        await AdvanceAsync();
+    }
+
+    private async Task ApplyStepResultAsync(StageRun run, StepResult result)
+    {
+        var stage = R.Pipeline.Find(run.StageId)!;
+        run.StepId = null;
+        run.Logs = result.Logs is { Length: > 0 } logs ? Clip(logs, 10_000) : null;
+        if (result.Success)
+        {
+            run.Status = StageRunStatus.Completed;
+            run.Outcome = "completed";
+            run.OutputJson = ReadableJson(result.OutputJson ?? "null");
+            run.Summary = DescribeOutput(run.OutputJson);
+            run.Error = null;
+            run.CompletedAt = DateTimeOffset.UtcNow;
+            await state.WriteStateAsync();
+            await PublishAsync(RuntimeEventType.PipelineStageFinished, $"{KindLabel(stage)} '{stage.Name}' finished in {result.DurationMs:N0} ms.",
+                new Dictionary<string, string> { ["stage_id"] = stage.StageId, ["status"] = "Completed", ["outcome"] = "completed", ["kind"] = stage.Kind.ToString() });
+            await PublishRunUpdatedAsync();
+            return;
+        }
+
+        var reason = result.Error ?? "The step failed.";
+        if (result.Retryable && run.Attempts <= stage.Retries)
+        {
+            await PublishAsync(RuntimeEventType.AgentRestarted, $"{KindLabel(stage)} '{stage.Name}' failed ({Clip(reason, 200)}); retrying.",
+                new Dictionary<string, string> { ["stage_id"] = stage.StageId, ["attempt"] = run.Attempts.ToString() });
+            run.Status = StageRunStatus.Pending;
+            run.Error = reason;
+            await StartStepAsync(run, stage);
+            return;
+        }
+
+        await FailStageAsync(run, stage, reason);
+    }
+
+    /// <summary>Steps whose notice never came: a finished one is applied; one this server no longer
+    /// knows about (lost in a restart) is started again if that's safe, or failed if it might have
+    /// written something already.</summary>
+    private async Task CheckStepsAsync()
+    {
+        foreach (var run in S.Stages.Values.Where(st => st.Status == StageRunStatus.Running && st.StepId is not null).ToList())
+        {
+            if (Finished) return;
+            var step = GrainFactory.GetGrain<IPipelineStepGrain>(run.StepId!);
+            var stepState = await step.GetState();
+            if (stepState == StepState.Running) continue;
+            if (stepState == StepState.Finished && await step.GetResult() is { } result)
+            {
+                await ApplyStepResultAsync(run, result);
+                continue;
+            }
+
+            // Only steps a minute old: a fresh one may not have reached its grain yet.
+            if (run.StepStartedAt is { } at && DateTimeOffset.UtcNow - at < TimeSpan.FromMinutes(1)) continue;
+            var stage = R.Pipeline.Find(run.StageId)!;
+            if (stage.Kind == StageKind.Action && await MayHaveWrittenAsync(stage))
+            {
+                await ApplyStepResultAsync(run, StepResult.Fail(
+                    $"The server restarted while '{stage.Tool}' was running, so whether it went through is unknown. Check before running it again.", retryable: false));
+                continue;
+            }
+
+            logger.LogInformation("Run {RunId}: step {StepId} was lost; starting it again", RunId, run.StepId);
+            run.Attempts--; // The lost attempt didn't count.
+            run.Status = StageRunStatus.Pending;
+            await StartStepAsync(run, stage);
+        }
+    }
+
+    private async Task<bool> MayHaveWrittenAsync(PipelineStage stage)
+    {
+        var target = await GrainFactory.GetGrain<IWorkspaceGrain>(R.WorkspaceId).ResolveConnectionTool(stage.Tool ?? string.Empty);
+        return target is null || target.SideEffects == Tools.ToolSideEffects.NonIdempotent;
+    }
+
+    private async Task CancelStepsAsync()
+    {
+        foreach (var run in S.Stages.Values.Where(st => st.Status == StageRunStatus.Running && st.StepId is not null))
+        {
+            await GrainFactory.GetGrain<IPipelineStepGrain>(run.StepId!).Cancel();
+        }
+    }
+
+    /// <summary>
+    /// The data an action or script stage sees: the run's <c>input</c> (as data when it came as
+    /// data), every finished stage's output under <c>stages</c>, <c>previous</c> (the output of
+    /// the stage's only input) and <c>run</c>.
+    /// </summary>
+    private JsonObject BuildData(PipelineStage stage)
+    {
+        var stages = new JsonObject();
+        foreach (var (id, run) in S.Stages.Where(p => p.Value.Status == StageRunStatus.Completed))
+        {
+            stages[id] = ParseLenient(run.OutputJson ?? JsonSerializer.Serialize(new { summary = run.Summary }));
+        }
+
+        var previous = stage.Inputs.Count == 1 && stages[stage.Inputs[0]] is { } only ? only.DeepClone() : null;
+        return new JsonObject
+        {
+            ["input"] = R.InputData is { } data ? ParseLenient(data) : JsonValue.Create(R.Input),
+            ["stages"] = stages,
+            ["previous"] = previous,
+            ["run"] = new JsonObject
+            {
+                ["id"] = RunId,
+                ["number"] = R.Number,
+                ["workspace_id"] = R.WorkspaceId,
+                ["source"] = R.Source,
+                ["trigger"] = R.TriggerName,
+                ["started_at"] = S.StartedAt?.ToString("O")
+            }
+        };
+    }
+
+    /// <summary>Outputs are read by people and by agents: quotes and the like stay as they are,
+    /// not \u0022.</summary>
+    private static readonly JsonSerializerOptions Readable = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>An agent stage's output for later stages: its report as data.</summary>
+    private static string AgentOutputJson(string status, AgentOutcome outcome) => JsonSerializer.Serialize(new
+    {
+        status,
+        summary = outcome.Summary,
+        artifacts = outcome.Artifacts,
+        remaining_work = outcome.RemainingWork
+    }, Readable);
+
+    /// <summary>A step's output, re-encoded readably (a tool's result may come escaped).</summary>
+    private static string ReadableJson(string json)
+    {
+        try
+        {
+            return JsonNode.Parse(json)?.ToJsonString(Readable) ?? "null";
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
+    /// <summary>What agent stages are told an action or script produced.</summary>
+    private string DescribeOutput(string outputJson) =>
+        "Output (JSON):\n" + Clip(outputJson, Math.Max(1000, _opts.MaxContextChars / 2));
+
+    private static JsonNode? ParseLenient(string json)
+    {
+        try { return JsonNode.Parse(json); }
+        catch (JsonException) { return JsonValue.Create(json); }
+    }
+
+    private static string KindLabel(PipelineStage stage) => stage.Kind switch
+    {
+        StageKind.Action => "Action",
+        StageKind.Script => "Script",
+        _ => "Stage"
+    };
 
     // ---- What a stage is told -------------------------------------------------------
 
@@ -531,6 +742,7 @@ public sealed class PipelineRunGrain(
             StartedAt = s.StartedAt,
             CompletedAt = s.CompletedAt,
             Summary = s.Summary,
+            InputData = R.InputData,
             Stages = R.Pipeline.Stages.Select(stage =>
             {
                 var run = s.Stages.GetValueOrDefault(stage.StageId) ?? new StageRun { StageId = stage.StageId };
@@ -547,7 +759,10 @@ public sealed class PipelineRunGrain(
                     Error = run.Error,
                     StartedAt = run.StartedAt,
                     CompletedAt = run.CompletedAt,
-                    Inputs = stage.Inputs
+                    Inputs = stage.Inputs,
+                    Kind = stage.Kind,
+                    OutputJson = run.OutputJson,
+                    Logs = run.Logs
                 };
             }).ToList()
         };

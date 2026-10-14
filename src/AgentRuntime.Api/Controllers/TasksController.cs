@@ -56,6 +56,7 @@ public sealed record SwitchModelRequest(string Model);
 
 [ApiController]
 [Route("api/tasks")]
+[ScopeAccess]
 public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbContext db, IOptions<ToolsOptions> toolsOptions, TenantAccess access,
     TaskService tasks, TaskPreviewService previews, AgentRuntime.Durability.IStepJournal journal,
     IOptions<AgentRuntime.Configuration.DefaultBudgetOptions> defaultBudget, AgentRuntime.LLM.LlmSettingsService models,
@@ -183,6 +184,15 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     public async Task<IActionResult> Replay(string id, [FromBody] ReplayTaskRequest? request, CancellationToken ct)
     {
         if (!await access.TaskAsync(id, ct)) return NotFound();
+        // A replay is an ordinary task, which the whole organization sees: it would carry a private
+        // workspace's run (its input and steps) out of the workspace.
+        var workspaceId = await db.Tasks.AsNoTracking().Where(t => t.TaskId == id).Select(t => t.WorkspaceId).FirstOrDefaultAsync(ct);
+        if (workspaceId is not null && (await HttpContext.RequestServices.GetRequiredService<IGrainFactory>()
+                .GetGrain<AgentRuntime.Workspaces.IWorkspaceGrain>(workspaceId).GetAccessInfo())?.Visibility == AgentRuntime.Workspaces.WorkspaceVisibility.Private)
+        {
+            return Conflict(new { error = "Runs of a private workspace can't be replayed: the replay would be visible to the whole organization." });
+        }
+
         if (!Enum.TryParse<AgentRuntime.Durability.ReplayMode>(request?.Mode ?? "full", ignoreCase: true, out var mode))
         {
             return BadRequest(new { error = "mode must be full or fork" });
@@ -446,7 +456,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int limit = 100, CancellationToken ct = default)
     {
-        var tasks = await db.Tasks.AsNoTracking().Where(t => t.TenantId == access.TenantId)
+        // Runs of other people's private workspaces aren't listed.
+        var hidden = await access.HiddenWorkspacesAsync(ct);
+        var tasks = await db.Tasks.AsNoTracking().Where(t => t.TenantId == access.TenantId && (t.WorkspaceId == null || !hidden.Contains(t.WorkspaceId)))
             .OrderByDescending(t => t.CreatedAt).Take(Math.Clamp(limit, 1, 500)).ToListAsync(ct);
         var ids = tasks.Select(t => t.TaskId).ToList();
         var teams = await db.Agents.AsNoTracking().Where(a => ids.Contains(a.TaskId))

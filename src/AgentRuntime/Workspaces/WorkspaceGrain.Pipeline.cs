@@ -84,6 +84,9 @@ public sealed partial class WorkspaceGrain
     public Task<RunStartResult> StartRun(string input, string startedBy) =>
         StartRunCoreAsync(input, "manual", startedBy, trigger: null, eventId: null);
 
+    public Task<RunStartResult> StartRunWithData(string input, string? inputData, string startedBy) =>
+        StartRunCoreAsync(input, "manual", startedBy, trigger: null, eventId: null, inputData);
+
     public async Task OnRunFinished(string runId, PipelineRunStatus status, string summary)
     {
         if (!Exists) return;
@@ -148,7 +151,8 @@ public sealed partial class WorkspaceGrain
     /// <summary>Starts a run, or queues it when the pipeline's runs-at-once limit is reached. With an
     /// <paramref name="eventId"/> (a trigger tick or webhook delivery) the run id is fixed by it, so
     /// the same event fired twice starts one run.</summary>
-    private async Task<RunStartResult> StartRunCoreAsync(string input, string source, string? startedBy, TriggerDefinition? trigger, string? eventId)
+    private async Task<RunStartResult> StartRunCoreAsync(string input, string source, string? startedBy, TriggerDefinition? trigger, string? eventId,
+        string? inputData = null)
     {
         if (!Exists || S.Pipeline is null) return new RunStartResult { Message = "No such workspace." };
         if (S.Status == WorkspaceStatus.Archived) return new RunStartResult { Message = "This workspace is archived." };
@@ -174,7 +178,8 @@ public sealed partial class WorkspaceGrain
             StartedBy = startedBy,
             StageBudget = BuildPolicy().WorkerBudget,
             Team = S.SafetyPolicy.Team,
-            Number = S.NextRunNumber
+            Number = S.NextRunNumber,
+            InputData = inputData
         };
 
         var waiting = S.Status == WorkspaceStatus.Paused || S.ActiveRunIds.Count >= S.Pipeline.MaxConcurrentRuns;

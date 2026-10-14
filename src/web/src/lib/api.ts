@@ -363,8 +363,13 @@ export function endWorld(worldId: string) {
 // ---- Workspaces (long-running agents with triggers) ----
 
 /** A workspace for `goal`; its pipeline is drafted from the goal by the pipeline editor. */
-export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number }) {
+export function createWorkspace(input: { name: string; goal: string; daily_token_limit?: number; daily_cost_limit_usd?: number; visibility?: import("./workspaceTypes").WorkspaceVisibility }) {
   return apiFetch<{ workspace_id: string; draft: string | null }>("/api/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+/** Only the workspace's owner may change who sees it. */
+export function setWorkspaceVisibility(id: string, visibility: import("./workspaceTypes").WorkspaceVisibility) {
+  return apiFetch<{ visibility: import("./workspaceTypes").WorkspaceVisibility }>(`/api/workspaces/${id}/visibility`, { method: "PUT", body: JSON.stringify({ visibility }) });
 }
 
 // ---- Pipelines and runs (docs/workspaces.md) ----
@@ -411,8 +416,46 @@ export function restorePipelineVersion(id: string, version: number) {
   });
 }
 
-export function startPipelineRun(id: string, input: string) {
-  return apiFetch<import("./pipelineTypes").RunStartResult>(`/api/workspaces/${id}/runs`, { method: "POST", body: JSON.stringify({ input }) });
+/** Starts a run. With `data` (any JSON), action and script stages see it as `input`. */
+export function startPipelineRun(id: string, input: string, data?: unknown) {
+  return apiFetch<import("./pipelineTypes").RunStartResult>(`/api/workspaces/${id}/runs`, {
+    method: "POST",
+    body: JSON.stringify(data === undefined ? { input } : { input, data }),
+  });
+}
+
+export interface ScriptTestResult {
+  ok: boolean;
+  output: unknown;
+  error: string | null;
+  logs: string;
+  duration_ms: number;
+}
+
+/** Runs a script stage's code in the sandbox with sample data. */
+export function testScript(id: string, body: { language: string; code: string; data: unknown; timeout_seconds?: number | null }) {
+  return apiFetch<ScriptTestResult>(`/api/workspaces/${id}/scripts/test`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getForm(workspaceId: string, triggerId: string) {
+  return apiFetch<import("./workspaceTypes").FormView>(`/api/workspaces/${workspaceId}/forms/${triggerId}`);
+}
+
+export function submitForm(workspaceId: string, triggerId: string, answers: Record<string, unknown>, submissionId: string) {
+  return apiFetch<{ success: boolean; message: string; run_id: string | null; number: number }>(
+    `/api/workspaces/${workspaceId}/forms/${triggerId}/submissions`,
+    { method: "POST", body: JSON.stringify({ answers, submission_id: submissionId }) },
+  );
+}
+
+/** Problems with particular fields, from a refused form submission. */
+export function apiFieldErrors(err: unknown): Record<string, string> {
+  const text = err instanceof Error ? err.message : String(err);
+  try {
+    return (JSON.parse(text.slice(text.indexOf("{"))) as { field_errors?: Record<string, string> }).field_errors ?? {};
+  } catch {
+    return {};
+  }
 }
 
 export function getPipelineRun(id: string, runId: string) {
@@ -429,10 +472,10 @@ export function listWorkspaceTemplates() {
 
 /** A workspace from a template: its instructions, safety policy, webhooks and (with the demo
  * system) simulated connections. Returns the webhook paths, which hold a secret. */
-export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true) {
+export function createWorkspaceFromTemplate(template: string, name?: string, useDemoSystem = true, visibility?: import("./workspaceTypes").WorkspaceVisibility) {
   return apiFetch<{ workspace_id: string; webhooks?: { name: string; path: string | null }[]; sample_input: string | null }>("/api/workspaces/from-template", {
     method: "POST",
-    body: JSON.stringify({ template, name, use_demo_system: useDemoSystem }),
+    body: JSON.stringify({ template, name, use_demo_system: useDemoSystem, visibility }),
   });
 }
 
@@ -516,7 +559,7 @@ export interface WatchInput {
 /** Creates a trigger. A watch's response includes a dry run of its rule (items found, matching now). */
 export function addWorkspaceTrigger(
   id: string,
-  trigger: { kind: "schedule" | "webhook" | "watch"; name: string; instruction?: string; every_minutes?: number; cron?: string } & Partial<WatchInput>,
+  trigger: { kind: "schedule" | "webhook" | "watch" | "form"; name: string; instruction?: string; every_minutes?: number; cron?: string; form?: import("./workspaceTypes").FormDefinition } & Partial<WatchInput>,
 ) {
   return apiFetch<import("./workspaceTypes").TriggerView & { dry_run?: { items_found: number; matching_now: number } }>(`/api/workspaces/${id}/triggers`, {
     method: "POST",

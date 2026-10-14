@@ -64,6 +64,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Studies.EfStudyStore>();
         services.AddSingleton<AgentRuntime.Studies.IStudyStore>(sp => sp.GetRequiredService<Studies.EfStudyStore>());
         services.AddSingleton<AgentRuntime.Studies.IAnalysisSandbox, Studies.DockerAnalysisSandbox>();
+        services.AddSingleton<AgentRuntime.Pipelines.IScriptRunner, Pipelines.DockerScriptRunner>();
         services.PostConfigure<AgentRuntime.Studies.StudyOptions>(o =>
         {
             if (configuration[$"{AgentRuntime.Studies.StudyOptions.SectionName}:DataRoot"] is null)
@@ -91,6 +92,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TwilioSmsPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, EmailSmtpPlugin>();
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, TelegramPlugin>();
+        services.AddSingleton<GoogleServiceAccountTokens>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, GoogleSheetsPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, BigQueryPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, AirtablePlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, ZohoCrmPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, BrevoPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SendGridPlugin>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SentryPlugin>();
         // The incident-response template's simulated production system (docs/incident-response.md).
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, DemoOpsPlugin>();
         services.AddPluginsFromDirectory(configuration["Plugins:Directory"] ?? "./plugins");

@@ -14,6 +14,10 @@ public sealed class EventsController(AgentDbContext db, TenantAccess access) : C
     public async Task<IActionResult> List([FromQuery] string? taskId, [FromQuery] int limit = 200, CancellationToken ct = default)
     {
         var query = db.Events.AsNoTracking().Where(e => e.TenantId == access.TenantId);
+        if (!string.IsNullOrWhiteSpace(taskId) && !await access.ScopeAsync(taskId, ct)) return NotFound();
+        // Nothing from other people's private workspaces or their runs.
+        var hidden = await access.HiddenScopesAsync(ct);
+        if (hidden.Count > 0) query = query.Where(e => e.TaskId == null || !hidden.Contains(e.TaskId));
         if (!string.IsNullOrWhiteSpace(taskId))
         {
             // A workspace's history includes its most recent runs' events (published under the run).

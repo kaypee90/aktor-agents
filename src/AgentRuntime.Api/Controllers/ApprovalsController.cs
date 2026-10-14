@@ -18,8 +18,9 @@ public sealed class ApprovalsController(IGrainFactory grains, AgentDbContext db,
     [HttpGet("pending")]
     public async Task<IActionResult> Pending(CancellationToken ct)
     {
+        var hidden = await access.HiddenWorkspacesAsync(ct);
         var workspaces = await db.Workspaces.AsNoTracking()
-            .Where(w => w.TenantId == access.TenantId && w.Status != "Archived")
+            .Where(w => w.TenantId == access.TenantId && w.Status != "Archived" && !hidden.Contains(w.WorkspaceId))
             .Select(w => new { w.WorkspaceId, w.Name })
             .ToListAsync(ct);
 

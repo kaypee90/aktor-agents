@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createWorkspace, createWorkspaceFromTemplate, listWorkspaceTemplates } from "@/lib/api";
+import type { WorkspaceVisibility } from "@/lib/workspaceTypes";
+import { VisibilityChoice } from "./VisibilityChoice";
 import Link from "next/link";
 import { MentionTextarea, useKnowledgeMentionables, useModelMentionables, useSkillMentionables } from "@/components/ui/MentionTextarea";
 import { pipelineShape, type WorkspaceTemplate } from "@/lib/workspaceTypes";
@@ -25,6 +27,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
   const [error, setError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
   const [useDemoSystem, setUseDemoSystem] = useState(true);
+  const [visibility, setVisibility] = useState<WorkspaceVisibility>("Organization");
 
   useEffect(() => {
     listWorkspaceTemplates().then(setTemplates).catch(() => setTemplates([]));
@@ -34,7 +37,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
     setBusy(true);
     setError(null);
     try {
-      const { workspace_id } = await createWorkspaceFromTemplate(t.id, undefined, useDemoSystem);
+      const { workspace_id } = await createWorkspaceFromTemplate(t.id, undefined, useDemoSystem, visibility);
       onCreated(workspace_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create workspace");
@@ -48,7 +51,7 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
     setBusy(true);
     setError(null);
     try {
-      const { workspace_id } = await createWorkspace({ name, goal, daily_token_limit: tokens, daily_cost_limit_usd: dollars });
+      const { workspace_id } = await createWorkspace({ name, goal, daily_token_limit: tokens, daily_cost_limit_usd: dollars, visibility });
       onCreated(workspace_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create workspace");
@@ -69,8 +72,12 @@ export function CreateWorkspaceForm({ onCreated }: { onCreated: (id: string) => 
         <h2 className="text-base font-semibold">New workspace</h2>
         <p className="text-xs text-zinc-500">
           Describe a job you want done again and again. A pipeline of agents is drafted from it; change any stage in plain
-          language or on the canvas, then run it with an input, or add a schedule, webhook or watch to run it automatically.
+          language or on the canvas, then run it with an input, or add a schedule, webhook, watch or form to run it automatically.
         </p>
+      </div>
+      <div className="space-y-1 text-xs">
+        <span className="text-zinc-500">Who can see it</span>
+        <VisibilityChoice value={visibility} onChange={setVisibility} disabled={busy} />
       </div>
       {templates.length > 0 && (
         <div className="space-y-2 rounded border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/40">

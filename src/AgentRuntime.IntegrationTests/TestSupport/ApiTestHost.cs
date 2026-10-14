@@ -122,7 +122,25 @@ public sealed class ApiTestHost : IAsyncLifetime
         var caller = new Caller(signedUp.Value.TenantId, TenantRole.Owner, signedUp.Value.User.UserId, email, null, false, null);
         var key = await identity.CreateApiKeyAsync(caller, $"{name} test key", keyRole, null, CancellationToken.None);
         if (key.Error is not null) throw new InvalidOperationException(key.Error);
-        return new Organization(signedUp.Value.TenantId, key.Value.Secret);
+        return new Organization(signedUp.Value.TenantId, key.Value.Secret) { OwnerUserId = signedUp.Value.User.UserId, OwnerEmail = email };
+    }
+
+    /// <summary>Another person in <paramref name="org"/> (invited with <paramref name="role"/>, then
+    /// signed up), with an API key that acts for them.</summary>
+    public async Task<Organization> AddMemberAsync(Organization org, string name, TenantRole role)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var identity = scope.ServiceProvider.GetRequiredService<IdentityService>();
+        var owner = new Caller(org.TenantId, TenantRole.Owner, org.OwnerUserId, org.OwnerEmail, null, false, null);
+        var email = $"{name.ToLowerInvariant()}-{Guid.NewGuid():n}@example.test";
+        var invited = await identity.InviteAsync(owner, email, role, CancellationToken.None);
+        if (invited.Error is not null) throw new InvalidOperationException(invited.Error);
+        var signedUp = await identity.SignUpAsync(email, "correct-horse-battery-staple-1", name, null, invited.Value.Token, CancellationToken.None);
+        if (signedUp.Value is null) throw new InvalidOperationException(signedUp.Error);
+        var member = new Caller(org.TenantId, role, signedUp.Value.User.UserId, email, null, false, null);
+        var key = await identity.CreateApiKeyAsync(member, $"{name} test key", role, null, CancellationToken.None);
+        if (key.Error is not null) throw new InvalidOperationException(key.Error);
+        return new Organization(org.TenantId, key.Value.Secret) { OwnerUserId = signedUp.Value.User.UserId, OwnerEmail = email };
     }
 
     public HttpClient ClientFor(Organization org)
@@ -133,4 +151,9 @@ public sealed class ApiTestHost : IAsyncLifetime
     }
 }
 
-public sealed record Organization(string TenantId, string ApiKey);
+public sealed record Organization(string TenantId, string ApiKey)
+{
+    /// <summary>The person the key acts for.</summary>
+    public string? OwnerUserId { get; init; }
+    public string? OwnerEmail { get; init; }
+}

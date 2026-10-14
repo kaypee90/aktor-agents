@@ -49,6 +49,8 @@ More of the same shape:
   - `notify` sends the alert to the user directly (and on to their channels by urgency);
   - `run` starts a run of the workspace's pipeline, but only then, and with only the matching
     items as its input, for when a match needs judgement (e.g. "work out a reorder quantity").
+    Action and script stages get the items as data, in `input.matches`
+    ([workflows.md](workflows.md)).
 - **Safe by construction.**
   - Watches may only call **read-only** tools, since they run unattended.
   - Conditions are data, not code: a JSONPath subset (`$`, `.name`, `['name']`, `[n]`, `[*]`)

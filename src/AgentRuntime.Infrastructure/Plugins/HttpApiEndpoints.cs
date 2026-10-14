@@ -61,6 +61,10 @@ public static partial class HttpApiEndpoints
     [GeneratedRegex(@"\{([^{}/]+)\}")]
     private static partial Regex Placeholder();
 
+    /// <summary>{{name}}, {{ name }} or { name }: the same placeholder as {name}, as people write it.</summary>
+    [GeneratedRegex(@"\{\{?\s*([^{}/\s]+)\s*\}\}?")]
+    private static partial Regex LoosePlaceholder();
+
     public static bool IsWrite(string method) => !method.Equals("GET", StringComparison.OrdinalIgnoreCase);
 
     public static ToolSideEffects SideEffectsOf(string method) => method.ToUpperInvariant() switch
@@ -104,6 +108,8 @@ public static partial class HttpApiEndpoints
     public static ApiEndpoint Normalize(ApiEndpoint e)
     {
         var path = string.IsNullOrWhiteSpace(e.Path) ? "/" : "/" + e.Path.Trim().TrimStart('/');
+        // Step arguments use {{ … }}, endpoint paths {name}; both mean "fill this in" here.
+        path = LoosePlaceholder().Replace(path, "{$1}");
         var declared = e.Params
             .Where(p => !string.IsNullOrWhiteSpace(p.Name))
             .Select(p => p with
@@ -234,6 +240,11 @@ public static partial class HttpApiEndpoints
                 }
 
                 path = path.Replace("{" + p.Name + "}", Uri.EscapeDataString(text), StringComparison.Ordinal);
+                if (path.Contains('{') || path.Contains('}'))
+                {
+                    error = $"The endpoint's path '{e.Path}' still has braces after filling in '{p.Name}': write its placeholders as {{{p.Name}}}.";
+                    return false;
+                }
             }
             else
             {

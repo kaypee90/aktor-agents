@@ -1,19 +1,63 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, ErrorBanner, Field, Modal, ago, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
-import { apiErrorMessage, applyPipelineEdits, getPipelineHistory, proposePipelineChange, restorePipelineVersion, savePipeline, savePipelineLayout } from "@/lib/api";
-import type { PipelineDefinition, PipelineEditOp, PipelineProposal, PipelineRunView, StagePatch, StagePosition } from "@/lib/pipelineTypes";
-import { MentionTextarea, useModelMentionables, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
+import { apiErrorMessage, applyPipelineEdits, getPipelineHistory, getPipelineRun, proposePipelineChange, restorePipelineVersion, savePipeline, savePipelineLayout } from "@/lib/api";
+import { kindOf, type PipelineDefinition, type PipelineEditOp, type PipelineProposal, type PipelineRunView, type PipelineStage, type StageKind, type StagePatch, type StagePosition } from "@/lib/pipelineTypes";
+import { MentionTextarea, useModelChoices, useModelMentionables, useWorkspaceMentionables } from "@/components/ui/MentionTextarea";
 import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
-import { PipelineCanvas, type CanvasEditing } from "./PipelineCanvas";
-import { NEW_STAGE, StageEditor } from "./StageEditor";
+import { PipelineCanvas, type AgentPart, type CanvasEditing } from "./PipelineCanvas";
+import { NEW_STAGE, SCRIPT_TEMPLATES, StageEditor } from "./StageEditor";
+import { TriggerIcon } from "./StageKindIcon";
 
 const EXAMPLES = ["Add a fact checker after Research", "Add a reviewer before the last stage", "Remove the reviewer"];
 
 /** Where a stage being added goes: on a connection or at an end, or where it was dropped on the canvas. */
-type Insertion = { after?: string; before?: string; position?: StagePosition; inputs?: string[] };
+type Insertion = { after?: string; before?: string; position?: StagePosition; inputs?: string[]; kind?: StageKind };
+
+const PARTS_KEY = "aktor:pipeline-parts";
+
+/** A blank stage of a kind, for the "add a stage" form. */
+function newStage(kind: StageKind = "Agent"): StagePatch & { name: string } {
+  if (kind === "Agent") return NEW_STAGE;
+  return {
+    ...NEW_STAGE,
+    kind,
+    capabilities: [],
+    retries: kind === "Action" ? 0 : 1,
+    arguments: kind === "Action" ? "{\n  \n}" : undefined,
+    language: kind === "Script" ? "python" : undefined,
+    code: kind === "Script" ? SCRIPT_TEMPLATES.python : undefined,
+  };
+}
+
+function parse(json: string | null | undefined): unknown {
+  if (json == null) return null;
+  try { return JSON.parse(json); } catch { return json; }
+}
+
+/** The data a stage would see in `run`: what a script can be tried on before it's saved. */
+function sampleFor(stage: Pick<PipelineStage, "inputs">, run: PipelineRunView) {
+  const stages: Record<string, unknown> = {};
+  for (const s of run.stages) if (s.status === "Completed") stages[s.stage_id] = s.output_json ? parse(s.output_json) : { summary: s.summary };
+  return {
+    input: run.input_data ? parse(run.input_data) : run.input,
+    stages,
+    previous: stage.inputs.length === 1 ? stages[stage.inputs[0]] ?? null : null,
+    run: { id: run.run_id, number: run.number, source: run.source, trigger: run.trigger_name },
+  };
+}
+
+/** JSON shown readably, or the text as it is. */
+function Pretty({ json }: { json: string }) {
+  const value = parse(json);
+  return (
+    <pre className="max-h-72 overflow-auto rounded-lg bg-zinc-50 p-2.5 font-mono text-[11px] text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+      {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+    </pre>
+  );
+}
 
 /**
  * The workspace's pipeline: describe a change in plain language (previewed on the canvas before
@@ -40,6 +84,27 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   const [inserting, setInserting] = useState<Insertion | null>(null);
   const [history, setHistory] = useState<PipelineDefinition[] | null>(null);
   const [settings, setSettings] = useState<Pick<PipelineDefinition, "max_run_minutes" | "max_concurrent_runs" | "result_urgency"> | null>(null);
+  const [focus, setFocus] = useState<AgentPart | null>(null);
+  const [selectedTrigger, setSelectedTrigger] = useState<string | null>(null);
+  const [showParts, setShowParts] = useState(() => {
+    try { return typeof window === "undefined" || window.localStorage.getItem(PARTS_KEY) !== "off"; } catch { return true; }
+  });
+  const toggleParts = () => setShowParts((v) => {
+    try { window.localStorage.setItem(PARTS_KEY, v ? "off" : "on"); } catch { /* per-browser convenience only */ }
+    return !v;
+  });
+  const modelChoices = useModelChoices();
+  const connections = useMemo(() => workspace.connections ?? [], [workspace.connections]);
+
+  // The latest run, for trying scripts out on real data.
+  const latestRunId = workspace.runs.find((r) => r.status === "Completed" || r.status === "Failed")?.run_id ?? null;
+  const [latestRun, setLatestRun] = useState<PipelineRunView | null>(null);
+  useEffect(() => {
+    if (!latestRunId) return;
+    let live = true;
+    getPipelineRun(workspaceId, latestRunId).then((r) => { if (live) setLatestRun(r); }).catch(() => {});
+    return () => { live = false; };
+  }, [workspaceId, latestRunId]);
 
   const editable = !archived && !proposal && !run;
   const shown = proposal?.preview ?? pipeline;
@@ -99,9 +164,9 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
 
   async function addStage(stage: StagePatch & { name: string }) {
     if (!inserting) return;
-    const { inputs, ...where } = inserting;
+    const { inputs, after, before, position } = inserting;
     setBusy("edit");
-    if (await apply([{ op: "add_stage", stage: inputs ? { ...stage, inputs } : stage, ...where }], pipeline.version)) setInserting(null);
+    if (await apply([{ op: "add_stage", stage: inputs ? { ...stage, inputs } : stage, after, before, position }], pipeline.version)) setInserting(null);
     setBusy(null);
   }
 
@@ -110,7 +175,7 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
     onRemove,
     onConnect: (from, to) => void apply([{ op: "connect", from, to }], pipeline.version),
     onDisconnect: (from, to) => void apply([{ op: "disconnect", from, to }], pipeline.version),
-    onAddAt: (position, inputs) => setInserting({ position, inputs }),
+    onAddAt: (position, inputs, kind) => setInserting({ position, inputs, kind }),
     onMove: (layout) => {
       savePipelineLayout(workspaceId, layout).then(onChanged).catch((e) => setError(apiErrorMessage(e)));
     },
@@ -154,6 +219,9 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
   }
 
   const selectedStage = selected ? shown.stages.find((s) => s.stage_id === selected) : undefined;
+  const trigger = selectedTrigger === "manual" ? null : workspace.triggers.find((t) => t.trigger_id === selectedTrigger);
+  const stageIds = pipeline.stages.map((s) => s.stage_id);
+  const formUrl = (triggerId: string) => `/forms?workspace=${encodeURIComponent(workspaceId)}&trigger=${encodeURIComponent(triggerId)}`;
   const selectedRun = selected && run ? run.stages.find((s) => s.stage_id === selected) : undefined;
 
   return (
@@ -231,8 +299,46 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
           runStages={run?.stages ?? null}
           editing={editing}
           selectedStageId={selected}
-          onSelectStage={setSelected}
+          onSelectStage={(id) => { setSelected(id); setFocus(null); setSelectedTrigger(null); }}
+          showParts={showParts}
+          onToggleParts={toggleParts}
+          models={modelChoices}
+          connections={connections}
+          triggers={run || proposal ? undefined : workspace.triggers}
+          onSelectPart={(stageId, part) => { setSelected(stageId); setFocus(part); setSelectedTrigger(null); }}
+          onSelectTrigger={(id) => { setSelectedTrigger(id); setSelected(null); }}
         />
+
+        {/* A trigger: what it is, and for a form, where to fill it in. */}
+        {selectedTrigger && !selectedStage && (
+          <div className="absolute left-2 top-14 z-10 w-[min(320px,calc(100%-1rem))] rounded-xl border border-zinc-200 bg-white p-3 text-xs shadow-xl dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="flex items-center gap-2">
+              <TriggerIcon kind={trigger?.kind ?? "Manual"} className="h-4 w-4 text-amber-600" />
+              <span className="flex-1 truncate text-sm font-semibold">{trigger?.name ?? "You"}</span>
+              <button onClick={() => setSelectedTrigger(null)} className="rounded p-1 text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800" aria-label="Close"><Icons.X className="h-4 w-4" /></button>
+            </div>
+            {!trigger ? (
+              <p className="mt-2 text-zinc-600 dark:text-zinc-400">A message in the workspace chat, or <b>Run</b> with an input, starts a run. Add forms, webhooks, schedules and watches on the Triggers tab.</p>
+            ) : (
+              <div className="mt-2 space-y-2 text-zinc-600 dark:text-zinc-400">
+                {trigger.instruction && <p>{trigger.instruction}</p>}
+                {trigger.kind === "Form" && trigger.form && (
+                  <>
+                    <p>{trigger.form.fields.length} field{trigger.form.fields.length === 1 ? "" : "s"}: {trigger.form.fields.map((f) => f.label).join(", ")}. Answers reach stages as <code>input.&lt;key&gt;</code>.</p>
+                    <div className="flex gap-2">
+                      <a href={formUrl(trigger.trigger_id)} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 font-medium text-white hover:bg-brand-700">Open form</a>
+                      <Button size="sm" variant="ghost" onClick={() => void navigator.clipboard?.writeText(new URL(formUrl(trigger.trigger_id), window.location.origin).toString())}>Copy link</Button>
+                    </div>
+                  </>
+                )}
+                {trigger.kind === "Webhook" && <p>Each delivery starts a run; a JSON body reaches stages as <code>input</code>.</p>}
+                {trigger.kind === "Watch" && trigger.watch_summary && <p>{trigger.watch_summary}. Matching items reach stages as <code>input.matches</code>.</p>}
+                <p className="text-zinc-400">{trigger.fire_count} run{trigger.fire_count === 1 ? "" : "s"} started{trigger.last_fired_at ? `, last ${ago(trigger.last_fired_at)}` : ""}.</p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* The selected stage: its settings, or its result in the run on screen. */}
         {selectedStage && (
@@ -252,8 +358,27 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
                         {selectedRun.completed_at && <span>finished {ago(selectedRun.completed_at)}</span>}
                       </div>
                       {selectedRun.error && <div className="rounded-lg bg-rose-50 p-2 text-rose-800 dark:bg-rose-950/50 dark:text-rose-200">{selectedRun.error}</div>}
-                      {selectedRun.summary && <div className="whitespace-pre-wrap rounded-lg bg-zinc-50 p-3 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">{selectedRun.summary}</div>}
+                      {kindOf(selectedStage) === "Agent"
+                        ? selectedRun.summary && <div className="whitespace-pre-wrap rounded-lg bg-zinc-50 p-3 text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">{selectedRun.summary}</div>
+                        : selectedRun.output_json && (
+                          <div>
+                            <div className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">Output</div>
+                            <Pretty json={selectedRun.output_json} />
+                          </div>
+                        )}
+                      {selectedRun.logs && (
+                        <div>
+                          <div className="mb-1 font-medium text-zinc-700 dark:text-zinc-300">Printed</div>
+                          <pre className="max-h-40 overflow-auto rounded-lg bg-zinc-100 p-2.5 font-mono text-[11px] text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">{selectedRun.logs}</pre>
+                        </div>
+                      )}
                       {selectedRun.artifacts.length > 0 && <div className="text-zinc-500">Files: {selectedRun.artifacts.join(", ")}</div>}
+                      {kindOf(selectedStage) === "Agent" && selectedRun.output_json && (
+                        <details>
+                          <summary className="cursor-pointer select-none text-zinc-500">Output as data (for later stages)</summary>
+                          <div className="mt-1"><Pretty json={selectedRun.output_json} /></div>
+                        </details>
+                      )}
                       {selectedRun.agent_id && (
                         <Button size="sm" onClick={() => onSelectAgent(selectedRun.agent_id!)} icon={<Icons.Graph className="h-3.5 w-3.5" />}>Agent details & trace</Button>
                       )}
@@ -264,10 +389,15 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
                 </div>
               ) : (
                 <StageEditor
-                  key={`${selectedStage.stage_id}:${pipeline.version}`}
+                  key={`${selectedStage.stage_id}:${pipeline.version}:${focus ?? ""}`}
                   stage={selectedStage}
                   stageNames={selectedStage.inputs.map(nameOf)}
                   mentionables={mentionables}
+                  workspaceId={workspaceId}
+                  connections={connections}
+                  stageIds={stageIds.filter((id) => id !== selectedStage.stage_id)}
+                  sampleData={latestRun ? sampleFor(selectedStage, latestRun) : undefined}
+                  focus={focus === "model" || focus === "tools" ? focus : null}
                   submitLabel="Save stage"
                   busy={busy === "edit"}
                   onSubmit={(patch) => updateStage(selectedStage.stage_id, patch)}
@@ -293,7 +423,9 @@ export function PipelinePanel({ workspace, run, onCloseRun, onChanged, onSelectA
           : undefined}
       >
         {inserting && (
-          <StageEditor stage={NEW_STAGE} submitLabel="Add stage" busy={busy === "edit"} onSubmit={addStage} onCancel={() => setInserting(null)} mentionables={mentionables} />
+          <StageEditor stage={newStage(inserting.kind)} submitLabel="Add stage" busy={busy === "edit"} onSubmit={addStage} onCancel={() => setInserting(null)}
+            mentionables={mentionables} workspaceId={workspaceId} connections={connections} stageIds={stageIds}
+            sampleData={latestRun ? sampleFor({ inputs: inserting.inputs ?? (inserting.after ? [inserting.after] : []) }, latestRun) : undefined} />
         )}
       </Modal>
 

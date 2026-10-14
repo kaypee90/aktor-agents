@@ -1490,6 +1490,12 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("");
+
                     b.Property<string>("SnapshotJson")
                         .IsRequired()
                         .HasColumnType("text");
@@ -1516,9 +1522,17 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("Organization");
+
                     b.HasKey("WorkspaceId");
 
                     b.HasIndex("TenantId", "CreatedAt");
+
+                    b.HasIndex("TenantId", "Visibility");
 
                     b.ToTable("Workspaces");
                 });

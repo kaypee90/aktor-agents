@@ -1,5 +1,39 @@
 export type WorkspaceStatus = "Active" | "Paused" | "Archived";
-export type TriggerKind = "Schedule" | "Webhook" | "Watch";
+/** Who in the organization sees a workspace: everyone, or only its owner. */
+export type WorkspaceVisibility = "Organization" | "Private";
+
+export type TriggerKind = "Schedule" | "Webhook" | "Watch" | "Form";
+
+export type FormFieldType = "text" | "textarea" | "number" | "email" | "url" | "date" | "select" | "multiselect" | "checkbox";
+
+export interface FormField {
+  key: string;
+  label: string;
+  type: FormFieldType;
+  required: boolean;
+  options: string[];
+  placeholder?: string | null;
+  help?: string | null;
+}
+
+export interface FormDefinition {
+  title: string;
+  description: string;
+  fields: FormField[];
+  submit_label: string;
+  success_message: string;
+}
+
+/** A form as its page sees it. */
+export interface FormView {
+  workspace_id: string;
+  workspace_name: string;
+  trigger_id: string;
+  name: string;
+  form: FormDefinition;
+  accepting: boolean;
+  submissions: number;
+}
 export type ChatAuthorKind = "User" | "Agent" | "System";
 
 export interface ChatEntry {
@@ -44,6 +78,8 @@ export interface TriggerView {
   alerts: number;
   last_match_count: number;
   last_error: string | null;
+  /** Form triggers: the form. */
+  form?: FormDefinition | null;
 }
 
 export interface WorkspaceAgentView {
@@ -91,6 +127,9 @@ export interface WorkspaceSnapshot {
   llm_calls_avoided?: number;
   safety_policy?: SafetyPolicy;
   approvals?: ApprovalRecord[];
+  visibility?: WorkspaceVisibility;
+  /** A user id, or "key:<id>" for one made with an API key. */
+  owner_id?: string;
 }
 
 export interface WorkspaceListItem {
@@ -104,6 +143,7 @@ export interface WorkspaceListItem {
   total_cost_usd: number;
   created_at: string;
   updated_at: string;
+  visibility?: WorkspaceVisibility;
 }
 
 // ---- Integrations (phase 3) ----

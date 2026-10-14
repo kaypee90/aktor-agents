@@ -66,6 +66,18 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// runs-at-once limit is reached or the workspace is paused.</summary>
     Task<RunStartResult> StartRun(string input, string startedBy);
 
+    /// <summary>Starts a run with data as well as text: action and script stages see
+    /// <paramref name="inputData"/> (a JSON value) as <c>input</c>.</summary>
+    Task<RunStartResult> StartRunWithData(string input, string? inputData, string startedBy);
+
+    /// <summary>A form trigger's form, for the page that shows it; null if there's no such form.</summary>
+    [AlwaysInterleave]
+    Task<FormView?> GetForm(string triggerId);
+
+    /// <summary>A signed-in person's answers to a form: checked against its fields, then a run is
+    /// started with them. A repeated <see cref="FormSubmission.SubmissionId"/> starts one run.</summary>
+    Task<FormSubmitResult> SubmitForm(FormSubmission submission);
+
     /// <summary>A run finished: recorded, reported in the chat, and the next queued run started.
     /// One-way, so a run never waits on its workspace.</summary>
     [OneWay]
@@ -103,6 +115,14 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// on every request, so another tenant's workspace looks like one that doesn't exist.</summary>
     [AlwaysInterleave]
     Task<string?> GetTenantId();
+
+    /// <summary>The organization, owner and visibility, for access checks; null if there's no such workspace.</summary>
+    [AlwaysInterleave]
+    Task<WorkspaceAccessInfo?> GetAccessInfo();
+
+    /// <summary>Makes the workspace private to its owner, or visible to the organization again.
+    /// The API lets only the owner call this.</summary>
+    Task SetVisibility(WorkspaceVisibility visibility, string changedBy);
 
     Task UpdateBudget(int? dailyTokenLimit, decimal? dailyCostLimitUsd);
 
