@@ -102,6 +102,27 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             return Task.FromResult(MockStudyBehavior.Agent(request, systemText, isRoot, goal));
         }
 
+        // A solution's assistant talking with one of its end users (SolutionAppService): answer
+        // the latest message in a sentence, as a chat assistant would, without quoting its
+        // instructions.
+        if (isRoot && ExtractSection(systemText, "## GOAL") is { } fullGoal && fullGoal.Contains("The user's message:", StringComparison.Ordinal))
+        {
+            var followUp = request.Messages.LastOrDefault(m => m.Role == ChatRole.User &&
+                                                               m.Content?.StartsWith("[Follow-up from the user", StringComparison.Ordinal) == true)?.Content;
+            var said = followUp is not null
+                ? followUp.Split('\n', 2).ElementAtOrDefault(1)?.Split("\n\n", 2)[0].Trim()
+                : fullGoal[(fullGoal.LastIndexOf("The user's message:", StringComparison.Ordinal) + "The user's message:".Length)..].Split("\n\n", 2)[0].Trim();
+            var reply = $"Thanks, I've got that: \"{Clip(said ?? string.Empty, 200)}\". (I'm running on the Mock model, which doesn't really reason; " +
+                        "with a real model I'd look this up and act on it for you.)";
+            return Task.FromResult(new LlmCompletionResponse
+            {
+                ToolCalls = [CompleteCall(reply)],
+                FinishReason = LlmFinishReason.ToolCalls,
+                InputTokens = EstimateTokens(systemText),
+                OutputTokens = 40
+            });
+        }
+
         var priorToolCalls = request.Messages
             .Where(m => m.Role == ChatRole.Assistant && m.ToolCalls is { Count: > 0 })
             .SelectMany(m => m.ToolCalls!)
@@ -232,6 +253,8 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
 
         return string.Join('\n', lines);
     }
+
+    private static string Clip(string s, int max) => s.Length > max ? s[..max] + "…" : s;
 
     private static string NewId() => "call_" + Guid.NewGuid().ToString("n")[..12];
 

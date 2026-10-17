@@ -94,6 +94,9 @@ public interface IWorkspaceGrain : IGrainWithStringKey
 
     Task<WorkspaceActionResult> RemoveTrigger(string triggerId, string requestedBy);
 
+    /// <summary>Changes what a trigger tells each run, in place: a webhook keeps its URL and secret.</summary>
+    Task<WorkspaceActionResult> UpdateTriggerInstruction(string triggerId, string instruction, string changedBy);
+
     [AlwaysInterleave]
     Task<IReadOnlyList<TriggerView>> ListTriggers();
 
@@ -103,6 +106,12 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// has already checked the caller may act on the workspace), e.g. to simulate an alert. Goes
     /// through the same path as a real delivery: rate limits, payload limits and the audit log.</summary>
     Task<WebhookOutcome> DeliverWebhookAsOwner(string triggerId, string body, string deliveryId);
+
+    /// <summary>A record of the workspace's solution changed: starts a run for each record trigger
+    /// that matches, once per change however often it's delivered. One-way: a record written by
+    /// one of this workspace's own agents never waits on the workspace.</summary>
+    [OneWay]
+    Task DeliverRecordChange(Solutions.RecordChange change);
 
     /// <summary>Asked by an agent before each LLM call. Interleaved and read-only, so it's cheap
     /// and can't deadlock against the asking agent.</summary>

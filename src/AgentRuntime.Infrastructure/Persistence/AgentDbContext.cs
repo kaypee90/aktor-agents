@@ -36,6 +36,12 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<StudyReportRecord> StudyReports => Set<StudyReportRecord>();
     public DbSet<StudySimulationRecord> StudySimulations => Set<StudySimulationRecord>();
     public DbSet<OrganizationTemplateRecord> OrganizationTemplates => Set<OrganizationTemplateRecord>();
+    public DbSet<SolutionInstallRecord> SolutionInstalls => Set<SolutionInstallRecord>();
+    public DbSet<SolutionRecordEntity> SolutionRecords => Set<SolutionRecordEntity>();
+    public DbSet<SolutionRecordChangeEntity> SolutionRecordChanges => Set<SolutionRecordChangeEntity>();
+    public DbSet<SolutionConversationRecord> SolutionConversations => Set<SolutionConversationRecord>();
+    public DbSet<SolutionPackageRecord> SolutionPackages => Set<SolutionPackageRecord>();
+    public DbSet<SolutionPackageNameRecord> SolutionPackageNames => Set<SolutionPackageNameRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -254,5 +260,40 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(w => w.WorldId);
             b.HasIndex(w => new { w.TenantId, w.CreatedAt });
         });
+
+        // Solutions (docs/solutions.md).
+        modelBuilder.Entity<SolutionInstallRecord>(b =>
+        {
+            b.HasKey(x => x.InstallId);
+            b.HasIndex(x => new { x.TenantId, x.Name });
+        });
+        modelBuilder.Entity<SolutionRecordEntity>(b =>
+        {
+            b.HasKey(x => x.RecordId);
+            b.Property(x => x.DataJson).HasColumnType("jsonb");
+            b.Property(x => x.Version).IsConcurrencyToken();
+            b.HasIndex(x => new { x.TenantId, x.InstallId, x.Entity, x.UpdatedAt });
+            b.HasIndex(x => new { x.TenantId, x.InstallId, x.Entity, x.EndUserId });
+            b.HasIndex(x => x.DataJson).HasMethod("gin");
+        });
+        modelBuilder.Entity<SolutionRecordChangeEntity>(b =>
+        {
+            b.HasKey(x => x.ChangeId);
+            b.Property(x => x.ChangeId).UseIdentityAlwaysColumn();
+            b.HasIndex(x => x.DispatchedAt);
+            b.HasIndex(x => new { x.TenantId, x.InstallId, x.TaskId });
+        });
+        modelBuilder.Entity<SolutionConversationRecord>(b =>
+        {
+            b.HasKey(x => x.TaskId);
+            b.HasIndex(x => new { x.TenantId, x.InstallId, x.EndUserId, x.CreatedAt });
+        });
+        modelBuilder.Entity<SolutionPackageRecord>(b =>
+        {
+            b.HasKey(x => x.PackageId);
+            b.HasIndex(x => new { x.Name, x.PublishedAt });
+            b.HasIndex(x => new { x.Visibility, x.PublisherTenantId });
+        });
+        modelBuilder.Entity<SolutionPackageNameRecord>(b => b.HasKey(x => x.Name));
     }
 }

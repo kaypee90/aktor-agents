@@ -1,0 +1,36 @@
+key: lease-renewals
+name: Lease renewals
+goal: Start the renewal of every active lease that ends within the notice period.
+data:
+  Lease: write
+  Property: read
+daily_cost_usd: 3
+pipeline:
+  stages:
+    - stage_id: renew
+      name: Draft renewal
+      role: Leasing agent
+      instructions: >
+        The run's input lists leases that end soon (input.matches). For each, draft a short renewal
+        offer at the current rent for {{ vars.company_name }} and save the drafts as one Markdown file.
+        Then mark each lease's status "renewing" with data__update_lease.
+      capabilities: [filesystem]
+triggers:
+  # A compiled watch: the runtime lists leases every day and evaluates the rule in code; the LLM
+  # only runs when a lease newly enters the window.
+  - kind: Watch
+    name: Leases ending soon
+    every_minutes: 1440
+    source_tool: data__list_lease
+    source_arguments:
+      where: { status: active }
+      filters:
+        - { field: ends_on, op: "<=", value: "today+60d" }
+    rule:
+      items_path: "$.items[*]"
+      key_field: id
+      conditions:
+        - { field: status, op: "==", value: active }
+      display_fields: [unit, resident_name, ends_on]
+    watch_mode: run
+    instruction: Draft renewals for these leases.

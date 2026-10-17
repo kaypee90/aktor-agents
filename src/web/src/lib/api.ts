@@ -1589,3 +1589,223 @@ export type StudyAnalytics = {
   top_by_cost: AnalyticsTaskRow[];
   slowest: AnalyticsTaskRow[];
 };
+
+// ---- Solutions: packaged apps, their records and end users (docs/solutions.md) ----
+
+export interface SolutionBundle {
+  manifest: string;
+  files: Record<string, string>;
+}
+
+export interface SolutionSummary {
+  install_id: string;
+  name: string;
+  title: string;
+  version: string;
+  status: "Active" | "Installing" | "Uninstalled";
+  installed_at: string;
+  updated_at: string;
+}
+
+export interface SolutionFieldDef {
+  type: string;
+  required?: boolean;
+  description?: string | null;
+  values?: string[] | null;
+  entity?: string | null;
+}
+
+export interface SolutionView {
+  install_id: string;
+  name: string;
+  title: string;
+  version: string;
+  status: string;
+  description?: string | null;
+  installed_by?: string | null;
+  installed_at: string;
+  updated_at: string;
+  inputs: Record<string, string>;
+  workspaces: { key: string; workspace_id: string; name?: string | null }[];
+  entities: { name: string; description?: string | null; records: number; title_field?: string | null; fields: Record<string, SolutionFieldDef> }[];
+  connectors: { name: string; plugin: string; required: boolean; description?: string | null }[];
+  assistant: { name: string; greeting?: string | null; data: Record<string, string> } | null;
+  evals: { name: string; workspace: string }[];
+  webhooks: { url: string; events: string[] }[];
+  webhook_secret?: string | null;
+  history: { version: string; at: string; by?: string | null; action: string; from?: string }[];
+}
+
+export interface SolutionValidation {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  summary: {
+    name: string; title: string; version: string;
+    workspaces: { key: string; name: string; stages: number; triggers: string[] }[];
+    entities: { name: string; fields: number }[];
+    connectors: { name: string; plugin: string; required: boolean }[];
+    inputs: { key: string; label: string; type: string; required: boolean; default?: string | null; description?: string | null }[];
+    assistant?: string | null;
+    evals: number;
+  } | null;
+  secrets: Record<string, { key: string; label: string; required: boolean; description?: string | null }[]> | null;
+}
+
+export interface SolutionRecord {
+  id: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  [field: string]: unknown;
+}
+
+export interface EvalReport {
+  passed: number;
+  failed: number;
+  results: { name: string; passed: boolean; failures: string[]; run_id?: string; status?: string; summary?: string; duration_ms?: number }[];
+}
+
+export function listSolutions() {
+  return apiFetch<SolutionSummary[]>("/api/v1/solutions");
+}
+
+export function getSolution(idOrName: string) {
+  return apiFetch<SolutionView>(`/api/v1/solutions/${encodeURIComponent(idOrName)}`);
+}
+
+export function validateSolution(bundle: SolutionBundle) {
+  return apiFetch<SolutionValidation>("/api/v1/solutions/validate", { method: "POST", body: JSON.stringify(bundle) });
+}
+
+export function deploySolution(input: { installId?: string; bundle: SolutionBundle; packageRef?: string; inputs: Record<string, string>; secrets: Record<string, Record<string, string>>; force?: boolean }) {
+  // From the registry, the server takes the package by reference (and checks its signature).
+  const body = JSON.stringify(input.packageRef
+    ? { package: input.packageRef, inputs: input.inputs, secrets: input.secrets, force: input.force ?? false }
+    : { bundle: input.bundle, inputs: input.inputs, secrets: input.secrets, force: input.force ?? false });
+  return input.installId
+    ? apiFetch<Record<string, unknown>>(`/api/v1/solutions/${encodeURIComponent(input.installId)}`, { method: "PUT", body })
+    : apiFetch<Record<string, unknown>>("/api/v1/solutions", { method: "POST", body });
+}
+
+export function uninstallSolution(installId: string, purge: boolean) {
+  return apiFetch<void>(`/api/v1/solutions/${encodeURIComponent(installId)}${purge ? "?purge=true" : ""}`, { method: "DELETE" });
+}
+
+export function listSolutionRecords(installId: string, entity: string, options: { limit?: number; offset?: number; filters?: string[] } = {}) {
+  const q = new URLSearchParams();
+  if (options.limit) q.set("limit", String(options.limit));
+  if (options.offset) q.set("offset", String(options.offset));
+  for (const f of options.filters ?? []) q.append("filter", f);
+  return apiFetch<{ entity: string; total: number; items: SolutionRecord[] }>(
+    `/api/v1/solutions/${encodeURIComponent(installId)}/records/${encodeURIComponent(entity)}?${q}`);
+}
+
+export function runSolutionEvals(installId: string) {
+  return apiFetch<EvalReport>(`/api/v1/solutions/${encodeURIComponent(installId)}/evals`, { method: "POST", body: "{}" });
+}
+
+export function createEndUserToken(installId: string, userId: string, name?: string, ttlMinutes = 60) {
+  return apiFetch<{ token: string; expires_at: string }>(`/api/v1/solutions/${encodeURIComponent(installId)}/end-user-tokens`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, name: name || undefined, ttl_minutes: ttlMinutes }),
+  });
+}
+
+/** A folder picked in the browser (input webkitdirectory) as a package: its aktor.yaml and text files. */
+export async function bundleFromFolder(files: FileList | File[]): Promise<SolutionBundle> {
+  const list = Array.from(files);
+  const text = new Set(["yaml", "yml", "json", "md", "txt", "csv", "py", "js", "html", "sql"]);
+  const skip = new Set(["node_modules", ".git", "bin", "obj", ".aktor"]);
+  const rel = (f: File) => ((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name).split("/").slice(1).join("/") || f.name;
+  const manifestFile = list.find((f) => ["aktor.yaml", "aktor.yml", "aktor.json"].includes(rel(f)));
+  if (!manifestFile) throw new Error("That folder has no aktor.yaml at its top level.");
+  const out: Record<string, string> = {};
+  for (const f of list) {
+    const path = rel(f);
+    if (f === manifestFile || path.split("/").some((p) => p.startsWith(".") || skip.has(p))) continue;
+    if (!text.has(path.split(".").pop()?.toLowerCase() ?? "")) continue;
+    out[path] = await f.text();
+  }
+  return { manifest: await manifestFile.text(), files: out };
+}
+
+export function createSolutionRecord(installId: string, entity: string, fields: Record<string, unknown>) {
+  return apiFetch<SolutionRecord>(`/api/v1/solutions/${encodeURIComponent(installId)}/records/${encodeURIComponent(entity)}`, {
+    method: "POST",
+    body: JSON.stringify(fields),
+  });
+}
+
+/** Only the fields given change (null clears one); a record changed since `version` is refused (409). */
+export function updateSolutionRecord(installId: string, entity: string, id: string, fields: Record<string, unknown>, version: number) {
+  return apiFetch<SolutionRecord>(`/api/v1/solutions/${encodeURIComponent(installId)}/records/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(fields),
+    headers: { "If-Match": `"${version}"` },
+  });
+}
+
+export function deleteSolutionRecord(installId: string, entity: string, id: string) {
+  return apiFetch<void>(`/api/v1/solutions/${encodeURIComponent(installId)}/records/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export interface RegistryPackage {
+  package: string;
+  name: string;
+  version: string;
+  title: string;
+  description: string;
+  publisher: string;
+  visibility: "public" | "organization";
+  sha256: string;
+  yanked: boolean;
+  installs: number;
+  published_at: string;
+}
+
+export interface SolutionUsage {
+  from: string;
+  to: string;
+  by: "end_user" | "workspace" | "day";
+  tokens: number;
+  cost_usd: number;
+  conversations: number;
+  runs: number;
+  lines: { key: string; label?: string | null; conversations: number; runs: number; tokens: number; cost_usd: number }[];
+}
+
+export function searchRegistry(query?: string) {
+  return apiFetch<RegistryPackage[]>(`/api/v1/registry/packages${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+}
+
+export function getRegistryPackage(name: string, version = "latest") {
+  return apiFetch<{ package: string; version: string; sha256: string; bundle: SolutionBundle }>(
+    `/api/v1/registry/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`);
+}
+
+export function publishInstalledSolution(installId: string, visibility: "organization" | "public") {
+  return apiFetch<RegistryPackage>(`/api/v1/solutions/${encodeURIComponent(installId)}/publish`, { method: "POST", body: JSON.stringify({ visibility }) });
+}
+
+export function getSolutionUsage(installId: string, by: SolutionUsage["by"], from?: string, to?: string) {
+  const q = new URLSearchParams({ by });
+  if (from) q.set("from", from);
+  if (to) q.set("to", to);
+  return apiFetch<SolutionUsage>(`/api/v1/solutions/${encodeURIComponent(installId)}/usage?${q}`);
+}
+
+export function solutionUsageCsvUrl(installId: string, by: SolutionUsage["by"]) {
+  return `${API_BASE}/api/v1/solutions/${encodeURIComponent(installId)}/usage?by=${by}&format=csv`;
+}
+
+/** A package as structured JSON, for the solution builder (the server reads the YAML). */
+export function parseSolution(bundle: SolutionBundle) {
+  return apiFetch<{ manifest: { [key: string]: import("./solutionPackage").Json } | null; files: Record<string, string>; errors: string[] }>(
+    "/api/v1/solutions/parse", { method: "POST", body: JSON.stringify(bundle) });
+}
+
+/** The package an install was deployed from. */
+export function getSolutionPackage(idOrName: string) {
+  return apiFetch<SolutionBundle>(`/api/v1/solutions/${encodeURIComponent(idOrName)}/package`);
+}

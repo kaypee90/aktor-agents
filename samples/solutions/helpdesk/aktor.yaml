@@ -1,0 +1,75 @@
+# A customer-support helpdesk, built from the same primitives as property-mgmt and sharing nothing
+# with it (docs/solutions.md). Tickets arrive from your site's contact form (a webhook) or from the
+# customer assistant; an agent classifies each one and drafts a reply for a person to approve; a
+# compiled watch flags urgent tickets nobody has picked up, without calling the model.
+#   aktor deploy samples/solutions/helpdesk && aktor test helpdesk
+format: 1
+name: helpdesk
+title: Helpdesk
+version: 1.0.0
+requires_platform: ">=1.1.0"
+description: >
+  Opens tickets from your contact form and a customer assistant, classifies them, drafts replies
+  for an agent to approve, and flags urgent tickets nobody has picked up.
+
+inputs:
+  - key: product_name
+    label: Product name
+    default: Acme Cloud
+  - key: support_email
+    label: Support email shown to customers
+    default: support@example.com
+
+entities:
+  Customer:
+    description: A customer account
+    title_field: email
+    fields:
+      email: { type: string, required: true }
+      name: { type: string }
+      plan: { type: enum, values: [free, team, enterprise], default: free }
+      account: { type: end_user }
+  Ticket:
+    description: A support request
+    title_field: subject
+    fields:
+      customer: { type: ref, entity: Customer }
+      requester: { type: end_user }
+      subject: { type: string, required: true }
+      body: { type: text }
+      channel: { type: enum, values: [web, assistant, email], default: web }
+      category: { type: enum, values: [billing, bug, how_to, account, other], default: other }
+      priority: { type: enum, values: [low, normal, urgent], default: normal }
+      status: { type: enum, values: [new, awaiting_review, answered, closed], default: new }
+      draft_reply: { type: text }
+      opened_at: { type: datetime }
+
+workspaces:
+  - file: workspaces/intake.yaml
+  - file: workspaces/triage.yaml
+
+knowledge:
+  - key: Support policy
+    path: knowledge/support-policy.md
+  - key: Product FAQ
+    path: knowledge/faq.md
+
+assistant:
+  name: Support assistant
+  greeting: Hi! Ask me anything about {{ inputs.product_name }}, or tell me what's wrong and I'll open a ticket.
+  instructions_file: prompts/assistant.md
+  data:
+    Ticket: write
+    Customer: read
+  max_tokens: 25000
+  max_cost_usd: 0.20
+
+seed:
+  Customer:
+    - { id: c-ada, email: ada@example.com, name: Ada Lovelace, plan: enterprise, account: ada }
+    - { id: c-bob, email: bob@example.com, name: Bob Stone, plan: free, account: bob }
+  Ticket:
+    - { customer: c-ada, requester: ada, subject: "Export to CSV times out", body: "Exports over 10k rows never finish.", category: bug, priority: normal, status: answered, opened_at: "2026-10-01T09:00:00Z" }
+
+evals:
+  - file: evals/contact-form-opens-a-ticket.yaml

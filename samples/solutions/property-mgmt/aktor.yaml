@@ -1,0 +1,82 @@
+# A solution: a property manager's maintenance desk, lease renewals and a resident assistant,
+# built only from the platform's primitives (docs/solutions.md). Deploy it with:
+#   aktor deploy samples/solutions/property-mgmt
+format: 1
+name: property-mgmt
+title: Property management
+version: 1.0.1
+description: >
+  Triages maintenance requests as they come in, starts lease renewals two months before a lease
+  ends, and gives residents an assistant that can log requests and answer lease questions.
+
+inputs:
+  - key: company_name
+    label: Company name
+    default: Acme Properties
+  - key: late_fee_percent
+    label: Late fee (%)
+    type: number
+    default: "5"
+
+entities:
+  Property:
+    description: A building the company manages
+    fields:
+      name: { type: string, required: true }
+      address: { type: string, required: true }
+      units: { type: integer }
+  Lease:
+    description: A resident's lease of a unit
+    title_field: unit
+    fields:
+      property: { type: ref, entity: Property, required: true }
+      unit: { type: string, required: true }
+      resident: { type: end_user }
+      resident_name: { type: string }
+      rent: { type: number, required: true }
+      ends_on: { type: date, required: true }
+      status: { type: enum, values: [active, renewing, ended], default: active }
+  Ticket:
+    description: A maintenance request
+    title_field: issue
+    fields:
+      lease: { type: ref, entity: Lease }
+      resident: { type: end_user }
+      issue: { type: text, required: true }
+      category: { type: enum, values: [plumbing, electrical, heating, appliance, other], default: other }
+      priority: { type: enum, values: [low, normal, urgent], default: normal }
+      status: { type: enum, values: [open, triaged, scheduled, closed], default: open }
+      triage_notes: { type: text }
+
+workspaces:
+  - file: workspaces/maintenance-desk.yaml
+  - file: workspaces/lease-renewals.yaml
+
+skills:
+  - path: skills/maintenance-triage/SKILL.md
+    workspace: maintenance-desk
+
+knowledge:
+  - key: Maintenance policy
+    path: knowledge/maintenance-policy.md
+
+assistant:
+  name: Resident helper
+  greeting: Hi! I can log a maintenance request for you or answer questions about your lease.
+  instructions_file: assistant.md
+  data:
+    Property: read
+    Lease: read
+    Ticket: write
+  max_tokens: 30000
+  max_cost_usd: 0.25
+
+seed:
+  Property:
+    - { id: p-elm, name: Elm Court, address: "12 Elm Street", units: 24 }
+  Lease:
+    - { id: l-4b, property: p-elm, unit: "4B", resident: demo-resident, resident_name: Sam Rivera, rent: 1450, ends_on: "2026-12-31" }
+    - { id: l-7a, property: p-elm, unit: "7A", resident: demo-resident-2, resident_name: Alex Chen, rent: 1600, ends_on: "2027-06-30" }
+
+evals:
+  - file: evals/triage-urgent-leak.yaml

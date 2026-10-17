@@ -19,6 +19,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { href: "/", label: "Tasks", icon: Icons.Tasks },
       { href: "/workspaces", label: "Workspaces", icon: Icons.Workspaces },
       { href: "/templates", label: "Templates", icon: Icons.Templates },
+      { href: "/solutions", label: "Solutions", icon: Icons.Solutions },
     ],
   },
   {
@@ -38,11 +39,14 @@ const NAV: { section: string; items: NavItem[] }[] = [
   },
   {
     section: "Connect",
-    items: [{ href: "/connect", label: "Integrations & API", icon: Icons.Connect }],
+    items: [
+      { href: "/connect", label: "Integrations & API", icon: Icons.Connect },
+      { href: "/docs", label: "Documentation", icon: Icons.Book },
+    ],
   },
 ];
 
-const PUBLIC = ["/login", "/welcome"];
+const PUBLIC = ["/login", "/welcome", "/docs"];
 const COLLAPSED_KEY = "aktor:navCollapsed";
 
 function readCollapsed() {

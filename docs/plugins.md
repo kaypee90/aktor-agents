@@ -26,6 +26,8 @@ flowchart LR
 
 | Plugin | Tools | Notifications | Inbound | Notes |
 |---|---|---|---|---|
+| **Remote plugin** (`remote-plugin`) | the service's tools | yes | yes | A plugin you run yourself, in any language, over HTTP ([below](#remote-plugins)). |
+| **Solution records** (`aktor-records`) | `list_`/`get_`/`create_`/`update_`/`delete_<entity>` | | | Added by the runtime to a solution's workspaces ([solutions.md](solutions.md#data-entities-and-records)); not added by hand. |
 | **MCP server** (`mcp`) | the server's tools | | | Any MCP server over Streamable HTTP (or SSE). Launched-as-a-command (stdio) servers run in an isolated Docker container and must be enabled with `Integrations:AllowStdioMcp`. |
 | **HTTP API** (`http-api`) | `get`, and `send` if writes are allowed; plus one tool per [endpoint](#endpoints-for-an-http-api) you add | | | Any REST API behind one base URL and auth header, e.g. **Shopify Admin** (`X-Shopify-Access-Token`) or Stripe. |
 | **Slack** (`slack`) | `post_message`; with a bot token also `list_channels`, `read_messages` | ✓ | | Bot token (`xoxb-`, any channel the bot is in, thread replies, a default channel for notifications) or an incoming webhook (one channel, post only). |
@@ -174,6 +176,69 @@ or template of the workspace starts with the gateway off.
 
 This works for any plugin with tools: an MCP server connected to a workspace can be re-served the
 same way, behind the workspace's key, policy and audit log.
+
+## Remote plugins
+
+A plugin can run **out of process, in any language**, as a small HTTP service. Add it to a
+workspace as a **Remote plugin** (`remote-plugin`) connection with its URL and a shared secret.
+From then on it works like a built-in plugin: its tools appear as `{connection}__{tool}`, it can
+deliver notifications and parse inbound messages, and the runtime applies the same safety policy,
+approvals, audit log, idempotency and result limits. Its code never runs inside the server.
+
+The runtime POSTs JSON to five paths under the plugin URL. Each call has
+`Authorization: Bearer <shared secret>` and `X-Aktor-Plugin-Protocol: 1`, and its body includes
+`connection: { id, name, workspace_id, config }` plus `credentials` (from the vault, when set).
+
+| Path | Body adds | Answer |
+|---|---|---|
+| `/validate` | | `{ ok, message }` |
+| `/tools/list` | | `{ tools: [{ name, description, input_schema, side_effects }] }`, where `side_effects` is `read_only`, `idempotent` or `non_idempotent` (the default) |
+| `/tools/call` | `tool, arguments, idempotency_key, agent_id, task_id` | `{ ok: true, result }` or `{ ok: false, error, code }` |
+| `/notify` | `delivery_id, workspace, author, text, urgency` | `{ delivered }` or `{ delivered: false, error, retryable }` |
+| `/inbound` | `body, content_type, headers, query, public_url` | `{ is_message, sender_id, sender_name, text, message_id, response_body, response_content_type }` or `{ rejected: true }` |
+
+Connection settings:
+- `base_url`;
+- `config`: JSON passed to every call, e.g. which account to use;
+- `token`, the shared secret: kept in the vault;
+- `credentials`: JSON secrets the plugin needs for the system it calls, kept in the vault and sent
+  with each call.
+
+Declare `side_effects` honestly. Read-only tools may be re-run after a crash. Other tools get an
+`idempotency_key` that stays the same across retries, so pass it to the system you call and a
+repeated call can't act twice.
+
+Both SDKs include the server: Python's `aktor.Plugin` ([sdk/python](../sdk/python), example in
+`sdk/python/examples/crm_plugin.py`) and Node's `@aktor/sdk/plugin` ([sdk/typescript](../sdk/typescript)):
+
+```js
+import { Plugin, ToolError } from "@aktor/sdk/plugin";
+
+new Plugin("crm")
+  .tool("find_customer", {
+    description: "Find a customer by email.",
+    sideEffects: "read_only",
+    inputSchema: { type: "object", properties: { email: { type: "string" } }, required: ["email"] },
+  }, async ({ email }, ctx) => lookup(email, ctx.credentials.api_key))
+  .listen({ port: 8787, token: process.env.PLUGIN_TOKEN });
+```
+
+In Python:
+
+```python
+plugin = Plugin("crm")
+
+@plugin.tool(description="Find a customer by email.", side_effects="read_only",
+             input_schema={"type": "object", "properties": {"email": {"type": "string"}}, "required": ["email"]})
+def find_customer(args, ctx):
+    return lookup(args["email"], api_key=ctx.credentials["api_key"])
+
+plugin.serve(port=8787, token=os.environ["PLUGIN_TOKEN"])
+```
+
+Remote plugins are called through the `integrations` HTTP client (60-second timeout). Unlike
+in-process plugins, they need no server restart and no trust in their code: the runtime holds the
+secrets and sends each call only what it needs.
 
 ## Security model
 

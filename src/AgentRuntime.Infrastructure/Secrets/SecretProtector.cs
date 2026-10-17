@@ -63,6 +63,20 @@ public sealed class SecretProtector
         return Encoding.UTF8.GetString(plain);
     }
 
+    /// <summary>
+    /// An HMAC-SHA256 of <paramref name="data"/> under a key derived (HKDF) from the master key for
+    /// <paramref name="purpose"/> alone, so a signature made for one purpose (a solution's records
+    /// binding, an end-user token) never verifies as another.
+    /// </summary>
+    public byte[] Sign(string purpose, string data)
+    {
+        var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, _key, 32, info: Encoding.UTF8.GetBytes("aktor-sign\n" + purpose));
+        return HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(data));
+    }
+
+    public bool Verify(string purpose, string data, ReadOnlySpan<byte> signature) =>
+        signature.Length == 32 && CryptographicOperations.FixedTimeEquals(Sign(purpose, data), signature);
+
     private static byte[] AssociatedData(string scope, string name) => Encoding.UTF8.GetBytes($"aktor-secret\n{scope}\n{name}");
 
     private static byte[] LoadOrCreateKey(SecretsOptions options, ILogger logger)

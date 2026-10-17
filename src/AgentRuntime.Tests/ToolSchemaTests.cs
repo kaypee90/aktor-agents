@@ -81,7 +81,8 @@ public class ToolSchemaTests
             Secrets = new Dictionary<string, string>()
         };
 
-        foreach (var plugin in sp.GetServices<IAgentPlugin>().OfType<IToolProviderPlugin>().Where(p => p.Manifest.Id != "mcp"))
+        // MCP servers and remote plugins list their tools from a live service (RemotePluginTests covers the latter).
+        foreach (var plugin in sp.GetServices<IAgentPlugin>().OfType<IToolProviderPlugin>().Where(p => p.Manifest.Id is not ("mcp" or "remote-plugin")))
         {
             foreach (var tool in await plugin.ListToolsAsync(connection, default))
             {

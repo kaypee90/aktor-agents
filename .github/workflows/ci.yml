@@ -53,3 +53,25 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run lint
+
+  sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: TypeScript SDK typecheck
+        working-directory: sdk/typescript
+        run: npx -y -p typescript@5.6.3 tsc -p tsconfig.json --noEmit
+      - name: Node plugin helper and the aktor CLI
+        run: |
+          node --test sdk/typescript/test/plugin.test.mjs
+          node sdk/typescript/bin/aktor.mjs help > /dev/null
+          node sdk/typescript/bin/aktor.mjs init "$RUNNER_TEMP/scaffold" > /dev/null
+          test -f "$RUNNER_TEMP/scaffold/aktor.yaml"
+      - name: Python SDK tests
+        run: python -I -m unittest discover -s sdk/python/tests -v

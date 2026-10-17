@@ -820,6 +820,309 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Skills");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionConversationRecord", b =>
+                {
+                    b.Property<string>("TaskId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EndUserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstallId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("TaskId");
+
+                    b.HasIndex("TenantId", "InstallId", "EndUserId", "CreatedAt");
+
+                    b.ToTable("SolutionConversations");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionInstallRecord", b =>
+                {
+                    b.Property<string>("InstallId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BundleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("HistoryJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InputsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("InstalledAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InstalledBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ManifestJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("WorkspacesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("InstallId");
+
+                    b.HasIndex("TenantId", "Name");
+
+                    b.ToTable("SolutionInstalls");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionPackageNameRecord", b =>
+                {
+                    b.Property<string>("Name")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Name");
+
+                    b.ToTable("SolutionPackageNames");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionPackageRecord", b =>
+                {
+                    b.Property<string>("PackageId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("BundleJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Installs")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PublishedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PublisherName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PublisherTenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Signature")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Visibility")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("YankReason")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("Yanked")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("PackageId");
+
+                    b.HasIndex("Name", "PublishedAt");
+
+                    b.HasIndex("Visibility", "PublisherTenantId");
+
+                    b.ToTable("SolutionPackages");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionRecordChangeEntity", b =>
+                {
+                    b.Property<long>("ChangeId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("ChangeId"));
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ChangedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("DispatchedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Entity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Event")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstallId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PreviousJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RecordId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TaskId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("WorkspacesNotifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("ChangeId");
+
+                    b.HasIndex("DispatchedAt");
+
+                    b.HasIndex("TenantId", "InstallId", "TaskId");
+
+                    b.ToTable("SolutionRecordChanges");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionRecordEntity", b =>
+                {
+                    b.Property<string>("RecordId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("EndUserId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Entity")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstallId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer");
+
+                    b.HasKey("RecordId");
+
+                    b.HasIndex("DataJson");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("DataJson"), "gin");
+
+                    b.HasIndex("TenantId", "InstallId", "Entity", "EndUserId");
+
+                    b.HasIndex("TenantId", "InstallId", "Entity", "UpdatedAt");
+
+                    b.ToTable("SolutionRecords");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyDatasetRecord", b =>
                 {
                     b.Property<string>("DatasetId")

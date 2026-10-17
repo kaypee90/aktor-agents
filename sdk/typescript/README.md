@@ -56,6 +56,76 @@ The client does the following for you:
 Everything the SDK covers is also plain REST. The full description is at `/openapi/v1.json` on
 your server.
 
+## Solutions: build and ship your own agentic app
+
+A solution is a business app packaged as a folder (`aktor.yaml` plus workspaces, skills, knowledge
+and evals); see [docs/solutions.md](../../docs/solutions.md). The **`aktor` CLI** builds and ships it:
+
+```bash
+export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...   # an Admin key
+npx aktor init my-app && cd my-app
+npx aktor validate          # check it against the server
+npx aktor deploy            # install, or upgrade the installed version (--dry-run, --force, --input k=v, --secret conn.key=v)
+npx aktor dev               # redeploy on every change
+npx aktor test              # run its evals for real; exit 1 if any fail (CI)
+npx aktor records my-app Request --filter "status==new"
+npx aktor token my-app customer-42 --name Sam   # an end-user token, plus the embed snippet
+npx aktor usage my-app --by end_user --csv      # what it cost, for billing your customers
+npx aktor publish --public                      # share this version through the registry
+npx aktor search | install name@1.0.0 | yank name 1.0.1
+```
+
+From code, your backend works with the solution's records and issues end-user tokens:
+
+```ts
+const aktor = new Aktor({ apiKey: process.env.AKTOR_API_KEY!, baseUrl: "http://localhost:5080" });
+
+// Writes are checked against the data model, and fire record triggers and webhooks.
+const ticket = await aktor.solutions.records.create("property-mgmt", "Ticket", { issue: "No hot water" }, { idempotencyKey: "req-81" });
+const soon = await aktor.solutions.records.list("property-mgmt", "Lease", { where: { status: "active" }, filters: ["ends_on<=today+60d"] });
+
+// After your own sign-in: a short-lived token that reaches this user's data only.
+// (Or declare end_users.jwt in the manifest and use your identity provider's tokens directly.)
+const { token } = await aktor.solutions.endUserToken("property-mgmt", "resident-4b", { name: "Sam" });
+
+// Cost per end user this month, and the registry.
+const { lines } = await aktor.solutions.usage("property-mgmt", { by: "end_user" });
+await aktor.registry.publish(bundle, "public");
+await aktor.solutions.installPackage("helpdesk@1.0.0");
+```
+
+Your customers' side uses `AktorApp` with that token (or the `/embed.js` widget):
+
+```ts
+import { AktorApp } from "@aktor/sdk";
+
+const app = new AktorApp({ installId: "sol-…", token, baseUrl: "https://agents.example.com" });
+const { conversation_id } = await app.conversations.start("The kitchen tap is leaking");
+const reply = await app.conversations.waitForReply(conversation_id);
+console.log(reply.messages.at(-1)?.text);
+const myTickets = await app.records("Ticket");
+```
+
+## Remote plugins in Node
+
+`@aktor/sdk/plugin` serves your own integration as an Aktor remote plugin (docs/plugins.md#remote-plugins):
+
+```js
+import { Plugin, ToolError } from "@aktor/sdk/plugin";
+
+new Plugin("crm")
+  .tool("find_customer", {
+    description: "Find a customer by email.",
+    sideEffects: "read_only",
+    inputSchema: { type: "object", properties: { email: { type: "string" } }, required: ["email"] },
+  }, async ({ email }, ctx) => {
+    const customer = await lookup(email, ctx.credentials.api_key);   // credentials come from the vault
+    if (!customer) throw new ToolError("No customer with that email.", "not_found");
+    return customer;
+  })
+  .listen({ port: 8787, token: process.env.PLUGIN_TOKEN });
+```
+
 ## Tasks from other systems
 
 `aktor.tasks.create(goal)` starts a one-off task. The REST endpoint behind it takes more than the

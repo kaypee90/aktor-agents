@@ -1,6 +1,8 @@
 # .NET
 bin/
 obj/
+# ...but the SDK's command-line tools live in a bin/ folder too.
+!sdk/typescript/bin/
 *.user
 
 # Node / Next.js

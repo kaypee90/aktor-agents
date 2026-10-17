@@ -1,5 +1,9 @@
 # Roadmap
 
+> **Status:** P1–P10 below are done. The current direction is Aktor as a platform others build
+> their own agentic products on; see [platform-builders.md](platform-builders.md) for what's been
+> built for that (solutions, records, end users, the registry, usage) and what's next.
+
 Priorities follow from where Aktor differs from CrewAI, n8n and OpenClaw.
 
 - **CrewAI and n8n:** a human designs the team. Agents only delegate to agents defined in advance.

@@ -35,6 +35,15 @@ public sealed class AktorAuthenticationHandler(
         else if (Request.Headers.Authorization.ToString() is { Length: > 0 } header)
         {
             if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return AuthenticateResult.Fail("Unsupported authorization scheme.");
+            // End-user tokens (ours, or a solution's federated JWTs) are for the apps API only,
+            // which checks them itself; to everything else the request is anonymous.
+            var bearer = header["Bearer ".Length..].Trim();
+            if (bearer.StartsWith(AgentRuntime.Infrastructure.Solutions.SolutionTokens.EndUserPrefix, StringComparison.Ordinal) ||
+                AgentRuntime.Infrastructure.Solutions.EndUserJwtVerifier.LooksLikeJwt(bearer))
+            {
+                return AuthenticateResult.NoResult();
+            }
+
             caller = await identity.ResolveApiKeyAsync(header["Bearer ".Length..].Trim(), Context.RequestAborted);
             if (caller is null) return AuthenticateResult.Fail("Invalid or revoked API key.");
         }

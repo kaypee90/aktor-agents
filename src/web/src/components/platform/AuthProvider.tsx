@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { UNAUTHORIZED_EVENT, getMe } from "@/lib/api";
 import type { Me } from "@/lib/platformTypes";
 
-const PUBLIC_PATHS = ["/login", "/welcome"];
+const PUBLIC_PATHS = ["/login", "/welcome", "/docs"];
 
 interface AuthState {
   me: Me | null;

@@ -1,0 +1,15 @@
+name: urgent leak is triaged
+workspace: maintenance-desk
+input: "Ticket created: water is pouring through the bathroom ceiling of unit 4B."
+input_data:
+  entity: Ticket
+  event: created
+  record:
+    issue: Water is pouring through the bathroom ceiling of unit 4B.
+    status: open
+timeout_seconds: 300
+expect:
+  status: Completed
+  # With a real model, also check the decision it recorded:
+  # records:
+  #   Ticket: { at_least: 1, where: { priority: urgent } }

@@ -1,0 +1,11 @@
+name: a contact-form submission opens a ticket
+workspace: intake
+input: "Contact form: I was charged twice this month."
+input_data:
+  subject: Charged twice
+  message: I was charged twice this month, please refund one.
+timeout_seconds: 120
+expect:
+  status: Completed
+  records:
+    Ticket: { at_least: 1, where: { subject: Charged twice, channel: web } }

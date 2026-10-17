@@ -19,6 +19,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddAgentRuntimeCore(this IServiceCollection services, IConfiguration configuration)
     {
+        services.TryAddSingleton(TimeProvider.System);
         services.Configure<RuntimeLimitsOptions>(configuration.GetSection(RuntimeLimitsOptions.SectionName));
         services.Configure<DefaultBudgetOptions>(configuration.GetSection(DefaultBudgetOptions.SectionName));
         services.Configure<Memory.MemoryOptions>(configuration.GetSection(Memory.MemoryOptions.SectionName));

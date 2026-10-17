@@ -1,0 +1,23 @@
+# The contact form on your site posts here. No model: an action stage opens the ticket, and the
+# triage workspace's record trigger takes it from there.
+key: intake
+name: Intake
+goal: Open a ticket for every contact-form submission.
+data: { Ticket: write }
+pipeline:
+  stages:
+    - stage_id: open-ticket
+      name: Open ticket
+      kind: Action
+      tool: data__create_ticket
+      arguments:
+        fields:
+          subject: "{{ input.subject }}"
+          body: "{{ input.message }}"
+          channel: web
+          opened_at: "{{ run.started_at }}"
+      retries: 1
+triggers:
+  - kind: Webhook
+    name: Contact form
+    instruction: Open a ticket for this contact-form submission.

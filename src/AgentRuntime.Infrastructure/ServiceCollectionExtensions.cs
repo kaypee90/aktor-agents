@@ -12,6 +12,7 @@ using AgentRuntime.Tools;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 
 namespace AgentRuntime.Infrastructure;
@@ -102,6 +103,19 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, SentryPlugin>();
         // The incident-response template's simulated production system (docs/incident-response.md).
         services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, DemoOpsPlugin>();
+        // Plugins that run out of process, in any language, behind an HTTP contract.
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, RemotePlugin>();
+
+        // Solutions (docs/solutions.md): packaged apps with their own data model, end users and webhooks.
+        services.TryAddSingleton(TimeProvider.System);
+        services.Configure<Solutions.SolutionOptions>(configuration.GetSection(Solutions.SolutionOptions.SectionName));
+        services.AddSingleton<Solutions.SolutionTokens>();
+        services.AddSingleton<Solutions.EndUserJwtVerifier>();
+        services.AddSingleton<AgentRuntime.Solutions.IRecordStore, Solutions.EfRecordStore>();
+        services.AddSingleton<AgentRuntime.Solutions.ISolutionCatalog, Solutions.EfSolutionCatalog>();
+        services.AddSingleton<AgentRuntime.Plugins.IAgentPlugin, Solutions.RecordsPlugin>();
+        services.AddSingleton<Solutions.RecordChangeDispatcher>();
+        services.AddHostedService(sp => sp.GetRequiredService<Solutions.RecordChangeDispatcher>());
         services.AddPluginsFromDirectory(configuration["Plugins:Directory"] ?? "./plugins");
         AddLlmProvider(services, configuration);
 

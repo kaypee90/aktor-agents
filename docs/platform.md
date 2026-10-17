@@ -1,8 +1,9 @@
 # The platform: organizations, access, API and billing
 
 One server hosts many **organizations** (tenants). Each one has its own members, API keys,
-workspaces, tasks, studies, worlds, agents, memory, scratch database and plan, and none of them can see
-another's. The same build runs self-hosted for one team or as a multi-tenant service.
+workspaces, tasks, studies, worlds, agents, memory, scratch database, solutions (with their records
+and end users) and plan, and none of them can see another's. An organization's own customers use its
+solutions as **end users**, through the apps API; they're never members of it ([solutions.md](solutions.md#end-users)). The same build runs self-hosted for one team or as a multi-tenant service.
 
 ```mermaid
 flowchart LR

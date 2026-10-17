@@ -1,0 +1,50 @@
+key: triage
+name: Triage
+goal: Classify every new ticket and draft a reply for a person to approve.
+data: { Ticket: write, Customer: read }
+daily_cost_usd: 5
+safety:
+  autonomy: Autonomous
+  rules:
+    # Deleting a ticket is never an agent's call.
+    - { tool_pattern: "data__delete_ticket", applies: Any, decision: Deny }
+pipeline:
+  max_concurrent_runs: 4
+  stages:
+    - stage_id: classify
+      name: Classify and draft
+      role: Support specialist
+      instructions_file: prompts/triage.md
+      capabilities: [research]
+    - stage_id: hand-over
+      name: Hand over for review
+      kind: Action
+      inputs: [classify]
+      tool: data__update_ticket
+      arguments: { id: "{{ input.record_id }}", fields: { status: awaiting_review } }
+      retries: 1
+triggers:
+  - kind: Record
+    name: New ticket
+    entity: Ticket
+    on: [created]
+    instruction: Classify this ticket and draft a reply.
+  # A compiled watch: urgent tickets still waiting after 2 hours alert the team, with no model call.
+  - kind: Watch
+    name: Urgent and waiting
+    every_minutes: 15
+    source_tool: data__list_ticket
+    source_arguments:
+      where: { priority: urgent }
+      filters:
+        - { field: status, op: "!=", value: answered }
+        - { field: opened_at, op: "<=", value: "now-2h" }
+    rule:
+      items_path: "$.items[*]"
+      key_field: id
+      conditions:
+        - { field: status, op: "!=", value: closed }
+      display_fields: [subject, status, opened_at]
+    watch_mode: notify
+    urgency: urgent
+    message_template: "{count} urgent ticket(s) waiting over 2 hours: {items}"

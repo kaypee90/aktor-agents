@@ -36,7 +36,10 @@ public enum TriggerKind
     Watch,
     /// <summary>A form that signed-in members of the organization fill in; each submission starts
     /// a run with the answers as its input.</summary>
-    Form
+    Form,
+    /// <summary>A record of the workspace's solution was created, updated or deleted
+    /// (docs/solutions.md): each change that matches starts a run with the record as its input.</summary>
+    Record
 }
 
 public enum ChatAuthorKind
@@ -135,6 +138,11 @@ public sealed class TriggerDefinition
 
     // ---- Form (TriggerKind.Form) ----
     [Id(27)] public FormDefinition? Form { get; set; }
+
+    // ---- Record (TriggerKind.Record): Rule's conditions, if any, apply to the record ----
+    [Id(28)] public string? Entity { get; set; }
+    /// <summary>"created", "updated" and/or "deleted".</summary>
+    [Id(29)] public List<string> RecordEvents { get; set; } = [];
 }
 
 [GenerateSerializer]
@@ -156,6 +164,11 @@ public sealed record TriggerSpec
 
     // Form
     [Id(12)] public FormDefinition? Form { get; init; }
+
+    // Record: the entity, the changes ("created", "updated", "deleted"; empty: created), and
+    // optionally Rule's conditions on the record's fields.
+    [Id(13)] public string? Entity { get; init; }
+    [Id(14)] public List<string>? On { get; init; }
 }
 
 [GenerateSerializer]
@@ -181,6 +194,8 @@ public sealed record TriggerView
     [Id(17)] public int LastMatchCount { get; init; }
     [Id(18)] public string? LastError { get; init; }
     [Id(19)] public FormDefinition? Form { get; init; }
+    [Id(20)] public string? Entity { get; init; }
+    [Id(21)] public List<string> RecordEvents { get; init; } = [];
 }
 
 [GenerateSerializer]

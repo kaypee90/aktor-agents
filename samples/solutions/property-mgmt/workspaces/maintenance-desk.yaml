@@ -1,0 +1,32 @@
+key: maintenance-desk
+name: Maintenance desk
+goal: >
+  Triage every new maintenance request: decide its category and priority, record the decision on
+  the ticket, and flag urgent ones to the manager.
+data:
+  Ticket: write
+  Lease: read
+  Property: read
+daily_cost_usd: 5
+safety:
+  autonomy: Autonomous
+pipeline:
+  max_concurrent_runs: 3
+  stages:
+    - stage_id: triage
+      name: Triage
+      role: Maintenance coordinator
+      instructions: >
+        A maintenance ticket was created; its record is the run's input (record_id and record).
+        Look up its lease and property with the data__ tools when it has one. Decide the category
+        and priority using the Maintenance policy knowledge and the maintenance-triage skill.
+        Then call data__update_ticket with category, priority, status "triaged" and two or three
+        sentences of triage_notes. If it's urgent, say so in the first sentence of your summary.
+      capabilities: [research]
+      retries: 1
+triggers:
+  - kind: Record
+    name: New ticket
+    entity: Ticket
+    on: [created]
+    instruction: Triage this maintenance request.

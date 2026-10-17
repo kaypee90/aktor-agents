@@ -67,10 +67,25 @@ const products = [
     body: "Connect MCP servers and REST APIs, add endpoints by hand or from OpenAPI, and serve them to Claude Code or n8n as an MCP server. The credential never leaves the vault.",
   },
   {
+    icon: Icons.Solutions,
+    title: "Solutions you build and ship",
+    body: "Package your own agentic app with its data model, workflows, a customer-facing assistant and evals. Deploy it with one command, publish it to the registry, and upgrade it without breaking work in progress.",
+  },
+  {
     icon: Icons.Analytics,
     title: "Any model, every token counted",
     body: "Anthropic, OpenAI, Gemini or local Ollama models with list prices built in. Switch a task's model at any time and see spend by model, role, tool and token kind.",
   },
+];
+
+// Building on the platform: what a solution brings, beside the code that shows it.
+const build = [
+  { icon: Icons.Knowledge, title: "Your data model", body: "Entities with typed fields. Agents get tools for them, every write is checked, and a record change can start a run or reach your backend as a signed webhook." },
+  { icon: Icons.Users, title: "Your customers", body: "An embeddable assistant your users sign in to with your own login. Each one reaches only their own conversations and records, enforced by the runtime." },
+  { icon: Icons.Download, title: "A registry", body: "Publish signed packages, install them by name in any organization, and yank a bad version without breaking installs." },
+  { icon: Icons.Analytics, title: "Usage you can bill", body: "Cost per end user, workspace or day from the runtime's own metering, with a monthly cap per user." },
+  { icon: Icons.Check, title: "Evals in CI", body: "Expected behaviour, checked by running the workspace for real. A regression fails the build." },
+  { icon: Icons.Connect, title: "Any language", body: "A CLI, TypeScript and Python SDKs, and remote plugins: your own integration as an HTTP service the runtime calls." },
 ];
 
 const steps = [
@@ -119,7 +134,9 @@ export default function WelcomePage() {
           <nav className="ml-6 hidden gap-5 text-sm text-zinc-600 md:flex dark:text-zinc-400">
             <a href="#products" className="hover:text-zinc-900 dark:hover:text-zinc-100">Product</a>
             <a href="#features" className="hover:text-zinc-900 dark:hover:text-zinc-100">Features</a>
+            <a href="#build" className="hover:text-zinc-900 dark:hover:text-zinc-100">Build on it</a>
             <a href="#how" className="hover:text-zinc-900 dark:hover:text-zinc-100">How it works</a>
+            <Link href="/docs" className="hover:text-zinc-900 dark:hover:text-zinc-100">Docs</Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
             {signedIn ? (
@@ -155,18 +172,16 @@ export default function WelcomePage() {
             </h1>
             <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400">
               Aktor turns one request into a self-organizing team of AI agents that plan, delegate, collaborate and deliver, inside budgets
-              and permissions the runtime enforces.
+              and permissions the runtime enforces. Use it as it is, or build your own agentic product on it.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href={signedIn ? "/" : canSignUp ? "/login?mode=signup" : "/login"}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-brand-600">
                 {signedIn ? "Open dashboard" : "Start a run"} <Icons.ChevronRight className="h-4 w-4" />
               </Link>
-              {!signedIn && (
-                <Link href="/login" className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-900">
-                  Sign in
-                </Link>
-              )}
+              <Link href="/docs" className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-900">
+                Read the docs
+              </Link>
             </div>
           </div>
 
@@ -196,7 +211,7 @@ export default function WelcomePage() {
       <section id="products" className="mx-auto max-w-6xl scroll-mt-16 px-4 pt-20 sm:px-6">
         <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">One workspace for work done by agent teams.</h2>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
-          Ask once, run it every day, or research it properly: the same governed teams behind each.
+          Ask once, run it every day, research it properly, or ship it to your own customers: the same governed teams behind each.
         </p>
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {products.map((f) => (
@@ -230,6 +245,68 @@ export default function WelcomePage() {
         </div>
       </section>
 
+      <section id="build" className="scroll-mt-16 bg-zinc-950 text-zinc-100">
+        <div className="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.1fr]">
+          <div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/70 px-3 py-1 text-xs text-zinc-400">
+              <Icons.Solutions className="h-3.5 w-3.5 text-brand-400" /> For builders
+            </span>
+            <h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">Build your own agentic product on Aktor.</h2>
+            <p className="mt-3 max-w-lg text-sm leading-relaxed text-zinc-400">
+              A <span className="text-zinc-200">solution</span> is a business app in a folder: its workflows, data model, the assistant your
+              customers talk to, and evals. Aktor runs it with the same budgets, approvals and audit as everything else, so you ship the
+              product and the runtime keeps it in bounds.
+            </p>
+            <div className="mt-8 grid gap-5 sm:grid-cols-2">
+              {build.map((b) => (
+                <div key={b.title} className="flex gap-3">
+                  <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500/15 text-brand-300">
+                    <b.icon className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-100">{b.title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-zinc-400">{b.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Link href="/docs#solutions" className="mt-8 inline-flex items-center gap-1.5 text-sm font-medium text-brand-300 hover:text-brand-200">
+              How solutions work <Icons.ChevronRight className="h-4 w-4" />
+            </Link>
+          </div>
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/70 shadow-2xl">
+              <div className="border-b border-zinc-800 px-4 py-2 font-mono text-[11px] text-zinc-500">aktor.yaml</div>
+              <pre className="overflow-x-auto p-4 text-[12.5px] leading-5 text-zinc-300">{`name: property-mgmt
+version: 1.2.0
+entities:
+  Ticket:
+    fields:
+      issue:     { type: text, required: true }
+      priority:  { type: enum, values: [low, normal, urgent] }
+      requester: { type: end_user }
+workspaces:
+  - key: maintenance-desk
+    data: { Ticket: write }
+    triggers:
+      - { kind: Record, entity: Ticket, on: [created] }
+assistant:
+  name: Resident helper
+  data: { Ticket: write }`}</pre>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/70">
+              <div className="border-b border-zinc-800 px-4 py-2 font-mono text-[11px] text-zinc-500">terminal</div>
+              <pre className="overflow-x-auto p-4 text-[12.5px] leading-6 text-zinc-300">{`$ aktor deploy
+✓ installed property-mgmt 1.2.0
+$ aktor test
+✓ urgent leak is triaged  4.2s
+$ aktor publish --public
+✓ published property-mgmt@1.2.0`}</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="how" className="scroll-mt-16 border-y border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40">
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">How it works</h2>
@@ -259,6 +336,7 @@ export default function WelcomePage() {
       <footer className="border-t border-zinc-200 dark:border-zinc-800">
         <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-6 text-xs text-zinc-500 sm:px-6">
           <Icons.Logo className="h-5 w-5" /> Aktor · Governed, autonomous agent teams
+          <Link href="/docs" className="ml-auto hover:text-zinc-800 dark:hover:text-zinc-200">Documentation</Link>
         </div>
       </footer>
     </div>

@@ -64,6 +64,11 @@ builder.Services.AddSingleton<AgentRuntime.Api.Interop.GatewayRateLimiter>();
 builder.Services.AddSingleton<TaskPreviewService>();
 builder.Services.AddSingleton<PipelineDesignService>();
 builder.Services.AddSingleton<ModelProfileRenamer>();
+// Solutions: packaged apps, their records and their end users (docs/solutions.md).
+builder.Services.AddSingleton<SolutionService>();
+builder.Services.AddSingleton<SolutionAppService>();
+builder.Services.AddSingleton<SolutionUsageService>();
+builder.Services.AddSingleton<SolutionRegistryService>();
 builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));
 builder.Services.Configure<AgentRuntime.Api.Interop.McpServerSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.McpServerSettings.SectionName));
 
@@ -94,6 +99,9 @@ builder.Services.AddCors(options =>
         .AllowAnyMethod()
         // The dashboard signs in with a cookie, so its origin may send credentials.
         .AllowCredentials());
+    // The end-user API is called from builders' own sites with a bearer token (no cookies), so
+    // any origin may call it; the token decides what it reaches.
+    options.AddPolicy(AgentRuntime.Api.Controllers.AppsCors.Policy, policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
 });
 
 builder.Services.AddOpenTelemetry()
@@ -119,6 +127,20 @@ await app.MigrateDatabaseAsync();
 // The API description is public: it's what SDKs and integrators build against.
 app.MapOpenApi().AllowAnonymous();
 
+// The versioned API: /api/v1/... is the stable contract builders and SDKs use (docs/api-versioning.md),
+// served by the same endpoints as /api/... (which the dashboard uses and may change with it).
+app.Use((http, next) =>
+{
+    if (http.Request.Path.StartsWithSegments("/api/v1", out var rest))
+    {
+        http.Request.Path = new PathString("/api").Add(rest);
+        http.Response.Headers["Aktor-Api-Version"] = "1";
+    }
+
+    return next(http);
+});
+app.UseRouting();
+
 app.UseCors();
 // ACP (/acp) runs over a WebSocket; keep-alives stop proxies closing a long prompt's connection.
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) });
@@ -132,6 +154,14 @@ AgentRuntime.Api.Interop.ConnectionGatewayEndpoint.MapConnectionGateway(app);
 // Aktor as an A2A agent and an ACP agent (docs/integrations.md).
 AgentRuntime.Api.Interop.A2aEndpoint.MapA2a(app);
 AgentRuntime.Api.Interop.AcpEndpoint.MapAcp(app);
+
+// The embeddable assistant widget for solutions' end users (docs/solutions.md#embed).
+app.MapGet("/embed.js", () =>
+{
+    using var stream = typeof(Program).Assembly.GetManifestResourceStream("embed.js")!;
+    using var reader = new StreamReader(stream);
+    return Results.Text(reader.ReadToEnd(), "text/javascript; charset=utf-8");
+}).AllowAnonymous().RequireCors(AgentRuntime.Api.Controllers.AppsCors.Policy);
 
 // Real-time event stream (CLAUDE.md sections 29, 31, 46) via Server-Sent Events.
 app.MapGet("/ws/events", async (HttpContext http, IEventStream stream, AgentRuntime.Infrastructure.Persistence.AgentDbContext db, TenantAccess access,

@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The end-user widget, served at /embed.js (docs/solutions.md#embed). -->
+    <EmbeddedResource Include="Embed\embed.js" LogicalName="embed.js" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\AgentRuntime\AgentRuntime.csproj" />
     <ProjectReference Include="..\AgentRuntime.Infrastructure\AgentRuntime.Infrastructure.csproj" />
   </ItemGroup>

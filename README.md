@@ -22,6 +22,11 @@ to enforce a system-level constraint — the runtime always is.
 **What the runtime guarantees**, each with the code that enforces it and the test that proves it:
 [docs/guarantees.md](docs/guarantees.md).
 
+**Build your own agentic app on it.** A *solution* is a business application packaged as plain
+files. Its workspaces, its own data model, the assistant its customers talk to, and its evals go
+in one folder. `aktor deploy` installs it, and upgrades apply only what changed. See
+[section 10a](#10a-build-on-aktor-solutions) and [docs/solutions.md](docs/solutions.md).
+
 ---
 
 ## 1. What's in here
@@ -39,7 +44,10 @@ to enforce a system-level constraint — the runtime always is.
   /web                        Next.js dashboard (tasks, workspaces, studies, agent graph, analytics, settings)
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
 /samples/studies              sample data for the Studies walkthrough (docs/studies-walkthrough.md)
-/sdk/typescript               TypeScript SDK and the aktor-acp bridge
+/samples/solutions            solution packages to deploy (docs/solutions.md)
+/sdk/typescript               TypeScript SDK, the aktor CLI and the aktor-acp bridge
+/sdk/python                   Python SDK and the remote-plugin server
+                              (the Node remote-plugin server is @aktor/sdk/plugin in /sdk/typescript)
 /docker                       Dockerfiles for the API, the web app and the analysis sandbox
 docker-compose.yml
 .env.example
@@ -379,6 +387,54 @@ without restarting the containers. It keeps accounts, organizations and their pl
 organization's model settings (Settings → Models: the models, their custom prices and API keys). Existing agent grain activations (if any were
 somehow still mid-turn) are simply left to idle out; nothing references their old ids once the
 registry and history are both cleared.
+
+## 10a. Build on Aktor: solutions
+
+Aktor is meant to be the infrastructure people build their own agentic products on. A
+**solution** packages one business application as a folder: `aktor.yaml` plus workspaces, skills,
+knowledge and evals ([docs/solutions.md](docs/solutions.md)).
+
+```bash
+export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...     # an Admin key
+node sdk/typescript/bin/aktor.mjs deploy samples/solutions/property-mgmt
+node sdk/typescript/bin/aktor.mjs test property-mgmt
+```
+
+- **No CLI or YAML needed.** **Solutions → New solution** opens a builder with forms for every
+  part, checked as you go, and deploys straight from the page. The YAML and a `.zip` of the package
+  can be downloaded for git or the CLI, which stays an alternative.
+- **Its own data model.** Entities with typed fields, for example `Lease`, `Ticket` and `Property`.
+  Agents get `data__list_/get_/create_/update_/delete_<entity>` tools, and the runtime checks every
+  write. A record change can start a run (a `Record` trigger), and your backend reads and writes
+  records over `/api/v1/solutions/{id}/records` and gets signed webhooks.
+- **Its own customers.** Your backend issues short-lived end-user tokens. Customers talk to the
+  solution's assistant through `/embed.js` or the apps API, and each reaches only their own
+  conversations and records. The runtime enforces this in the assistant's tools too, so a prompt
+  can't get around it.
+- **A lifecycle.** `aktor validate / deploy / dev / test`. Upgrades change only what the new version
+  changed: runs in progress keep their pipeline version, and people's edits in a workspace survive.
+  Evals run the workspaces for real and fail CI when behaviour regresses.
+- **Your sign-in, your billing.** End users can sign in with your identity provider's JWTs (checked
+  against its published keys). A usage report breaks cost down per end user, workspace or day, and a
+  monthly cap per user keeps one customer from running up the bill.
+- **A registry.** `aktor publish` shares a signed, versioned package with your organization or the
+  whole server, and `aktor install name@version` installs it anywhere it's visible. A bad version
+  can be yanked without breaking existing installs.
+- **Data at scale.** Filters and sorting run in SQL over the whole table, and `indexed: true`
+  fields get database indexes.
+- **Integrations in any language.** Remote plugins are HTTP services the runtime calls with a shared
+  secret ([docs/plugins.md](docs/plugins.md#remote-plugins)). Both SDKs include the server:
+  `aktor.Plugin` in Python, `@aktor/sdk/plugin` in Node.
+
+The dashboard's **Solutions** page shows the registry and each install's workspaces, records (which
+you can edit), assistant (with a live widget to try), usage, evals and history. Where this is going: [docs/platform-builders.md](docs/platform-builders.md).
+The stable API contract is `/api/v1` ([docs/api-versioning.md](docs/api-versioning.md)).
+Two complete examples: [samples/solutions/property-mgmt](samples/solutions/property-mgmt) and
+[samples/solutions/helpdesk](samples/solutions/helpdesk).
+
+**Documentation in the app:** the dashboard has a public **/docs** page, a guided tour of what the
+platform does and how to use it, from a first task to shipping a solution. The public homepage is
+at **/welcome**.
 
 ## 10b. Studies: research with your own data
 
