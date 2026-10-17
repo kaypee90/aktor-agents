@@ -35,6 +35,28 @@ run live, then audit, replay or fork it afterwards.
 `,
   },
   {
+    id: "whats-new",
+    group: "Start here",
+    title: "What's new: solutions",
+    summary: "Aktor is now a platform to build your own agentic products on.",
+    body: `
+| Area | What changed |
+|---|---|
+| **Solutions** | Package a business app (workspaces, a data model, an assistant for your customers, skills, knowledge, evals) and install, upgrade or uninstall it as one unit. Upgrades change only what the new version changed. |
+| **The builder** | Make, check and deploy a solution with forms in the dashboard, with no CLI and no YAML. Download the package if you want it. |
+| **Data** | Typed entities your agents work on through \`data__\` tools. Every write is checked; filters run in SQL; fields can be indexed. A record change can start a run, or reach your backend as a signed webhook. |
+| **End users** | Your customers talk to your solution's assistant through an embed widget or the apps API, with your own sign-in if you like. Each reaches only their own data, enforced in the tools, with rate limits and monthly cost caps. |
+| **Registry** | Publish signed, versioned packages; install them by name; yank a bad version. |
+| **Usage** | Cost per end user, workspace or day, to bill your customers. |
+| **Tools** | The \`aktor\` CLI, the TypeScript and Python SDKs, and remote plugins in Node or Python. |
+| **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.2.0. |
+
+Upgrading a server: rebuild and restart, and a database migration is applied automatically. Back
+up \`SECRETS_MASTER_KEY\`: it now also signs end-user tokens, records bindings and registry
+packages. The full list of changes is in \`docs/solutions-changelog.md\`.
+`,
+  },
+  {
     id: "getting-started",
     group: "Start here",
     title: "Getting started",
@@ -260,6 +282,37 @@ and **helpdesk**.
 `,
   },
   {
+    id: "builder",
+    group: "Build on Aktor",
+    title: "The builder: no code needed",
+    summary: "Make, check and deploy a solution with forms. Download the package if you want it.",
+    body: `
+**Solutions → New solution** opens the builder. **Edit in builder** on an installed solution opens
+that version.
+
+| Section | What you set |
+|---|---|
+| Basics | Title, name, version (with +patch/+minor), description |
+| Data model | Entities and fields: type, required, indexed, enum values, which entity a ref points at. Renaming an entity updates everything that names it. |
+| Workspaces | Goal, data access per entity, autonomy, connectors, agent and action stages with "runs after", and triggers: a record change, a schedule, a webhook |
+| Assistant | Instructions, greeting, data access, limits, allowed sites, monthly cost cap, your own sign-in |
+| Inputs & connectors | Values asked for at install; integrations picked from this server's plugins (secrets are asked for at deploy) |
+| Knowledge & skills | Reference text agents search; skills in the Agent Skills format |
+| Evals | Expected status, what the summary mentions, records written |
+| Review & deploy | The \`aktor.yaml\` it makes, the full check, downloads |
+
+- **Checked as you type:** it uses the same validation the CLI and every deploy use. Each problem
+  shows in its section, with a count in the left nav.
+- **Deploy** installs it from the page (or upgrades it, when that name is installed). It asks for
+  inputs and secrets, then shows any webhook URLs it created. Nothing has to be downloaded.
+- **Package (.zip)** downloads \`aktor.yaml\` and its skill files, for git or the CLI.
+  **Edit YAML** lets you change the text and apply it back to the forms.
+- Drafts are saved in your browser until you deploy or discard them.
+
+The CLI and SDKs are alternatives for people who want them; anything made in one opens in the other.
+`,
+  },
+  {
     id: "data",
     group: "Build on Aktor",
     title: "Data: entities, records and record triggers",
@@ -347,6 +400,10 @@ across every server.
 \`\`\`html
 <script src="https://YOUR-AKTOR/embed.js" data-install="sol-…" data-token-url="/api/aktor-token" async></script>
 \`\`\`
+
+A workspace's webhook triggers have secret URLs, shown only when they're created: in the CLI's
+install output, in the deploy dialog, and in the workspace's chat. They're never shown in the
+triggers list, and they stay the same across upgrades.
 
 The widget runs in a shadow DOM, follows light and dark mode, refreshes expired tokens through your
 URL, and keeps the conversation across page loads. You can also call
@@ -530,6 +587,33 @@ A 404 also covers "exists, but in another organization".
 - **The audit chain** detects edits, insertions and deletions.
 
 Each guarantee names the code that enforces it and the test that proves it, in \`docs/guarantees.md\`.
+`,
+  },
+  {
+    id: "testing",
+    group: "Reference",
+    title: "Testing by hand",
+    summary: "A walkthrough to check solutions work on your own server.",
+    body: `
+Each step builds on the last; \`docs/manual-testing.md\` has the full version, with checks for
+tasks, studies and workspaces too. With the Mock model you check the plumbing; with a real model,
+the judgement.
+
+1. **Build and deploy with no files:** Solutions → New solution, change something, break it on
+   purpose (an enum with no values), fix it, Deploy.
+2. **Install a sample:** \`aktor deploy samples/solutions/property-mgmt\`. The Data tab shows its
+   seed records, and Workspaces shows its two workspaces.
+3. **A record change starts a run:** create a Ticket on the Data tab, then watch the Maintenance
+   desk start a run.
+4. **End users:** on the End users tab, issue a token for \`demo-resident\`, open the widget and
+   chat. A second user, \`demo-resident-2\`, never sees the first one's data.
+5. **Usage:** the Usage tab shows cost per end user, with a CSV export.
+6. **Evals and upgrades:** run the evals, then Edit in builder, change a stage, +patch, Upgrade.
+   History shows it.
+7. **Webhooks:** install the helpdesk, take the contact-form URL from the deploy dialog (or the
+   Intake workspace's chat), POST a ticket, and see it reach \`awaiting_review\`.
+8. **Registry:** Publish to registry, then install a package from the Registry list.
+9. **Clean up:** \`aktor uninstall <name> --purge\`.
 `,
   },
   {

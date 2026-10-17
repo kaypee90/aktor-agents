@@ -1,6 +1,6 @@
 # Manual test prompts
 
-Prompts for testing Tasks, Studies, Workspaces and the dashboard by hand. Each test says what it covers, the
+Prompts for testing Tasks, Studies, Workspaces, Solutions and the dashboard by hand. Each test says what it covers, the
 prompt to use, and what to check. Run them in order within a section: later tests build on
 earlier ones.
 
@@ -24,6 +24,7 @@ model makes good decisions with the runtime's tools and limits.
   | Analytics | the trend, what consumes the most, tools, durations, runs to look at |
   | Studies | sources, models, experiments, evidence and the report |
   | Workspaces | the team view, chat widget, and the Agents, Files, Triggers, Safety and Events tabs |
+  | Solutions | the Solutions page (registry, installs) and each install's Overview, Data, End users, Usage, Evals and History tabs; the builder |
 
 A useful habit: for every spawn, read the `Why not itself:` reason in the event stream. A weak
 reason ("to help", "for efficiency") means the model is spawning by reflex.
@@ -632,6 +633,125 @@ With a database from before this release, open an old workspace.
 
 ---
 
+## Solutions
+
+A solution is a business app installed as one unit: workspaces, a data model, an assistant for
+its own customers, and evals ([solutions.md](solutions.md)). Most of these tests work with the
+Mock model (it proves the plumbing); the checks marked *real model* need one.
+
+Set up once: rebuild the stack, create an **Admin** API key (Settings → API keys), and for the
+terminal tests:
+
+```bash
+export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...
+alias aktor="node $PWD/sdk/typescript/bin/aktor.mjs"
+```
+
+These install into the database you're using; uninstall with `--purge` afterwards (SO10).
+
+### SO1. Build and deploy with no files (the builder)
+
+**Covers:** the builder's forms, live validation, deploying from the page.
+
+**Do:** Solutions → **New solution**. Change the title, then in **Data model** add a field to
+`Request` (e.g. `due_on`, type `date`). Break something on purpose: give an enum field no values.
+Fix it. Click **Deploy**, fill in the input, **Install**.
+
+**Check:** the problem appears in the section it belongs to (with a count in the left nav) and
+disappears when fixed; the Deploy button is disabled while there are problems; after installing,
+the solution's page opens with its workspace and entity.
+
+### SO2. Validation catches a broken package (the CLI)
+
+**Do:** `aktor validate samples/solutions/property-mgmt`. Then change `rent: { type: number, … }`
+to `type: nmber` in its `aktor.yaml` and validate again; change it back.
+
+**Check:** the first run is "✓ valid"; the second lists the exact problem
+(`Field 'Lease.rent': unknown type 'nmber'…`) and installs nothing.
+
+### SO3. Install the sample
+
+**Do:** `aktor deploy samples/solutions/property-mgmt` (or deploy its folder from the Solutions page).
+
+**Check:** two workspaces and three seed records are reported; the install's **Data** tab shows
+Property (1) and Lease (2); **Workspaces** has "Property management · Maintenance desk" and
+"· Lease renewals", each with a `data` connection whose tools match its access (the desk can
+`update_ticket` but only read leases).
+
+### SO4. A record change starts a run
+
+**Do:** **Data → Ticket → New Ticket** with issue "Water is leaking through the bathroom ceiling
+in 4B" (or `POST /api/v1/solutions/property-mgmt/records/Ticket`). Try saving one with no issue,
+or a priority that isn't in the list.
+
+**Check:** invalid tickets are refused with the field named; the valid one starts a run in the
+Maintenance desk (its "New ticket" trigger). *Real model:* the ticket comes back with a category,
+priority `urgent` and triage notes. Edit the same ticket in two tabs and save both: the second
+save is refused because the record changed.
+
+### SO5. End users see only their own data
+
+**Do:** the install's **End users** tab → issue a token for user id `demo-resident` (name Sam) →
+turn on **Open the widget here** → ask "When does my lease end?" and report "The kitchen tap is
+leaking". Then issue a token for `demo-resident-2` and ask the same.
+
+**Check:** the conversation appears under **Tasks** as an ordinary task. *Real model:* Sam is told
+31 Dec 2026 and a ticket is logged that belongs to him; the second resident only ever sees unit
+7A, never Sam's lease or ticket, however it's asked. Sending more than 10 messages a minute is
+refused ("too quickly").
+
+### SO6. Usage per end user
+
+**Do:** the install's **Usage** tab, grouped by end user, then by day; download the CSV.
+
+**Check:** each end user's conversations, tokens and cost appear; the CSV opens in a spreadsheet.
+
+### SO7. Evals and upgrades
+
+**Do:** **Evals → Run all** (or `aktor test property-mgmt`). Then **Edit in builder** → change
+the Triage stage's instructions → **+patch** the version → **Upgrade**. Also try deploying without
+bumping the version.
+
+**Check:** the eval passes; the same version is offered as a redeploy, not an upgrade; after the
+upgrade the workspace's pipeline has a new version, runs in progress weren't affected, and the
+**History** tab shows the upgrade.
+
+### SO8. Webhooks: where the URL is
+
+**Do:** install the helpdesk (`aktor deploy samples/solutions/helpdesk`, or **Install** from the
+registry after SO9). Find the "Contact form" webhook URL, then:
+
+```bash
+curl -X POST "http://localhost:5080/api/hooks/…" -H "Content-Type: application/json" \
+  -d '{"subject": "Charged twice", "message": "Please refund one of the two charges."}'
+```
+
+**Check:** the URL is in the install output (CLI), in the deploy dialog after installing from the
+dashboard, and in the Intake workspace's chat. It's deliberately not in the triggers list,
+because it holds a secret. The POST answers 202; a ticket appears, the Triage workspace's record
+trigger runs, and the ticket ends at status `awaiting_review`.
+
+### SO9. The registry
+
+**Do:** an installed solution's page → **Publish to registry** (public). Then
+`aktor publish samples/solutions/helpdesk --public`, `aktor search`, and **Install** next to a
+package in the Solutions page's Registry list. Publish the same version twice.
+
+**Check:** both packages are listed with their publisher and install count; installing from the
+registry asks for its inputs and counts the install; republishing a version is refused (versions
+can't change).
+
+### SO10. Download, CLI round trip, clean up
+
+**Do:** in the builder's **Review & deploy**, download **Package (.zip)**, unzip it and run
+`aktor validate <folder>`. Then `aktor uninstall property-mgmt --purge` and
+`aktor uninstall helpdesk --purge`.
+
+**Check:** the downloaded package validates with the CLI; uninstalling archives the workspaces,
+and `--purge` deletes the records (without it they stay, read-only).
+
+---
+
 ## Dashboard
 
 ### D1. Several models, per task, switched mid-run
@@ -705,6 +825,16 @@ Copy this per run to compare models or releases:
 | W9 | | | | |
 | W10 | | | | |
 | W11 | | | | |
+| SO1 | | | | |
+| SO2 | | | | |
+| SO3 | | | | |
+| SO4 | | | | |
+| SO5 | | | | |
+| SO6 | | | | |
+| SO7 | | | | |
+| SO8 | | | | |
+| SO9 | | | | |
+| SO10 | | | | |
 
 For a repeatable measure of spawning decisions, run `SpawnEfficiencyEval` too (see
 [workspaces.md](workspaces.md)).

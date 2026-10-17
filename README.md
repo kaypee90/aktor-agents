@@ -429,6 +429,8 @@ node sdk/typescript/bin/aktor.mjs test property-mgmt
 The dashboard's **Solutions** page shows the registry and each install's workspaces, records (which
 you can edit), assistant (with a live widget to try), usage, evals and history. Where this is going: [docs/platform-builders.md](docs/platform-builders.md).
 The stable API contract is `/api/v1` ([docs/api-versioning.md](docs/api-versioning.md)).
+Everything that changed for solutions is listed in [docs/solutions-changelog.md](docs/solutions-changelog.md),
+and [docs/manual-testing.md](docs/manual-testing.md#solutions) has a hands-on test plan (SO1–SO10).
 Two complete examples: [samples/solutions/property-mgmt](samples/solutions/property-mgmt) and
 [samples/solutions/helpdesk](samples/solutions/helpdesk).
 

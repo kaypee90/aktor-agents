@@ -35,6 +35,8 @@ flowchart LR
     U((Your customer)) -- "embed.js / apps API" --> A
 ```
 
+What changed to build all this, release by release, is in [solutions-changelog.md](solutions-changelog.md).
+
 The complete example is [samples/solutions/property-mgmt](../samples/solutions/property-mgmt). It
 triages maintenance requests as they arrive, starts lease renewals with a compiled watch, and gives
 residents an assistant that logs requests and answers lease questions.
@@ -334,7 +336,18 @@ with these headers:
 - `X-Aktor-Signature: sha256=<hex HMAC-SHA256 of the body>`, signed with the solution's
   **webhook secret** (returned at install and shown to Admins with the install)
 
-Failed deliveries are retried with backoff, up to 8 times. URLs on private networks need
+Failed deliveries are retried with backoff, up to 8 times.
+
+### Finding a webhook trigger's URL
+
+A workspace's own **webhook triggers** (the helpdesk's contact form, for example) have a secret
+URL. Because the secret is in it, the URL is shown only in these places, never in the triggers
+list or its API:
+- the CLI's install output;
+- the deploy dialog after installing or upgrading from the dashboard;
+- the workspace's chat ("Webhook '…' created … POST /api/hooks/…").
+
+An upgrade keeps the same URL. URLs on private networks need
 `Tasks:Callbacks:AllowPrivateNetworks`.
 
 ## End users
