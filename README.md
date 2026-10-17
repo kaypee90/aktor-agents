@@ -777,6 +777,11 @@ dotnet test src/AgentRuntime.Tests               # unit tests — no Orleans clu
 dotnet test src/AgentRuntime.IntegrationTests    # real Orleans grains + a scripted LLM
 ```
 
+```bash
+node --test sdk/typescript/test/plugin.test.mjs                 # the Node remote-plugin server
+python -m unittest discover -s sdk/python/tests                 # the Python SDK and plugin server
+```
+
 Integration tests cover, among others:
 - root spawning a child, a child recursively spawning a grandchild, and two agents messaging each
   other directly (including a reply cycle);
@@ -785,7 +790,15 @@ Integration tests cover, among others:
 - a spawn request beyond `MAX_CHILDREN_PER_AGENT` being rejected by the runtime rather than the LLM;
 - crash recovery, approvals and tenancy;
 - the MCP, A2A and ACP endpoints, previews, vector memory and the incident-response demo, against
-  the real API and a throwaway pgvector container. These need Docker and are skipped without it.
+  the real API and a throwaway pgvector container. These need Docker and are skipped without it;
+- solutions end to end:
+  - both samples installed and running;
+  - records, record triggers and signed webhooks;
+  - upgrades and evals;
+  - end users isolated from each other, including through their assistant's tools;
+  - the registry, usage and monthly caps;
+  - sign-in with a builder's own tokens;
+  - per-field indexes used by the query planner.
 
 ```bash
 # The eval harness on the demo scenarios, compared with the committed baseline:

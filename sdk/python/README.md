@@ -13,6 +13,9 @@ pip install ./sdk/python        # from this repository
 
 ## Build on the platform
 
+Solutions can be built and deployed entirely in the dashboard (**Solutions → New solution**). This
+client is for doing the same from code: CI, scripts, or your own backend.
+
 ```python
 from aktor import Aktor
 

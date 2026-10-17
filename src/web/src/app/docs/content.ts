@@ -425,6 +425,9 @@ the Mock model, evals check the plumbing; with a real model, they check behaviou
     title: "The aktor CLI and the SDKs",
     summary: "Scaffold, validate, deploy, test, publish; clients for TypeScript and Python.",
     body: `
+The CLI is for people who prefer the terminal or want packages in git. Everything it does
+(validate, deploy, upgrade) can also be done from the dashboard's builder, with no CLI and no YAML.
+
 \`\`\`bash
 export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...    # an Admin key: Settings → API keys
 npx aktor init my-app          # a working package to start from
@@ -501,7 +504,7 @@ description is at \`/openapi/v1.json\`.
 |---|---|
 | Tasks | \`POST /tasks\`, \`POST /tasks/preview\`, \`GET /tasks/{id}\`, \`/wait\`, \`/result\`, \`/chat\`, \`POST /tasks/{id}/messages\` (a follow-up), \`/continue\`, \`/replay\`, \`/cancel\` |
 | Workspaces | \`/workspaces\`, \`/workspaces/{id}/runs\`, \`/triggers\`, \`/connections\`, \`/policy\`, \`/approvals\`, \`/audit\` |
-| Solutions | \`POST /solutions/validate\`, \`POST /solutions\` (bundle or \`package\`), \`PUT /solutions/{id}\`, \`DELETE …?purge=true\`, \`/evals\`, \`/usage\`, \`/publish\`, \`/end-user-tokens\`, \`/records/{Entity}\` |
+| Solutions | \`POST /solutions/validate\`, \`POST /solutions/parse\`, \`GET /solutions/{id}/package\`, \`POST /solutions\` (bundle or \`package\`), \`PUT /solutions/{id}\`, \`DELETE …?purge=true\`, \`/evals\`, \`/usage\`, \`/publish\`, \`/end-user-tokens\`, \`/records/{Entity}\` |
 | Registry | \`GET/POST /registry/packages\`, \`GET /registry/packages/{name}[/{version}]\`, \`POST …/{version}/yank\` |
 | Apps (end users) | \`GET /apps/{id}\`, \`/conversations\`, \`/conversations/{id}\`, \`/conversations/{id}/messages\`, \`/records/{Entity}\` |
 | Live events | \`GET /ws/events\` (Server-Sent Events) |

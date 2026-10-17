@@ -547,6 +547,8 @@ behaviour.
 | Method | Path | Role |
 |---|---|---|
 | `POST` | `/api/v1/solutions/validate` | Member: `{ manifest, files }` → `{ ok, errors, warnings, summary, secrets }` |
+| `POST` | `/api/v1/solutions/parse` | Member: `{ manifest, files }` → the manifest as structured JSON (what the builder edits) |
+| `GET` | `/api/v1/solutions/{id\|name}/package` | Viewer: the package an install was deployed from (no secrets) |
 | `POST` | `/api/v1/solutions` | Admin: `{ bundle, inputs, secrets }` → the install, its workspaces, webhook URLs and secret |
 | `GET` | `/api/v1/solutions` | Viewer: installs (`?all=true` includes uninstalled ones) |
 | `GET` | `/api/v1/solutions/{id\|name}` | Viewer: one install: workspaces, entities with counts, assistant, evals, history |
@@ -598,6 +600,10 @@ with `where` first, or keep the data in your own database and reach it through a
   - valid RS and ES tokens;
   - refused audience, issuer, expiry, `none`, HS, tampered and foreign-key tokens;
   - picking up a rotated key.
+- The builder was checked end to end in a browser:
+  - both samples open in it and validate;
+  - a new solution deploys from the page;
+  - its downloaded `.zip` passes `aktor validate`.
 - `SolutionPlatformApiTests` (integration):
   - publishing, visibility, immutability and name ownership;
   - installing and upgrading by name, yanking, and refusing a tampered package;

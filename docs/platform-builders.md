@@ -11,8 +11,8 @@ This page records what that means, what's built, and what's next.
 
 Aktor is infrastructure when all of these hold:
 
-1. A developer builds a real solution using **only** a package, the CLI, the public `/api/v1` and the
-   SDKs, with no change to Aktor's code.
+1. A developer builds a real solution using **only** the dashboard's builder, or a package with the
+   CLI, the public `/api/v1` and the SDKs, with no change to Aktor's code.
 2. It installs into a fresh organization in minutes, asking only for inputs and secrets.
 3. Its own customers use it through an embed, isolated from each other by the runtime.
 4. A new version deploys without breaking work in progress.
@@ -29,6 +29,7 @@ refuses a package it can't run.
 
 | Need | Where it lives |
 |---|---|
+| Build a solution without code: forms for every part, checked as you go, deployed from the page | [solutions.md#the-builder-no-cli-or-yaml-needed](solutions.md#the-builder-no-cli-or-yaml-needed) |
 | Package a solution, install, upgrade, uninstall, version history | [solutions.md](solutions.md) |
 | A data model the agents work on: checked writes, per-field indexes, record triggers and webhooks to your backend | [solutions.md#data-entities-and-records](solutions.md#data-entities-and-records) |
 | Put agents in front of your own customers: tokens or your own sign-in (JWT), the embed widget, the apps API, allowed origins and rate limits | [solutions.md#end-users](solutions.md#end-users) |

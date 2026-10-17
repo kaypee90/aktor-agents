@@ -59,7 +59,8 @@ your server.
 ## Solutions: build and ship your own agentic app
 
 A solution is a business app packaged as a folder (`aktor.yaml` plus workspaces, skills, knowledge
-and evals); see [docs/solutions.md](../../docs/solutions.md). The **`aktor` CLI** builds and ships it:
+and evals); see [docs/solutions.md](../../docs/solutions.md). You can build and deploy one entirely
+in the dashboard (**Solutions → New solution**). The **`aktor` CLI** is the terminal alternative:
 
 ```bash
 export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...   # an Admin key

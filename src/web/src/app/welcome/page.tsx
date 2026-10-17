@@ -85,7 +85,7 @@ const build = [
   { icon: Icons.Download, title: "A registry", body: "Publish signed packages, install them by name in any organization, and yank a bad version without breaking installs." },
   { icon: Icons.Analytics, title: "Usage you can bill", body: "Cost per end user, workspace or day from the runtime's own metering, with a monthly cap per user." },
   { icon: Icons.Check, title: "Evals in CI", body: "Expected behaviour, checked by running the workspace for real. A regression fails the build." },
-  { icon: Icons.Connect, title: "Any language", body: "A CLI, TypeScript and Python SDKs, and remote plugins: your own integration as an HTTP service the runtime calls." },
+  { icon: Icons.Sliders, title: "No code required", body: "Build a solution with forms, see problems as you type, and deploy from the page. Download the YAML any time; the CLI and SDKs are there if you want them." },
 ];
 
 const steps = [
