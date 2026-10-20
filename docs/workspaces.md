@@ -103,6 +103,7 @@ Typing `@` in a text box suggests what you can refer to; ↑/↓ and Enter or Ta
 | A provider | `@anthropic` | The organization's models from that provider |
 | A skill | `@skill:incident-postmortems` | That skill ([skills.md](skills.md)): the workspace's own, else the organization's |
 | Knowledge | `@knowledge:refund-policy.docx`, `@knowledge:on-call-rota` | That document or fact ([memory.md](memory.md)): the workspace's own, else the organization's |
+| A connector | `@connector:slack` | That connection's tools (`slack__*`). An agent without them is told it isn't connected. The solution builder offers these ([solutions.md](solutions.md#mentions)) |
 
 A mention means one thing to whichever model reads it: the runtime adds a short glossary to the
 text it passes on (`Mentions`), so a weaker model doesn't have to guess.
@@ -220,6 +221,13 @@ all of them at once, and again brings back what was shown. Hidden sections keep 
 the layout is remembered per browser. On a first visit from a screen under 1280 pixels wide, the
 list and the side panel start hidden. Pending approvals still show when the header is hidden.
 
+The workspace list shows **Active** workspaces (running or paused) by default; switch to
+**Archived** or **All** above it. When the organization has solutions installed, a second filter
+picks the workspaces one solution made, or those **Not from a solution**, and each workspace made
+by a solution names it under its goal. The search box matches words in the name or goal. The list
+loads 50 at a time, with **Show more** at the bottom, and remembers the status and solution
+filters per browser.
+
 - **Left:** your workspaces.
 - **Center top, Live agents:** the team at work. You sit at the top, each
   recent run below you, its stage agents below the run, and their helpers below them, joined by
@@ -304,7 +312,7 @@ it, and the old agents are retired. Their chat, files, connections, safety polic
 |---|---|---|
 | `POST` | `/api/workspaces` | `{name, goal, daily_token_limit?, daily_cost_limit_usd?, pipeline?, blank?, visibility?}`; without `pipeline`, one is drafted from `goal`. `blank: true` starts with an empty canvas (then `goal` is optional). `visibility`: `Organization` (default) or `Private` |
 | `PUT` | `/api/workspaces/{id}/visibility` | `{visibility}`: owner only (403 otherwise). See [private workspaces](#private-workspaces) |
-| `GET` | `/api/workspaces` | List |
+| `GET` | `/api/workspaces` | List, newest first. Query: `status` (`all` default, `active` = not archived, `archived`, `paused`), `solution` (an install id or solution name; `none` for workspaces no solution made), `q` (words in the name or goal), `limit` (default 100, at most 200), `offset`. Each item has `solution: {install_id, name, title}` or null |
 | `GET` | `/api/workspaces/{id}` | Snapshot: pipeline, runs, conversation, agents of recent runs (each run's own entry first), triggers, budget |
 | `GET` | `/api/workspaces/{id}/pipeline` | The pipeline |
 | `PUT` | `/api/workspaces/{id}/pipeline` | `{pipeline, base_version, note?}`: replace it (409 if it changed since `base_version`) |

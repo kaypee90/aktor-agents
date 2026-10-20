@@ -70,8 +70,18 @@ public static class SolutionManifestReader
         catch (JsonException ex)
         {
             var at = string.IsNullOrEmpty(ex.Path) ? string.Empty : $" at {ex.Path}";
-            return (null, [$"aktor.yaml{at}: {ex.Message.Split(". Path:")[0]}"]);
+            return (null, [$"aktor.yaml{at}: {Explain(ex)}"]);
         }
+    }
+
+    /// <summary>What a reading error means: for a value that isn't one of a fixed set (an enum), the
+    /// values it can be, rather than .NET's type name.</summary>
+    private static string Explain(JsonException ex)
+    {
+        var message = ex.Message.Split(". Path:")[0];
+        var match = System.Text.RegularExpressions.Regex.Match(message, @"could not be converted to ([\w.]+)");
+        var type = match.Success ? typeof(SolutionManifest).Assembly.GetType(match.Groups[1].Value) : null;
+        return type is { IsEnum: true } ? $"use one of {string.Join(", ", Enum.GetNames(type))}." : message;
     }
 
     /// <summary>The package's files as the validator sees them (normalized paths).</summary>

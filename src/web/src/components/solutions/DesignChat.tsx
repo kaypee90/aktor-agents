@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiErrorMessage, designSolution, type DesignTurn, type SolutionDesignProposal } from "@/lib/api";
 import type { BuilderSkill, Json } from "@/lib/solutionPackage";
 import { cx } from "@/components/ui";
+import { MentionTextarea, mentionClass, type Mentionable } from "@/components/ui/MentionTextarea";
 import { Icons } from "@/components/ui/icons";
 
 type Obj = { [key: string]: Json };
@@ -24,6 +25,25 @@ type Message =
       error?: boolean;
     };
 
+// The same handles the server finds (Mentions.Find).
+const HANDLE = /(?<![\w.@])@([A-Za-z0-9][A-Za-z0-9._:/-]*[A-Za-z0-9]|[A-Za-z0-9])/g;
+
+/** A sent message, with the things it @mentions shown as what they are. */
+function WithMentions({ text, mentionables }: { text: string; mentionables: Mentionable[] }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(HANDLE)) {
+    const known = mentionables.find((x) => x.handle.toLowerCase() === m[1].toLowerCase());
+    if (!known || m.index === undefined) continue;
+    parts.push(text.slice(last, m.index));
+    parts.push(<span key={m.index} title={known.detail ? `${known.label} · ${known.detail}` : known.label}
+      className={cx("rounded px-1 font-medium", mentionClass(known.kind))}>{m[0]}</span>);
+    last = m.index + m[0].length;
+  }
+  parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
 const SUGGESTIONS = [
   "Design a helpdesk: customers report issues, an agent triages them by urgency, and an assistant answers status questions.",
   "Add a Vendor entity with name, phone and hourly rate, and let the workspace assign vendors to requests.",
@@ -42,8 +62,10 @@ const CORNER = process.env.NODE_ENV === "development" ? "right-20" : "right-5";
  * checked against the server; nothing changes until you apply them, and an applied change can be
  * undone. The forms stay the source of truth: the designer always works on the draft as it is now.
  */
-export function DesignChat({ draft, storageKey, onApply }: {
+export function DesignChat({ draft, storageKey, mentionables, onApply }: {
   draft: Draft;
+  /** What a message can @mention: the solution's stages, workspaces, skills, knowledge and connectors, and the organization's. */
+  mentionables: Mentionable[];
   /** Where the conversation is kept in this browser (per draft). */
   storageKey: string;
   onApply: (next: Draft) => void;
@@ -164,7 +186,7 @@ export function DesignChat({ draft, storageKey, onApply }: {
           </div>
         )}
         {messages.map((m, i) => m.role === "user" ? (
-          <div key={i} className="ml-8 whitespace-pre-wrap rounded-2xl rounded-br-md bg-brand-600 px-3 py-2 text-white">{m.content}</div>
+          <div key={i} className="ml-8 whitespace-pre-wrap rounded-2xl rounded-br-md bg-brand-600 px-3 py-2 text-white"><WithMentions text={m.content} mentionables={mentionables} /></div>
         ) : (
           <div key={i} className="mr-4 space-y-2">
             <div className={cx("whitespace-pre-wrap rounded-2xl rounded-bl-md px-3 py-2",
@@ -187,17 +209,18 @@ export function DesignChat({ draft, storageKey, onApply }: {
 
       <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         <div className="flex items-end gap-2 rounded-xl border border-zinc-300 bg-white px-3 py-2 focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 dark:border-zinc-700 dark:bg-zinc-950 dark:focus-within:ring-brand-900/40">
-          <textarea ref={textarea} rows={2} value={input} maxLength={4000} disabled={busy}
-            placeholder={messages.length === 0 ? "e.g. Track maintenance requests per property…" : "Ask for a change…"}
-            onChange={(e) => setInput(e.target.value)}
+          <MentionTextarea ref={textarea} rows={2} value={input} maxLength={4000} disabled={busy} above mentionables={mentionables}
+            placeholder={messages.length === 0 ? "e.g. Track maintenance requests per property…" : "Ask for a change… (@ to mention a stage, skill, connector…)"}
+            onValueChange={setInput}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
-            className="max-h-40 min-h-[2.5rem] flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-zinc-400" />
+            wrapperClassName="flex-1"
+            className="max-h-40 min-h-[2.5rem] w-full resize-none bg-transparent text-sm outline-none placeholder:text-zinc-400" />
           <button type="submit" disabled={busy || !input.trim()} aria-label="Send"
             className="rounded-lg bg-brand-600 p-1.5 text-white transition hover:bg-brand-700 disabled:opacity-40">
             <Icons.Send className="h-4 w-4" />
           </button>
         </div>
-        <div className="mt-1.5 text-[10px] text-zinc-400">Enter to send · Shift+Enter for a new line · uses your organization&apos;s model</div>
+        <div className="mt-1.5 text-[10px] text-zinc-400">Enter to send · Shift+Enter for a new line · @ to mention · uses your organization&apos;s model</div>
       </form>
     </section>
   );

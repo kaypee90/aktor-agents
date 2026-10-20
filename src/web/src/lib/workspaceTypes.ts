@@ -146,6 +146,8 @@ export interface WorkspaceListItem {
   created_at: string;
   updated_at: string;
   visibility?: WorkspaceVisibility;
+  /** The solution install that made it (docs/solutions.md), or null. */
+  solution?: { install_id: string; name: string; title: string } | null;
 }
 
 // ---- Integrations (phase 3) ----

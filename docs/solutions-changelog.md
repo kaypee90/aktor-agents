@@ -138,8 +138,34 @@ Solution platform version: **1.3.0** (see [api-versioning.md](api-versioning.md)
 - **Tests:** `SolutionDesignTests` (unit), `GlobalConnectorTests` (grains), and
   `GlobalConnectorsApiTests` (API and Postgres).
 
-## 6. Fixes along the way
+## 6. Mentions in the builder
 
+- **`@` in the builder** ([solutions.md](solutions.md#mentions)):
+  - works in the **Design with AI** chat and in the text boxes agents read (goals, stage and
+    trigger instructions, the assistant's and skills' instructions, eval inputs);
+  - can name stages, workspaces, skills, knowledge and connectors;
+  - each box offers only what its agents can reach;
+  - sent messages show their mentions highlighted.
+- **The designer is told what each mention names:** a stage, a workspace, the assistant, the
+  solution's skills, knowledge and connectors, or one of the organization's global connectors. It
+  also writes mentions into the instructions it proposes.
+- **`@connector:name` mentions** (`Mentions.ConnectorPrefix`) are new everywhere. Pipeline stages get
+  them in their glossary. `ConnectorMentionsSection` tells an agent which of its tools those are, or
+  that it doesn't have them.
+- **In the forms:**
+  - mentioning a declared connector connects it to that workspace or to the assistant;
+  - renaming a skill, a connector, a knowledge entry or a stage id rewrites the mentions of it.
+- **Validation warns** about mentions of a skill, knowledge or connector that the package doesn't
+  have, or that the workspace doesn't use.
+- **Tests:** `SolutionMentionTests` (unit).
+
+## 7. Fixes along the way
+
+- **Safety rules from the designer:** its prompt listed `applies: Reads|Writes|All`, but the values
+  are `Any`, `Writes` and `Unsafe`. A proposal with a safety rule then failed with "could not be
+  converted to SideEffectScope". The prompt now has the right values. The draft editor maps values a
+  model makes up (`All`, `require_approval`, …) to the real ones, which also repairs a draft that
+  already has one. A wrong value in any `aktor.yaml` now says which values there are.
 - **Watch tool calls** now carry the organization, so watches on records work for every organization.
 - **The Mock model** answers end users' messages plainly, instead of quoting the assistant's
   hidden instructions.

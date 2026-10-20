@@ -51,6 +51,7 @@ run live, then audit, replay or fork it afterwards.
 | **Tools** | The \`aktor\` CLI, the TypeScript and Python SDKs, and remote plugins in Node or Python. |
 | **Global connectors** | Set an integration up once on the **Connectors** page and link it from any workspace, workflow, solution or (if allowed) task. Rotate a key once; every link uses it. |
 | **Design with AI** | Describe a solution, or a change to it, in the builder's chat. Each answer lists validated changes you apply (or undo). |
+| **Mentions in the builder** | Type \`@\` in the builder's chat or its instruction boxes to name a stage, workspace, skill, knowledge or connector. Agents are told exactly what each one is, and mentioning a connector connects it. |
 | **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.3.0. |
 
 Upgrading a server: rebuild and restart, and a database migration is applied automatically. Back
@@ -320,6 +321,12 @@ change ("add a Vendor entity with name, phone and hourly rate", "add an eval for
 It can change every section. Each answer lists the changes, already checked against the server;
 nothing changes until you press **Apply**, and an applied change can be undone. It works on the
 draft as it is now, your own edits included, and asks when a decision is yours to make.
+
+Type \`@\` in the chat, or in any box agents read (goals and instructions, trigger instructions,
+eval inputs), to name a stage (\`@triage\`), a skill (\`@skill:handling-requests\`), knowledge
+(\`@knowledge:refund-policy\`) or a connector (\`@connector:sms\`). Each box offers only what its
+agents can use. Mentioning a connector connects it to that workspace, and renames carry over to
+mentions.
 
 The CLI and SDKs are alternatives for people who want them; anything made in one opens in the other.
 `,

@@ -95,6 +95,39 @@ The API is `POST /api/v1/solutions/design` with `{manifest, skills, history, req
 returns `{reply, summary, changes, errors, manifest, skills, problems, warnings, can_apply}` and
 saves nothing.
 
+### Mentions
+
+Type `@` in the builder to refer to the solution's own parts and your organization's. That works
+in the **Design with AI** chat and in the text boxes agents read: a workspace's goal, its stages'
+instructions, its triggers' instructions, the assistant's instructions, skills' instructions and
+eval inputs. Each box suggests only what its agents can actually use:
+
+| Mention | Example | In the builder |
+|---|---|---|
+| An agent (a stage), by its id | `@triage` | A workspace's own stages. In the chat, any stage, plus `@assistant` |
+| A workspace | `@workspace:requests` | The chat only |
+| A skill | `@skill:handling-requests` | The solution's skills for that workspace, then the organization's |
+| Knowledge | `@knowledge:refund-policy` | The solution's knowledge for that workspace, then the organization's |
+| A connector | `@connector:sms` | The solution's connectors. In the chat, the organization's global connectors too |
+
+- **What agents do with a mention:** the same as anywhere else ([workspaces.md](workspaces.md#mentions)).
+  A named skill is loaded first and named knowledge is read first. A named connector's tools
+  (`sms__send`, …) are pointed out; when the agent has none of them, it says so instead of working
+  around it.
+- **Mentioning a connector connects it.** A declared connector mentioned in a workspace's text, or
+  in the assistant's instructions, is added to that workspace's (or the assistant's) connectors.
+- **The assistant doesn't get the solution's skills or knowledge.** Those are installed into the
+  workspaces, so the assistant's box offers only the organization's.
+- **In the chat, the designer is told what each mention is.** For example, "post to
+  `@connector:team_slack` when `@triage` marks a request urgent" names that stage and that global
+  connector exactly. The designer also writes mentions into the instructions it proposes.
+- **Renames follow.** Renaming a skill, a connector, a knowledge entry or a stage id rewrites the
+  mentions of it. A connector's rename also updates the workspaces and the assistant that use it.
+- **Validation warns** when a workspace or the assistant mentions:
+  - a skill or knowledge that isn't in the package (fine if your organization has it);
+  - a connector that isn't declared;
+  - a connector the workspace doesn't use.
+
 ## Quick start
 
 ```bash

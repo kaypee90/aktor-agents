@@ -676,4 +676,52 @@ public sealed class SolutionsApiTests(ApiTestHostFixture fixture, ITestOutputHel
         Assert.Equal("forbidden", (await Call("update_customer", new { id = "x", fields = new { plan = "pro" } }))["code"]!.GetValue<string>());
         Assert.Equal("forbidden", (await Call("list_ticket", new { }, tenant: "t-someone-else"))["code"]!.GetValue<string>());
     }
+
+    [Fact]
+    public async Task The_workspace_list_pages_and_filters_by_status_solution_and_words()
+    {
+        if (Skip()) return;
+        var org = await Host.CreateOrganizationAsync("Listing", Tenancy.TenantRole.Admin);
+        using var api = Host.ClientFor(org);
+        var installed = await Json(await api.PostAsJsonAsync("/api/v1/solutions", HelpdeskPackage("1.0.0")));
+        var installId = installed.GetProperty("install_id").GetString()!;
+        var made = installed.GetProperty("workspaces").EnumerateArray().Select(w => w.GetProperty("workspace_id").GetString()!).ToHashSet();
+        var pipeline = new { stages = new[] { new { stage_id = "do", name = "Do it", role = "Worker", instructions = "Do it.", inputs = Array.Empty<string>(), retries = 0 } } };
+        var own = new List<string>();
+        foreach (var name in new[] { "Billing desk", "Hiring desk", "Old desk" })
+            own.Add((await Json(await api.PostAsJsonAsync("/api/workspaces", new { name, goal = "Handle requests.", pipeline }))).GetProperty("workspace_id").GetString()!);
+        Assert.Equal(HttpStatusCode.NoContent, (await api.PostAsync($"/api/workspaces/{own[2]}/archive", null)).StatusCode);
+
+        async Task<List<JsonElement>> List(string query) => (await Json(await api.GetAsync("/api/workspaces" + query))).EnumerateArray().ToList();
+        static IEnumerable<string> Ids(List<JsonElement> rows) => rows.Select(w => w.GetProperty("workspace_id").GetString()!);
+
+        // Every workspace by default, each naming the solution that made it.
+        var all = await List("");
+        Assert.Equal(made.Count + 3, all.Count);
+        Assert.All(all.Where(w => made.Contains(w.GetProperty("workspace_id").GetString()!)), w =>
+            Assert.Equal(installId, w.GetProperty("solution").GetProperty("install_id").GetString()));
+        Assert.Equal(JsonValueKind.Null, all.Single(w => w.GetProperty("workspace_id").GetString() == own[0]).GetProperty("solution").ValueKind);
+
+        JsonElement archived = default;
+        for (var i = 0; i < 40; i++)
+        {
+            var rows = await List("?status=archived");
+            if (rows.Count == 1) { archived = rows[0]; break; }
+            await Task.Delay(250);
+        }
+        Assert.Equal(own[2], archived.GetProperty("workspace_id").GetString());
+        Assert.DoesNotContain(own[2], Ids(await List("?status=active")));
+
+        Assert.Equal(made.Order(), Ids(await List($"?solution={installId}")).Order());
+        Assert.Equal(made.Order(), Ids(await List("?solution=helpdesk")).Order());
+        Assert.Equal(own.Order(), Ids(await List("?solution=none")).Order());
+        Assert.Equal([own[1]], Ids(await List("?q=HIRING")));
+
+        // Pages follow each other without gaps or repeats.
+        var paged = new List<string>();
+        for (var offset = 0; offset < all.Count; offset += 2) paged.AddRange(Ids(await List($"?limit=2&offset={offset}")));
+        Assert.Equal(Ids(all), paged);
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await api.GetAsync("/api/workspaces?status=sleeping")).StatusCode);
+    }
 }

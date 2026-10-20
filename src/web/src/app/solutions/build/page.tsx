@@ -6,6 +6,8 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { DeployDialog } from "@/components/solutions/DeployDialog";
 import { DesignChat } from "@/components/solutions/DesignChat";
+import { connectorsMentioned, renameMentions, solutionMentionables, type MentionScope } from "@/components/solutions/solutionMentions";
+import { MentionTextarea, knowledgeHandle, useKnowledgeMentionables, useSkillMentionables, type Mentionable } from "@/components/ui/MentionTextarea";
 import {
   apiErrorMessage,
   bundleFromFolder,
@@ -177,6 +179,8 @@ function Builder() {
   const [globals, setGlobals] = useState<GlobalConnector[]>([]);
   const [deploying, setDeploying] = useState<SolutionBundle | null>(null);
   const folderInput = useRef<HTMLInputElement>(null);
+  const orgSkills = useSkillMentionables();
+  const orgKnowledge = useKnowledgeMentionables();
 
   // A package (from an install, the registry or a folder) as the builder's state: the server reads
   // the YAML, the builder keeps the structure, and skills and knowledge become editable text.
@@ -268,6 +272,12 @@ function Builder() {
   const problems = validation?.errors ?? [];
   const bySection = (s: Section) => problems.filter((e) => sectionOf(e) === s);
   const canDeploy = atLeast(role, "Admin");
+  const mentionsFor = (scope: MentionScope) => solutionMentionables(manifest, skills, scope, { skills: orgSkills, knowledge: orgKnowledge, globals });
+  /** A renamed skill, connector or knowledge: the mentions of it follow, in the manifest and in skills. */
+  const renameEverywhere = (from: string, to: string, change?: (m: Obj) => Obj) => {
+    setManifest((m) => (m ? renameMentions(change ? change(m) : m, from, to) : m));
+    setSkills((list) => list.map((s) => ({ ...s, instructions: renameMentions(s.instructions, from, to) })));
+  };
 
   function discardDraft() {
     if (!window.confirm("Discard your changes and start again from the source?")) return;
@@ -344,11 +354,11 @@ function Builder() {
 
           {section === "basics" && <Basics manifest={manifest} set={set} installed={installed} />}
           {section === "data" && <DataModel manifest={manifest} set={set} setManifest={setManifest} />}
-          {section === "workspaces" && <Workspaces manifest={manifest} set={set} entities={entities} />}
-          {section === "assistant" && <Assistant manifest={manifest} set={set} entities={entities} />}
-          {section === "setup" && <Setup manifest={manifest} set={set} plugins={plugins} globals={globals} />}
-          {section === "knowhow" && <Knowhow manifest={manifest} set={set} skills={skills} setSkills={setSkills} workspaces={workspaces} />}
-          {section === "evals" && <Evals manifest={manifest} set={set} entities={entities} workspaces={workspaces} />}
+          {section === "workspaces" && <Workspaces manifest={manifest} set={set} entities={entities} mentionsFor={mentionsFor} />}
+          {section === "assistant" && <Assistant manifest={manifest} set={set} entities={entities} mentionsFor={mentionsFor} />}
+          {section === "setup" && <Setup manifest={manifest} set={set} plugins={plugins} globals={globals} renameEverywhere={renameEverywhere} />}
+          {section === "knowhow" && <Knowhow manifest={manifest} set={set} skills={skills} setSkills={setSkills} workspaces={workspaces} mentionsFor={mentionsFor} renameEverywhere={renameEverywhere} />}
+          {section === "evals" && <Evals manifest={manifest} set={set} entities={entities} workspaces={workspaces} mentionsFor={mentionsFor} />}
           {section === "review" && (
             <Review bundle={bundle} validation={validation} manifestName={str(manifest.name) || "solution"}
               onApply={async (yaml) => {
@@ -362,7 +372,7 @@ function Builder() {
         </main>
       </div>
 
-      <DesignChat draft={{ manifest, skills }} storageKey={`${draftKey}:chat`}
+      <DesignChat draft={{ manifest, skills }} storageKey={`${draftKey}:chat`} mentionables={mentionsFor({ in: "designer" })}
         onApply={(next) => {
           setManifest(next.manifest);
           setSkills(next.skills);
@@ -388,6 +398,18 @@ function Builder() {
 // ---------------------------------------------------------------- shared bits
 
 type SetFn = (path: Path, value: Json | undefined) => void;
+type MentionsFor = (scope: MentionScope) => Mentionable[];
+type RenameFn = (from: string, to: string, change?: (m: Obj) => Obj) => void;
+
+/** A text box where @ offers what its agents can reach (docs/solutions.md#mentions). */
+function MentionArea({ value, onChange, mentionables, placeholder, rows = 4, singleLine, className }: {
+  value: string; onChange: (v: string) => void; mentionables: Mentionable[]; placeholder?: string; rows?: number; singleLine?: boolean; className?: string;
+}) {
+  return <MentionTextarea className={cx(inputClass, className)} rows={rows} value={value} onValueChange={onChange} mentionables={mentionables} placeholder={placeholder} singleLine={singleLine} />;
+}
+
+/** The connectors a text mentions that are declared but not yet in <c>used</c>: mentioning one connects it. */
+const newlyMentioned = (text: string, declared: string[], used: string[]) => connectorsMentioned(text).filter((c) => declared.includes(c) && !used.includes(c));
 
 function Problems({ errors }: { errors: string[] }) {
   if (errors.length === 0) return null;
@@ -706,7 +728,7 @@ function EntityEditor({ name, entity, names, set, rename, renameField, removeFie
   );
 }
 
-function Workspaces({ manifest, set, entities }: { manifest: Obj; set: SetFn; entities: string[] }) {
+function Workspaces({ manifest, set, entities, mentionsFor }: { manifest: Obj; set: SetFn; entities: string[]; mentionsFor: MentionsFor }) {
   const workspaces = list(manifest.workspaces).map(obj);
   const connectors = list(manifest.connectors).map((c) => str(obj(c).name)).filter(Boolean);
   return (
@@ -719,12 +741,14 @@ function Workspaces({ manifest, set, entities }: { manifest: Obj; set: SetFn; en
           })}>Add workspace</Button>} />
         {workspaces.length === 0 && <p className="p-5 text-sm text-zinc-500">No workspaces: the solution is only an assistant. That&apos;s fine too.</p>}
       </Card>
-      {workspaces.map((w, i) => <WorkspaceEditor key={i} index={i} ws={w} set={set} entities={entities} connectors={connectors} manifest={manifest} />)}
+      {workspaces.map((w, i) => <WorkspaceEditor key={i} index={i} ws={w} set={set} entities={entities} connectors={connectors} manifest={manifest} mentionables={mentionsFor({ in: "workspace", key: str(w.key) })} />)}
     </div>
   );
 }
 
-function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { index: number; ws: Obj; set: SetFn; entities: string[]; connectors: string[]; manifest: Obj }) {
+function WorkspaceEditor({ index, ws, set, entities, connectors, manifest, mentionables }: {
+  index: number; ws: Obj; set: SetFn; entities: string[]; connectors: string[]; manifest: Obj; mentionables: Mentionable[];
+}) {
   const base: Path = ["workspaces", index];
   const stages = list(obj(ws.pipeline).stages).map(obj);
   const triggers = list(ws.triggers).map(obj);
@@ -741,10 +765,17 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
     return `${prefix}-${n}`;
   };
   const addStage = (stage: Obj) => set([...stagesPath, stages.length], { ...stage, inputs: stages.length ? [str(stages[stages.length - 1].stage_id)] : [] });
-  // Renaming a stage id carries over to the stages that run after it.
+  // Renaming a stage id carries over to the stages that run after it, and to @mentions of it.
   const renameStage = (si: number, to: string) => {
     const from = str(stages[si].stage_id);
-    set(stagesPath, stages.map((s, i) => (i === si ? { ...s, stage_id: to } : { ...s, inputs: strs(s.inputs).map((x) => (x === from ? to : x)) })));
+    const renamed = stages.map((s, i) => (i === si ? { ...s, stage_id: to } : { ...s, inputs: strs(s.inputs).map((x) => (x === from ? to : x)) }));
+    set(base, renameMentions({ ...ws, pipeline: { ...obj(ws.pipeline), stages: renamed } }, from, to));
+  };
+  // A text its agents read: a declared connector it mentions is connected to the workspace.
+  const setText = (path: Path, v: string) => {
+    set(path, v);
+    const add = newlyMentioned(v, connectors, strs(ws.connectors));
+    if (add.length > 0) set([...base, "connectors"], [...strs(ws.connectors), ...add]);
   };
   const removeStage = (si: number) => {
     const id = str(stages[si].stage_id);
@@ -764,7 +795,7 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
             <Field label="Name"><TextInput value={str(ws.name)} onChange={(v) => set([...base, "name"], v)} /></Field>
             <Field label="Key" hint="Stable across versions: upgrades match workspaces by it."><TextInput mono value={str(ws.key)} onChange={(v) => set([...base, "key"], typedSlug(v))} /></Field>
             <Field label="Daily cost limit (USD)"><NumberInput value={num(ws.daily_cost_usd)} onChange={(v) => set([...base, "daily_cost_usd"], v)} placeholder="no limit" /></Field>
-            <Field label="Goal" className="md:col-span-3"><TextArea value={str(ws.goal)} onChange={(v) => set([...base, "goal"], v)} rows={2} placeholder="What this workspace is for" /></Field>
+            <Field label="Goal" className="md:col-span-3"><MentionArea value={str(ws.goal)} onChange={(v) => setText([...base, "goal"], v)} rows={2} mentionables={mentionables} placeholder="What this workspace is for. Type @ to mention a stage, skill, knowledge or connector." /></Field>
           </div>
 
           <div className="grid gap-5 md:grid-cols-2">
@@ -845,8 +876,9 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
                             })}
                           </div>
                         </Field>
-                        <Field label="Instructions" className="md:col-span-2" hint="Name the data__ tools it should use. {{ vars.name }} is filled in.">
-                          <TextArea rows={4} value={str(s.instructions)} onChange={(v) => set([...spath, "instructions"], v)} />
+                        <Field label="Instructions" className="md:col-span-2" hint="Name the data__ tools it should use. {{ vars.name }} is filled in. @ mentions a stage, a skill (loaded first), knowledge (read first) or a connector (connected to this workspace).">
+                          <MentionArea rows={4} value={str(s.instructions)} onChange={(v) => setText([...spath, "instructions"], v)} mentionables={mentionables}
+                            placeholder="Triage the request with @skill:… and text the tenant with @connector:…" />
                         </Field>
                       </div>
                     )}
@@ -960,7 +992,7 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
                     {(kind === "Watch" || kind === "Form") && <p className="text-xs text-zinc-500">Edit this {kind.toLowerCase()} trigger&apos;s details in the YAML tab (Review &amp; deploy).</p>}
                     {kind !== "Watch" && kind !== "Form" && (
                       <div className="mt-2">
-                        <TextInput className="text-xs" value={str(t.instruction)} placeholder="What each run is told (optional)" onChange={(v) => set([...tpath, "instruction"], v)} />
+                        <MentionArea singleLine className="text-xs" value={str(t.instruction)} placeholder="What each run is told (optional; @ to mention)" mentionables={mentionables} onChange={(v) => setText([...tpath, "instruction"], v)} />
                       </div>
                     )}
                   </div>
@@ -978,7 +1010,7 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
   );
 }
 
-function Assistant({ manifest, set, entities }: { manifest: Obj; set: SetFn; entities: string[] }) {
+function Assistant({ manifest, set, entities, mentionsFor }: { manifest: Obj; set: SetFn; entities: string[]; mentionsFor: MentionsFor }) {
   const a = manifest.assistant ? obj(manifest.assistant) : null;
   const jwt = obj(obj(manifest.end_users).jwt);
   const connectors = list(manifest.connectors).map((c) => str(obj(c).name)).filter(Boolean);
@@ -992,8 +1024,12 @@ function Assistant({ manifest, set, entities }: { manifest: Obj; set: SetFn; ent
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Name"><TextInput value={str(a.name)} onChange={(v) => set(["assistant", "name"], v)} /></Field>
               <Field label="Greeting"><TextInput value={str(a.greeting)} onChange={(v) => set(["assistant", "greeting"], v || undefined)} placeholder="Hi! How can I help?" /></Field>
-              <Field label="Instructions" className="md:col-span-2" hint="{{ inputs.name }} is filled in at install. Tell it which data__ tools to use and when.">
-                <TextArea rows={7} value={str(a.instructions)} onChange={(v) => set(["assistant", "instructions"], v)} />
+              <Field label="Instructions" className="md:col-span-2" hint="{{ inputs.name }} is filled in at install. Tell it which data__ tools to use and when. @ mentions a connector (connected to the assistant) or your organization's skills and knowledge.">
+                <MentionArea rows={7} value={str(a.instructions)} mentionables={mentionsFor({ in: "assistant" })} onChange={(v) => {
+                  set(["assistant", "instructions"], v);
+                  const add = newlyMentioned(v, connectors, strs(a.connectors));
+                  if (add.length > 0) set(["assistant", "connectors"], [...strs(a.connectors), ...add]);
+                }} />
               </Field>
               <div>
                 <div className="mb-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">Data it may use (for each customer, their own)</div>
@@ -1043,7 +1079,7 @@ function Assistant({ manifest, set, entities }: { manifest: Obj; set: SetFn; ent
   );
 }
 
-function Setup({ manifest, set, plugins, globals }: { manifest: Obj; set: SetFn; plugins: PluginInfo[]; globals: GlobalConnector[] }) {
+function Setup({ manifest, set, plugins, globals, renameEverywhere }: { manifest: Obj; set: SetFn; plugins: PluginInfo[]; globals: GlobalConnector[]; renameEverywhere: RenameFn }) {
   const inputs = list(manifest.inputs).map(obj);
   const connectors = list(manifest.connectors).map(obj);
   const choosable = plugins.filter((p) => p.id !== "aktor-records");
@@ -1092,7 +1128,18 @@ function Setup({ manifest, set, plugins, globals }: { manifest: Obj; set: SetFn;
             return (
               <div key={i} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="grid items-center gap-2 md:grid-cols-[12rem_1fr_auto_auto]">
-                  <TextInput mono value={str(c.name)} placeholder="name (its tool prefix)" onChange={(v) => set(["connectors", i, "name"], snake(v).replace(/__+/g, "_"))} />
+                  <TextInput mono value={str(c.name)} placeholder="name (its tool prefix)" onChange={(v) => {
+                    const from = str(c.name), to = snake(v).replace(/__+/g, "_");
+                    if (!from || !to) { set(["connectors", i, "name"], to); return; }
+                    // The workspaces and the assistant that use it, and mentions of it, follow the new name.
+                    renameEverywhere(`connector:${from}`, `connector:${to}`, (m) => {
+                      const rename = (names: Json | undefined) => strs(names).map((x) => (x === from ? to : x));
+                      let next = setIn(m, ["connectors", i, "name"], to);
+                      list(next.workspaces).forEach((w, wi) => { if (strs(obj(w).connectors).includes(from)) next = setIn(next, ["workspaces", wi, "connectors"], rename(obj(w).connectors)); });
+                      if (strs(obj(next.assistant).connectors).includes(from)) next = setIn(next, ["assistant", "connectors"], rename(obj(next.assistant).connectors));
+                      return next;
+                    });
+                  }} />
                   <select className={inputClass} value={str(c.plugin)} onChange={(e) => set(["connectors", i, "plugin"], e.target.value)}>
                     {choosable.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
@@ -1133,8 +1180,9 @@ function Setup({ manifest, set, plugins, globals }: { manifest: Obj; set: SetFn;
   );
 }
 
-function Knowhow({ manifest, set, skills, setSkills, workspaces }: {
+function Knowhow({ manifest, set, skills, setSkills, workspaces, mentionsFor, renameEverywhere }: {
   manifest: Obj; set: SetFn; skills: BuilderSkill[]; setSkills: React.Dispatch<React.SetStateAction<BuilderSkill[]>>; workspaces: Obj[];
+  mentionsFor: MentionsFor; renameEverywhere: RenameFn;
 }) {
   const knowledge = list(manifest.knowledge).map(obj);
   const wsSelect = (value: string, onChange: (v: string | null) => void) => (
@@ -1153,7 +1201,11 @@ function Knowhow({ manifest, set, skills, setSkills, workspaces }: {
           {knowledge.map((k, i) => (
             <div key={i} className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
               <div className="flex items-center gap-2">
-                <TextInput value={str(k.key)} placeholder="Title" onChange={(v) => set(["knowledge", i, "key"], v)} />
+                <TextInput value={str(k.key)} placeholder="Title" onChange={(v) => {
+                  const from = knowledgeHandle(str(k.key)), to = knowledgeHandle(v);
+                  if (from && to) renameEverywhere(`knowledge:${from}`, `knowledge:${to}`, (m) => setIn(m, ["knowledge", i, "key"], v));
+                  else set(["knowledge", i, "key"], v);
+                }} />
                 {wsSelect(str(k.workspace), (v) => set(["knowledge", i, "workspace"], v))}
                 <RemoveButton label="Remove" onClick={() => set(["knowledge", i], undefined)} />
               </div>
@@ -1172,12 +1224,16 @@ function Knowhow({ manifest, set, skills, setSkills, workspaces }: {
             return (
               <div key={i} className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="flex items-center gap-2">
-                  <TextInput mono value={s.name} placeholder="skill-name" onChange={(v) => update({ name: typedSlug(v, 64) })} className="w-56" />
+                  <TextInput mono value={s.name} placeholder="skill-name" className="w-56" onChange={(v) => {
+                    const to = typedSlug(v, 64);
+                    update({ name: to });
+                    if (s.name && to) renameEverywhere(`skill:${s.name}`, `skill:${to}`);
+                  }} />
                   <TextInput value={s.description} placeholder="When to use it (one line)" onChange={(v) => update({ description: v })} />
                   {wsSelect(s.workspace ?? "", (v) => update({ workspace: v }))}
                   <RemoveButton label="Remove skill" onClick={() => setSkills(skills.filter((_, j) => j !== i))} />
                 </div>
-                <TextArea rows={5} value={s.instructions} placeholder="The steps, in Markdown" onChange={(v) => update({ instructions: v })} />
+                <MentionArea rows={5} value={s.instructions} placeholder="The steps, in Markdown. @ mentions knowledge, another skill or a connector." mentionables={mentionsFor({ in: "skill", workspace: s.workspace ?? null })} onChange={(v) => update({ instructions: v })} />
               </div>
             );
           })}
@@ -1187,7 +1243,7 @@ function Knowhow({ manifest, set, skills, setSkills, workspaces }: {
   );
 }
 
-function Evals({ manifest, set, entities, workspaces }: { manifest: Obj; set: SetFn; entities: string[]; workspaces: Obj[] }) {
+function Evals({ manifest, set, entities, workspaces, mentionsFor }: { manifest: Obj; set: SetFn; entities: string[]; workspaces: Obj[]; mentionsFor: MentionsFor }) {
   const evals = list(manifest.evals).map(obj);
   return (
     <Card>
@@ -1207,7 +1263,7 @@ function Evals({ manifest, set, entities, workspaces }: { manifest: Obj; set: Se
                 </select>
                 <RemoveButton label="Remove eval" onClick={() => set(["evals", i], undefined)} />
               </div>
-              <TextArea rows={2} value={str(e.input)} placeholder="The run's input, e.g. a customer's message" onChange={(v) => set(["evals", i, "input"], v)} />
+              <MentionArea rows={2} value={str(e.input)} placeholder="The run's input, e.g. a customer's message (@ to mention a stage, skill or knowledge)" mentionables={mentionsFor({ in: "workspace", key: str(e.workspace) })} onChange={(v) => set(["evals", i, "input"], v)} />
               <div className="grid gap-2 md:grid-cols-3">
                 <Field label="Expected status">
                   <select className={inputClass} value={str(expect.status) || "Completed"} onChange={(ev) => set(["evals", i, "expect", "status"], ev.target.value)}>

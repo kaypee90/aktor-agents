@@ -292,7 +292,66 @@ public static partial class SolutionValidator
             foreach (var entity in e.Expect.Records.Keys.Where(k => !entityNames.Contains(k))) errors.Add($"Eval '{e.Name}': '{entity}' isn't an entity.");
         }
 
+        CheckMentions(m, files, connectorNames, warnings);
         return new SolutionValidation { Errors = errors, Warnings = warnings };
+    }
+
+    /// <summary>
+    /// @mentions in what agents read (docs/solutions.md#mentions): a skill, knowledge or connector
+    /// mentioned but not in the package is a typo, or something the organization must already have,
+    /// and a connector mentioned in a workspace that doesn't use it gives its agents no tools. Warnings
+    /// only: the organization's own skills and knowledge are fine to mention.
+    /// </summary>
+    private static void CheckMentions(SolutionManifest m, IReadOnlyDictionary<string, string> files, HashSet<string> connectorNames, List<string> warnings)
+    {
+        var skillNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var skill in m.Skills.Where(s => files.ContainsKey(s.Path)))
+        {
+            try
+            {
+                skillNames.Add(Skills.SkillPackage.FromMarkdown(files[skill.Path]).Name);
+            }
+            catch (Skills.SkillPackageException)
+            {
+                // Reported where skills are checked.
+            }
+        }
+
+        var knowledge = m.Knowledge.Select(k => Memory.KnowledgeFiles.Handle(k.Key)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        void Check(string where, IReadOnlyList<string?> texts, ICollection<string>? used, bool getsPackageKnowhow)
+        {
+            foreach (var name in Pipelines.Mentions.SkillsIn(texts).Where(n => !getsPackageKnowhow || !skillNames.Contains(n)))
+            {
+                warnings.Add(getsPackageKnowhow
+                    ? $"{where} mentions @skill:{name}, which isn't one of the solution's skills: it works only if the organization has it."
+                    : $"{where} mentions @skill:{name}: the solution's skills go to its workspaces, so it works only if the organization has it.");
+            }
+
+            foreach (var handle in Pipelines.Mentions.KnowledgeIn(texts).Where(h => !getsPackageKnowhow || !knowledge.Contains(h)))
+            {
+                warnings.Add(getsPackageKnowhow
+                    ? $"{where} mentions @knowledge:{handle}, which isn't the solution's knowledge: it works only if the organization has it."
+                    : $"{where} mentions @knowledge:{handle}: the solution's knowledge goes to its workspaces, so it works only if the organization has it.");
+            }
+
+            foreach (var name in Pipelines.Mentions.ConnectorsIn(texts))
+            {
+                if (!connectorNames.Contains(name)) warnings.Add($"{where} mentions @connector:{name}, which isn't declared under connectors.");
+                else if (used is not null && !used.Contains(name)) warnings.Add($"{where} mentions @connector:{name} but doesn't use that connector, so its agents won't have its tools.");
+            }
+        }
+
+        foreach (var w in m.Workspaces)
+        {
+            var texts = new List<string?> { w.Goal };
+            texts.AddRange(w.Pipeline?.Stages.Select(s => s.Instructions) ?? []);
+            texts.AddRange(w.Triggers.Select(t => t.Instruction));
+            texts.AddRange(m.Evals.Where(e => e.Workspace == w.Key).Select(e => e.Input));
+            Check($"Workspace '{w.Key}'", texts, w.Connectors, true);
+        }
+
+        if (m.Assistant is { } a) Check("assistant", [a.Instructions], a.Connectors, false);
     }
 
     /// <summary>Why this server can't run a solution that requires <paramref name="requirement"/>

@@ -96,16 +96,59 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
         return Ok(new { workspace_id = id, pipeline = await Workspace(id).GetPipeline(), draft = draftNote });
     }
 
+    /// <summary>
+    /// The organization's workspaces, newest first, a page at a time. <paramref name="status"/>:
+    /// "active" (not archived), "archived", or a status name; <paramref name="solution"/>: an install
+    /// id or solution name for the workspaces it made, or "none" for those no solution made;
+    /// <paramref name="q"/>: words in the name or goal.
+    /// </summary>
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] string? status, [FromQuery] string? solution, [FromQuery] string? q,
+        [FromQuery] int? limit, [FromQuery] int? offset, CancellationToken ct)
     {
         // Other people's private workspaces aren't listed.
         var hidden = await access.HiddenWorkspacesAsync(ct);
-        return Ok(await db.Workspaces.AsNoTracking()
-            // A study's workspace belongs to the study (docs/studies.md), not to this list.
-            .Where(w => w.TenantId == access.TenantId && w.Kind != "study" && !hidden.Contains(w.WorkspaceId))
-            .OrderByDescending(w => w.CreatedAt)
-            .Take(100)
+        // A study's workspace belongs to the study (docs/studies.md), not to this list.
+        var query = db.Workspaces.AsNoTracking().Where(w => w.TenantId == access.TenantId && w.Kind != "study" && !hidden.Contains(w.WorkspaceId));
+
+        switch (status?.Trim().ToLowerInvariant())
+        {
+            case null or "" or "all": break;
+            case "active": query = query.Where(w => w.Status != nameof(WorkspaceStatus.Archived)); break;
+            default:
+                if (!Enum.TryParse<WorkspaceStatus>(status, ignoreCase: true, out var exact))
+                    return BadRequest(new { error = "status is one of all, active, archived, paused." });
+                var name = exact.ToString();
+                query = query.Where(w => w.Status == name);
+                break;
+        }
+
+        var made = await SolutionWorkspacesAsync(ct);
+        if (!string.IsNullOrWhiteSpace(solution))
+        {
+            var wanted = solution.Trim();
+            if (wanted.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                var any = made.Keys.ToList();
+                query = query.Where(w => !any.Contains(w.WorkspaceId));
+            }
+            else
+            {
+                var ids = made.Where(m => m.Value.InstallId == wanted || m.Value.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase)).Select(m => m.Key).ToList();
+                query = query.Where(w => ids.Contains(w.WorkspaceId));
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var words = q.Trim().ToLower();
+            query = query.Where(w => w.Name.ToLower().Contains(words) || w.Goal.ToLower().Contains(words));
+        }
+
+        var rows = await query
+            .OrderByDescending(w => w.CreatedAt).ThenBy(w => w.WorkspaceId)
+            .Skip(Math.Max(offset ?? 0, 0))
+            .Take(Math.Clamp(limit ?? 100, 1, 200))
             .Select(w => new
             {
                 workspace_id = w.WorkspaceId,
@@ -120,7 +163,35 @@ public sealed class WorkspacesController(IGrainFactory grains, AgentDbContext db
                 updated_at = w.UpdatedAt,
                 visibility = w.Visibility
             })
-            .ToListAsync(ct));
+            .ToListAsync(ct);
+        return Ok(rows.Select(w => new
+        {
+            w.workspace_id, w.name, w.goal, w.status, w.agents, w.triggers, w.total_tokens, w.total_cost_usd, w.created_at, w.updated_at, w.visibility,
+            solution = made.TryGetValue(w.workspace_id, out var s) ? new { install_id = s.InstallId, name = s.Name, title = s.Title } : null
+        }));
+    }
+
+    private sealed record MadeBy(string InstallId, string Name, string Title);
+
+    /// <summary>Workspace id → the solution install that made it (docs/solutions.md); an active
+    /// install wins over an uninstalled one that made the same workspace.</summary>
+    private async Task<Dictionary<string, MadeBy>> SolutionWorkspacesAsync(CancellationToken ct)
+    {
+        var installs = await db.SolutionInstalls.AsNoTracking()
+            .Where(i => i.TenantId == access.TenantId)
+            .OrderBy(i => i.Status == "Active").ThenBy(i => i.UpdatedAt)
+            .Select(i => new { i.InstallId, i.Name, i.Title, i.WorkspacesJson })
+            .ToListAsync(ct);
+        var made = new Dictionary<string, MadeBy>();
+        foreach (var i in installs)
+        {
+            Dictionary<string, string> workspaces;
+            try { workspaces = JsonSerializer.Deserialize<Dictionary<string, string>>(i.WorkspacesJson) ?? []; }
+            catch (JsonException) { continue; }
+            // Later rows (active, most recently updated) overwrite earlier ones.
+            foreach (var id in workspaces.Values) made[id] = new MadeBy(i.InstallId, i.Name, string.IsNullOrEmpty(i.Title) ? i.Name : i.Title);
+        }
+        return made;
     }
 
     /// <summary>Makes a workspace private to its owner, or visible to the organization. Only the

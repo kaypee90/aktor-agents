@@ -558,6 +558,13 @@ On the **Variables** tab, add `email_recipient` = `you@example.com` and **Save**
 - [ ] Reloading the page keeps the selected workspace; the runs list and chat are as they were.
 - [ ] The chat is a floating widget: hide it and show it again; a message arriving while it's
       hidden puts an unread marker on its button.
+- [ ] The workspace list shows **Active** workspaces by default. Archive one from its header: it
+      leaves the list, and shows under **Archived** and **All**. With a solution installed (SO1),
+      the solution filter shows only its workspaces, **Not from a solution** only the others, and
+      each of the solution's workspaces names it under its goal. Searching a word of a name or goal
+      narrows the list. With more than 50 workspaces, **Show more** loads the next 50. The status and
+      solution filters survive a reload, and the last opened workspace still opens even when the
+      filter hides it.
 
 ### W10c. Your REST API's endpoints, served as an MCP server
 
@@ -782,6 +789,23 @@ hourly rate" (works on the Mock model). Press **Apply**, then **Undo**. With a r
 the new entity appears and validation runs; **Undo** puts the draft back. Editing a form and then
 applying an older proposal asks first. The conversation is still there after a reload, and
 **Discard draft** clears it.
+
+### SO14. Mentions in the builder
+
+**Do:** open a **New solution** and add a connector named `sms` under **Inputs & connectors**. In
+**Workspaces**, type `@` in the first stage's instructions and pick **Connector · sms**, then
+`@skill:handling-requests`. Rename the skill under **Knowledge & skills** to `triage-requests`.
+Then type `@` in **Design with AI** and send "have @handle text the requester with @connector:sms".
+
+**Check:**
+- The list shows the workspace's stages, the solution's skills, knowledge and connectors, and the
+  organization's skills and knowledge.
+- Picking the connector ticks `sms` under the workspace's **Connectors**.
+- After the rename, the instructions read `@skill:triage-requests`.
+- **Review & deploy** shows no mention warnings. Typing `@connector:pager` adds one ("isn't
+  declared under connectors").
+- In the chat, the sent message shows its mentions highlighted. With a real model, the proposal's
+  instructions use `@connector:sms`.
 
 ---
 

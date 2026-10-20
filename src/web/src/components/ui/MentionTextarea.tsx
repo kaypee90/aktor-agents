@@ -8,12 +8,13 @@ import { cx } from "./index";
 /**
  * Something you can @mention in a text box (docs/workspaces.md#mentions): an agent (a pipeline
  * stage, by its id), a model (an organization's profile, by its id), a provider, or a skill
- * (`@skill:name`), or knowledge (`@knowledge:refund-policy.docx`). The server explains each mention
+ * (`@skill:name`), knowledge (`@knowledge:refund-policy.docx`), a connector (`@connector:slack`) or, in
+ * the solution designer, a workspace (`@workspace:requests`). The server explains each mention
  * to the model that reads the text, so "@claude-fast for @diagnose" means exactly that, however
  * capable the model is; an agent whose instructions name a skill loads it first, and one whose
  * instructions name knowledge reads it first.
  */
-export type Mentionable = { kind: "agent" | "model" | "provider" | "skill" | "knowledge"; handle: string; label: string; detail?: string };
+export type Mentionable = { kind: "agent" | "workspace" | "model" | "provider" | "skill" | "knowledge" | "connector"; handle: string; label: string; detail?: string };
 
 /** The handle the server's own model goes by (Mentions.DefaultModelHandle). */
 export const DEFAULT_MODEL_HANDLE = "default-model";
@@ -24,7 +25,14 @@ const KIND_STYLE: Record<Mentionable["kind"], { label: string; className: string
   provider: { label: "Provider", className: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300" },
   skill: { label: "Skill", className: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
   knowledge: { label: "Knowledge", className: "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" },
+  connector: { label: "Connector", className: "bg-teal-50 text-teal-700 dark:bg-teal-500/10 dark:text-teal-300" },
+  workspace: { label: "Workspace", className: "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300" },
 };
+
+/** How a mention looks in text that isn't being edited (a sent chat message): the kind's colours. */
+export function mentionClass(kind: Mentionable["kind"]) {
+  return KIND_STYLE[kind].className;
+}
 
 /** How knowledge is mentioned: a file name or a fact's key as one handle (KnowledgeFiles.Handle on the server). */
 export function knowledgeHandle(nameOrKey: string) {
@@ -155,7 +163,7 @@ type Props = Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "
 };
 
 /**
- * A text box where typing @ suggests agents, models and providers. ↑/↓ move, Enter or Tab picks,
+ * A text box where typing @ suggests what can be mentioned here (agents, skills, knowledge, connectors…). ↑/↓ move, Enter or Tab picks,
  * Esc closes; while suggestions are open, Enter picks rather than submitting.
  */
 export function MentionTextarea({ value, onValueChange, mentionables, singleLine, above, ref, wrapperClassName, onKeyDown, ...rest }: Props) {
@@ -181,8 +189,8 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
     const q = query.text.toLowerCase();
     // Just "@": a few of each kind, so every kind shows up.
     if (q === "") {
-      const kinds = ["agent", "skill", "knowledge", "model", "provider"] as const;
-      return kinds.flatMap((k) => mentionables.filter((m) => m.kind === k).slice(0, 4)).slice(0, 12);
+      const kinds = ["agent", "workspace", "connector", "skill", "knowledge", "model", "provider"] as const;
+      return kinds.flatMap((k) => mentionables.filter((m) => m.kind === k).slice(0, 3)).slice(0, 15);
     }
     return mentionables
       .filter((m) => m.handle.toLowerCase().includes(q) || m.label.toLowerCase().includes(q))
@@ -282,7 +290,7 @@ export function MentionTextarea({ value, onValueChange, mentionables, singleLine
               onMouseDown={(e) => { e.preventDefault(); pick(m); }}
               onMouseEnter={() => setActive(i)}
               className={cx("flex cursor-pointer items-center gap-2 px-2.5 py-1.5", i === active && "bg-zinc-100 dark:bg-zinc-800")}>
-              <span className={cx("w-14 shrink-0 rounded px-1 py-0.5 text-center text-[10px] font-medium", KIND_STYLE[m.kind].className)}>{KIND_STYLE[m.kind].label}</span>
+              <span className={cx("w-16 shrink-0 rounded px-1 py-0.5 text-center text-[10px] font-medium", KIND_STYLE[m.kind].className)}>{KIND_STYLE[m.kind].label}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">{m.label}</span>
                 <span className="block truncate text-[10px] text-zinc-500">@{m.handle}{m.detail ? ` · ${m.detail}` : ""}</span>

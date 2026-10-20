@@ -1,24 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { Button, PageHeader, StatusBadge, cx } from "@/components/ui";
+import { Button, PageHeader, cx } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { getPipelineRun, getWorkspace, getWorkspaceHistory, listWorkspaces, subscribeToEvents } from "@/lib/api";
 import type { PipelineRunView } from "@/lib/pipelineTypes";
 import type { RuntimeEvent } from "@/lib/types";
-import type { WorkspaceListItem, WorkspaceSnapshot } from "@/lib/workspaceTypes";
+import type { WorkspaceSnapshot } from "@/lib/workspaceTypes";
 import { AgentDetailsPanel } from "@/components/AgentDetailsPanel";
 import { Split } from "@/components/ui/Split";
 import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm";
 import { PipelinePanel } from "@/components/workspace/PipelinePanel";
 import { RunsPanel } from "@/components/workspace/RunsPanel";
-import { WorkspaceHeader, withoutTemplateTag } from "@/components/workspace/WorkspaceHeader";
+import { WorkspaceHeader } from "@/components/workspace/WorkspaceHeader";
 import { ApprovalBanner } from "@/components/workspace/SafetyPanel";
 import { WorkspaceSidePanel } from "@/components/workspace/WorkspaceSidePanel";
 import { WorkspaceChatWidget } from "@/components/workspace/WorkspaceChatWidget";
 import { WorkspaceTeamView } from "@/components/workspace/WorkspaceTeamView";
+import { WorkspaceList } from "@/components/workspace/WorkspaceList";
 
 const POLL_MS = 2000;
 const MAX_EVENTS = 500;
@@ -86,7 +87,6 @@ export default function WorkspacesPage() {
 }
 
 function Workspaces() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([]);
   // Deep links (?id=<workspace>) from MCP/A2A results and new templates open that workspace.
   // useSearchParams stays current on in-app navigation, unlike window.location.
   const params = useSearchParams();
@@ -140,16 +140,15 @@ function Workspaces() {
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleFocus]);
 
-  const reloadList = useCallback(() => listWorkspaces().then(setWorkspaces).catch(() => {}), []);
+  // The list loads itself (filtered and paged); bumping this reloads it.
+  const [listVersion, setListVersion] = useState(0);
+  const reloadList = useCallback(() => setListVersion((v) => v + 1), []);
 
   useEffect(() => {
-    listWorkspaces()
-      .then((list) => {
-        setWorkspaces(list);
-        const last = urlId ?? recall();
-        if (last && list.some((w) => w.workspace_id === last)) setWorkspaceId(last);
-        else if (list.length === 0) setCreating(true);
-      })
+    // The last workspace opens even when the list's filter or page doesn't show it.
+    const last = urlId ?? recall();
+    (last ? getWorkspace(last).then(() => setWorkspaceId(last)) : Promise.reject(new Error("none")))
+      .catch(() => listWorkspaces({ limit: 1 }).then((any) => { if (any.length === 0) setCreating(true); }))
       .catch(() => setCreating(true));
     // Once, on open: later URL changes are followed below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -188,6 +187,16 @@ function Workspaces() {
       // The poll loop retries.
     }
   }, [workspaceId]);
+
+  // Archiving, pausing or renaming the open workspace shows in the list (and an archived one
+  // leaves the active filter).
+  const listed = workspace ? `${workspace.workspace_id}:${workspace.status}:${workspace.name}` : null;
+  const lastListed = useRef(listed);
+  useEffect(() => {
+    const before = lastListed.current;
+    lastListed.current = listed;
+    if (before && listed && before !== listed && before.split(":")[0] === listed.split(":")[0]) reloadList();
+  }, [listed, reloadList]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -261,34 +270,7 @@ function Workspaces() {
     return () => source.close();
   }, [workspaceId, refresh, refreshRun, selectedRunId]);
 
-  const list = (
-    <aside className="h-full overflow-y-auto bg-zinc-50/50 p-2 dark:bg-zinc-950">
-      {workspaces.length === 0 && <div className="p-4 text-xs text-zinc-500">No workspaces yet.</div>}
-      <ul className="space-y-1">
-        {workspaces.map((w) => (
-          <li key={w.workspace_id}>
-            <button onClick={() => open(w.workspace_id)}
-              className={cx(
-                "block w-full rounded-lg px-3 py-2.5 text-left transition-colors",
-                w.workspace_id === workspaceId
-                  ? "bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800"
-                  : "hover:bg-zinc-100 dark:hover:bg-zinc-900/60",
-              )}>
-              <span className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-1.5">
-                  {w.visibility === "Private" && <span title="Only you can see this workspace"><Icons.Lock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" /></span>}
-                  <span className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">{w.name}</span>
-                </span>
-                <StatusBadge status={w.status} />
-              </span>
-              <span className="mt-0.5 line-clamp-2 text-xs text-zinc-500">{withoutTemplateTag(w.goal)}</span>
-              <span className="mt-1 block text-[11px] text-zinc-400">{w.triggers} trigger{w.triggers === 1 ? "" : "s"}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </aside>
-  );
+  const list = <WorkspaceList selectedId={workspaceId} onOpen={open} reloadKey={listVersion} />;
 
   let main: React.ReactNode;
   if (creating) {

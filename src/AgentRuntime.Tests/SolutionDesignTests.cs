@@ -136,4 +136,22 @@ public sealed class SolutionDesignTests
         Assert.Equal(["name", "phone", "hourly_rate"], fields.Select(f => f.Key));
         Assert.Equal("number", fields["hourly_rate"]!["type"]!.GetValue<string>());
     }
+
+    [Fact]
+    public void Safety_rule_values_a_model_makes_up_are_written_as_the_runtimes()
+    {
+        var result = SolutionDraftEditor.Apply(Draft(), [], [
+            Set("workspace", "requests", """{ "name": "Requests", "goal": "Handle requests.", "safety": { "autonomy": "Autonomous", "rules": [{ "name": "texts", "tool_pattern": "sms__*", "applies": "All", "decision": "require_approval" }, { "name": "odd", "tool_pattern": "*", "applies": "sometimes", "decision": "Deny" }] } }""")
+        ]);
+
+        Assert.Empty(result.Errors);
+        var rules = result.Draft["workspaces"]![0]!["safety"]!["rules"]!.AsArray();
+        Assert.Equal(("Any", "RequireApproval"), (rules[0]!["applies"]!.GetValue<string>(), rules[0]!["decision"]!.GetValue<string>()));
+        Assert.Equal("sometimes", rules[1]!["applies"]!.GetValue<string>()); // no match: left for the validator
+        Assert.Contains(result.Changes, c => c.StartsWith("Fixed the safety rules of workspace requests"));
+
+        // The reader then says which values there are, not .NET's type name.
+        var (_, errors) = AgentRuntime.Infrastructure.Solutions.SolutionManifestReader.Read(new SolutionBundle { Manifest = result.Draft.ToJsonString() });
+        Assert.Equal("aktor.yaml at $.workspaces[0].safety.rules[1].applies: use one of Any, Writes, Unsafe.", Assert.Single(errors));
+    }
 }

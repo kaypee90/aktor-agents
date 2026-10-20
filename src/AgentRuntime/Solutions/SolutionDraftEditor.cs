@@ -144,7 +144,46 @@ public static class SolutionDraftEditor
             }
         }
 
+        changes.AddRange(FixSafetyRules(d));
         return new Result(d, s, changes, errors);
+    }
+
+    // What models write for a rule's "applies" and "decision", for the values there are.
+    private static readonly Dictionary<string, string> Applies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["any"] = "Any", ["all"] = "Any", ["reads"] = "Any", ["read"] = "Any", ["every"] = "Any", ["everything"] = "Any", ["*"] = "Any",
+        ["writes"] = "Writes", ["write"] = "Writes", ["changes"] = "Writes",
+        ["unsafe"] = "Unsafe", ["sends"] = "Unsafe", ["destructive"] = "Unsafe", ["nonidempotent"] = "Unsafe", ["non_idempotent"] = "Unsafe"
+    };
+
+    private static readonly Dictionary<string, string> Decisions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["allow"] = "Allow", ["allowed"] = "Allow",
+        ["deny"] = "Deny", ["denied"] = "Deny", ["block"] = "Deny",
+        ["requireapproval"] = "RequireApproval", ["require_approval"] = "RequireApproval", ["require-approval"] = "RequireApproval",
+        ["approval"] = "RequireApproval", ["approve"] = "RequireApproval", ["ask"] = "RequireApproval"
+    };
+
+    /// <summary>Workspaces' safety rules with "applies" and "decision" written as the values the
+    /// runtime has (a model writes "All" or "require_approval"): one change line per workspace fixed.
+    /// A value with no match is left for the validator to report.</summary>
+    private static IEnumerable<string> FixSafetyRules(JsonObject d)
+    {
+        foreach (var w in (d["workspaces"] as JsonArray ?? []).OfType<JsonObject>())
+        {
+            var fixedOne = false;
+            foreach (var rule in (w["safety"]?["rules"] as JsonArray ?? []).OfType<JsonObject>())
+            {
+                foreach (var (field, values) in new[] { ("applies", Applies), ("decision", Decisions) })
+                {
+                    if (Text(rule, field) is not { } value || !values.TryGetValue(value.Trim(), out var known) || known == value) continue;
+                    rule[field] = known;
+                    fixedOne = true;
+                }
+            }
+
+            if (fixedOne) yield return $"Fixed the safety rules of workspace {Text(w, "key")} (values the runtime has)";
+        }
     }
 
     /// <summary>The list sections: where they live in the manifest and the field that identifies an item.</summary>

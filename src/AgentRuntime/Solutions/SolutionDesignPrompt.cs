@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentRuntime.LLM;
+using AgentRuntime.Pipelines;
 using AgentRuntime.Tools;
 
 namespace AgentRuntime.Solutions;
@@ -111,7 +112,9 @@ public static class SolutionDesignPrompt
           e.g. WorkOrder → work_order).
         - workspace (key = lowercase-dashed key): { key, name, goal, data: { Entity: read|write }, connectors:
           [connector names], daily_cost_usd, safety: { autonomy: Supervised|SemiAutonomous|Autonomous, rules:
-          [{ tool_pattern, applies: Reads|Writes|All, decision: Allow|RequireApproval|Deny }] }, variables: {},
+          [{ name, tool_pattern (a glob, e.g. "sms__*"), applies: Any|Writes|Unsafe (exactly one of these: Any is
+          every call, Writes is calls that change something, Unsafe is sends, payments and deletes), decision:
+          Allow|RequireApproval|Deny }] }, variables: {},
           pipeline: { stages: [ ... ] }, triggers: [ ... ] }.
           An agent stage: { stage_id, name, role, instructions, inputs: [stage ids it waits for], capabilities:
           [...] }. An action stage (one tool call, no model): { stage_id, name, kind: "Action", inputs, tool:
@@ -133,6 +136,14 @@ public static class SolutionDesignPrompt
         - webhook (key = url): { url, events: [record.created|record.updated|record.deleted|record.*], entities: [] }.
         - eval (key = name): { name, workspace (key), input (the run's input text), input_data (optional object),
           expect: { status: Completed, summary_contains: [...], records: { Entity: { at_least, at_most, where } } } }.
+
+        @mentions: a workspace's goal, its stages' instructions and its triggers' instructions, the assistant's
+        instructions and skills' instructions can name things with @: @<stage_id> (a stage of the same
+        pipeline), @skill:<name> (the agent loads that skill first), @knowledge:<handle> (it reads that
+        knowledge first; the handle is the key lowercased, spaces as dashes) and @connector:<name> (it uses that
+        connector's tools; list the connector in the workspace's or assistant's connectors too). When an
+        instruction relies on a skill, knowledge or connector, mention it. The person's message may mention
+        things the same way, and @workspace:<key> or @assistant; what each one refers to is listed with it.
 
         How to design well:
         - Model the business: the things people track become entities, with the fields they'd filter by.
@@ -183,8 +194,15 @@ public static class SolutionDesignPrompt
             foreach (var s in skills) user.AppendLine($"- {s.Name}{(s.Workspace is { Length: > 0 } w ? $" (workspace {w})" : "")}: {Clip(s.Description, 200)}");
         }
 
+        var mentions = DescribeMentions(request, draft, skills, context);
         user.AppendLine();
         user.AppendLine($"What the person wants: {request.Trim()}");
+        if (mentions.Count > 0)
+        {
+            user.AppendLine();
+            user.AppendLine("What the @mentions in it refer to:");
+            foreach (var line in mentions) user.AppendLine($"- {line}");
+        }
         user.AppendLine();
         user.AppendLine($"Call {ToolName} with your reply and the changes.");
         messages.Add(new ChatMessage { Role = ChatRole.User, Content = user.ToString() });
@@ -197,6 +215,74 @@ public static class SolutionDesignPrompt
             MaxTokens = maxOutputTokens,
             Temperature = 0.2
         };
+    }
+
+    /// <summary>
+    /// One line per @mention in the person's message that names something: an item of the draft (a
+    /// stage, workspace, the assistant, a skill, knowledge, a connector) or one of the organization's
+    /// global connectors not in it yet. The builder offers exactly these as you type.
+    /// </summary>
+    public static List<string> DescribeMentions(string request, JsonObject draft, IReadOnlyList<DraftSkill> skills, SolutionDesignContext context)
+    {
+        static string Str(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : string.Empty;
+        static IEnumerable<JsonObject> Items(JsonNode? n) => n is JsonArray a ? a.OfType<JsonObject>() : [];
+        static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        var workspaces = Items(draft["workspaces"]).ToList();
+        var lines = new List<string>();
+        foreach (var handle in Mentions.Find(request))
+        {
+            if (TryAfter(handle, Mentions.SkillPrefix, out var skillName))
+            {
+                lines.Add(skills.FirstOrDefault(s => Same(s.Name, skillName)) is { } skill
+                    ? $"@{handle}: the solution's skill '{skill.Name}' ({skill.Description}){(skill.Workspace is { Length: > 0 } w ? $", for workspace {w}" : "")}."
+                    : $"@{handle}: a skill named '{skillName}', not in the solution: one of the organization's own skills.");
+            }
+            else if (TryAfter(handle, Mentions.KnowledgePrefix, out var knowledgeHandle))
+            {
+                var entry = Items(draft["knowledge"]).FirstOrDefault(k => Same(Memory.KnowledgeFiles.Handle(Str(k["key"])), knowledgeHandle));
+                lines.Add(entry is not null
+                    ? $"@{handle}: the solution's knowledge '{Str(entry["key"])}'."
+                    : $"@{handle}: knowledge '{knowledgeHandle}', not in the solution: one of the organization's documents or facts.");
+            }
+            else if (TryAfter(handle, Mentions.ConnectorPrefix, out var connectorName))
+            {
+                var connector = Items(draft["connectors"]).FirstOrDefault(c => Same(Str(c["name"]), connectorName));
+                if (connector is not null)
+                {
+                    lines.Add($"@{handle}: the solution's connector '{Str(connector["name"])}' (plugin {Str(connector["plugin"])}); its tools are {Str(connector["name"])}__<tool>.");
+                }
+                else if (context.GlobalConnectors.FirstOrDefault(g => Same(g.Name, connectorName)) is { Name: not null } org)
+                {
+                    lines.Add($"@{handle}: the organization's global connector '{org.Name}' (plugin {org.PluginId}), not in the solution yet: " +
+                              $"to use it, add a connector with plugin \"{org.PluginId}\" and global \"{org.Name}\".");
+                }
+            }
+            else if (TryAfter(handle, Mentions.WorkspacePrefix, out var key))
+            {
+                if (workspaces.FirstOrDefault(w => Same(Str(w["key"]), key)) is { } w) lines.Add($"@{handle}: the workspace '{Str(w["name"])}' (key {Str(w["key"])}).");
+            }
+            else if (Same(handle, "assistant"))
+            {
+                if (draft["assistant"] is JsonObject) lines.Add("@assistant: the solution's assistant, the agent its end users talk to.");
+            }
+            else
+            {
+                var stages = workspaces
+                    .SelectMany(w => Items(w["pipeline"]?["stages"]).Where(s => Same(Str(s["stage_id"]), handle)).Select(s => $"the '{Str(s["name"])}' stage of workspace {Str(w["key"])}"))
+                    .ToList();
+                if (stages.Count > 0) lines.Add($"@{handle}: {string.Join("; or ", stages)}.");
+            }
+        }
+
+        return lines;
+    }
+
+    private static bool TryAfter(string handle, string prefix, out string rest)
+    {
+        var ok = handle.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && handle.Length > prefix.Length;
+        rest = ok ? handle[prefix.Length..] : string.Empty;
+        return ok;
     }
 
     public sealed record Proposal(string Reply, string Summary, List<SolutionEditOp> Ops);

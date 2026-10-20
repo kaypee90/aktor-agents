@@ -8,7 +8,8 @@ public sealed record MentionableModel(string Id, string Name, string Provider, s
 /// <summary>
 /// "@handles" people write in text boxes (docs/workspaces.md#mentions): a pipeline stage by its id
 /// (<c>@diagnose</c>), a model by its profile id (<c>@claude-fast</c>, <c>@default-model</c> for
-/// the server's), a provider (<c>@anthropic</c>) or a skill (<c>@skill:incident-postmortems</c>).
+/// the server's), a provider (<c>@anthropic</c>), a skill (<c>@skill:incident-postmortems</c>),
+/// knowledge (<c>@knowledge:refund-policy.docx</c>) or a connector (<c>@connector:slack</c>).
 /// The dashboard offers them as you type; this turns the ones in a text into a short glossary for
 /// the model reading it, so a mention means one thing however capable the model is. An agent whose
 /// goal or context names a skill is told to load it first (SkillsSection). Unknown handles are left alone (an email address, say).
@@ -23,6 +24,12 @@ public static partial class Mentions
 
     /// <summary>Knowledge (a file or a fact) is mentioned as <c>@knowledge:handle</c> (<see cref="Memory.KnowledgeFiles.Handle"/>).</summary>
     public const string KnowledgePrefix = "knowledge:";
+
+    /// <summary>A connector (a connection, by name) is mentioned as <c>@connector:name</c>; its tools are <c>name__tool</c>.</summary>
+    public const string ConnectorPrefix = "connector:";
+
+    /// <summary>A solution's workspace is mentioned as <c>@workspace:key</c> (in the solution designer's conversation).</summary>
+    public const string WorkspacePrefix = "workspace:";
 
     [GeneratedRegex(@"(?<![\w.@])@([A-Za-z0-9][A-Za-z0-9._:/-]*[A-Za-z0-9]|[A-Za-z0-9])")]
     private static partial Regex Handle();
@@ -54,18 +61,19 @@ public static partial class Mentions
             : Handle().Matches(text).Select(m => m.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>The skills mentioned in the texts (<c>@skill:name</c>), by name, lowercase.</summary>
-    public static List<string> SkillsIn(IEnumerable<string?> texts) =>
-        texts.SelectMany(Find)
-            .Where(h => h.StartsWith(SkillPrefix, StringComparison.OrdinalIgnoreCase) && h.Length > SkillPrefix.Length)
-            .Select(h => h[SkillPrefix.Length..].ToLowerInvariant())
-            .Distinct()
-            .ToList();
+    public static List<string> SkillsIn(IEnumerable<string?> texts) => Prefixed(texts, SkillPrefix);
 
     /// <summary>The knowledge mentioned in the texts (<c>@knowledge:handle</c>), by handle.</summary>
-    public static List<string> KnowledgeIn(IEnumerable<string?> texts) =>
+    public static List<string> KnowledgeIn(IEnumerable<string?> texts) => Prefixed(texts, KnowledgePrefix);
+
+    /// <summary>The connectors mentioned in the texts (<c>@connector:name</c>), by name, lowercase.</summary>
+    public static List<string> ConnectorsIn(IEnumerable<string?> texts) => Prefixed(texts, ConnectorPrefix);
+
+    /// <summary>The handles in the texts that start with <paramref name="prefix"/>, without it, lowercase.</summary>
+    public static List<string> Prefixed(IEnumerable<string?> texts, string prefix) =>
         texts.SelectMany(Find)
-            .Where(h => h.StartsWith(KnowledgePrefix, StringComparison.OrdinalIgnoreCase) && h.Length > KnowledgePrefix.Length)
-            .Select(h => h[KnowledgePrefix.Length..].ToLowerInvariant())
+            .Where(h => h.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && h.Length > prefix.Length)
+            .Select(h => h[prefix.Length..].ToLowerInvariant())
             .Distinct()
             .ToList();
 
@@ -81,6 +89,11 @@ public static partial class Mentions
             {
                 lines.Add($"@{handle}: '{handle[KnowledgePrefix.Length..]}' in the workspace's or organization's knowledge (a document or a fact). " +
                           $"An agent whose instructions mention @{handle} is told to read it with read_knowledge first.");
+            }
+            else if (handle.StartsWith(ConnectorPrefix, StringComparison.OrdinalIgnoreCase) && handle.Length > ConnectorPrefix.Length)
+            {
+                var name = handle[ConnectorPrefix.Length..].ToLowerInvariant();
+                lines.Add($"@{handle}: the '{name}' connector; its tools are named {name}__<tool>. Use them for the part of the work that mentions it.");
             }
             else if (handle.StartsWith(SkillPrefix, StringComparison.OrdinalIgnoreCase))
             {

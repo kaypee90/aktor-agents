@@ -532,8 +532,16 @@ export function simulateWorkspaceAlert(id: string) {
   return apiFetch<{ delivered: boolean }>(`/api/workspaces/${id}/simulate-alert`, { method: "POST", body: "{}" });
 }
 
-export function listWorkspaces() {
-  return apiFetch<import("./workspaceTypes").WorkspaceListItem[]>("/api/workspaces");
+/** Which workspaces to list: "active" is everything not archived; solution is an install id, or
+ * "none" for workspaces no solution made; q matches words in the name or goal. */
+export type WorkspaceListFilter = { status?: "all" | "active" | "archived"; solution?: string; q?: string; limit?: number; offset?: number };
+
+/** The organization's workspaces, newest first (the server's default page is 100). */
+export function listWorkspaces(filter: WorkspaceListFilter = {}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filter)) if (v !== undefined && v !== "") params.set(k, String(v));
+  const query = params.toString();
+  return apiFetch<import("./workspaceTypes").WorkspaceListItem[]>(`/api/workspaces${query ? `?${query}` : ""}`);
 }
 
 export function getWorkspace(id: string) {
