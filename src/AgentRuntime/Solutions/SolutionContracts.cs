@@ -70,6 +70,10 @@ public sealed record SolutionConnector
     public Dictionary<string, string> Settings { get; init; } = [];
     /// <summary>When false, the solution installs without it and its tools are just missing.</summary>
     public bool Required { get; init; } = true;
+    /// <summary>The name of an organization's global connector to use (docs/plugins.md#global-connectors)
+    /// instead of asking for secrets at install. Usually chosen at deploy time rather than written in
+    /// the package, since names differ between organizations; the plugin must match.</summary>
+    public string? Global { get; init; }
 }
 
 /// <summary>An entity type in the solution's data model.</summary>

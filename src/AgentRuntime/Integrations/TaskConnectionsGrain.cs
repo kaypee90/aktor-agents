@@ -64,6 +64,10 @@ public sealed class TaskConnectionsGrain(
             return ConnectionResult.Fail($"A task can have at most {options.Value.MaxConnectionsPerWorkspace} connections.");
         }
 
+        var (resolved, global, globalError) = await integrations.ResolveGlobalAsync(tenantId, request, GlobalConnectors.TaskOwner);
+        if (globalError is not null) return ConnectionResult.Fail(globalError);
+        request = resolved;
+
         var plugin = plugins.Get(request.PluginId);
         if (plugin is null) return ConnectionResult.Fail($"No plugin '{request.PluginId}' is installed.");
         if (plugin is not Plugins.IToolProviderPlugin)
@@ -84,7 +88,7 @@ public sealed class TaskConnectionsGrain(
             if (string.IsNullOrWhiteSpace(value)) value = field.Secret ? null : field.DefaultValue;
             if (string.IsNullOrWhiteSpace(value))
             {
-                if (field.Required) return ConnectionResult.Fail($"'{field.Label}' is required.");
+                if (field.Required && !(field.Secret && global is not null)) return ConnectionResult.Fail($"'{field.Label}' is required.");
                 continue;
             }
 
@@ -98,7 +102,9 @@ public sealed class TaskConnectionsGrain(
             PluginId = plugin.Manifest.Id,
             Name = name,
             Settings = settings,
-            SecretKeys = secretValues.Keys.ToList(),
+            SecretKeys = global?.SecretKeys.ToList() ?? secretValues.Keys.ToList(),
+            GlobalConnectorId = global?.ConnectorId,
+            GlobalConnectorName = global?.Name,
             SupportsTools = true
         };
 
@@ -108,7 +114,7 @@ public sealed class TaskConnectionsGrain(
         var (check, tools) = await integrations.InspectAsync(TaskId, definition);
         if (!check.Ok)
         {
-            await secrets.DeleteScopeAsync(scope);
+            if (global is null) await secrets.DeleteScopeAsync(scope);
             return ConnectionResult.Fail(check.Message);
         }
 
@@ -116,6 +122,7 @@ public sealed class TaskConnectionsGrain(
         S.TenantId ??= Tenancy.TenantIds.Normalize(tenantId);
         S.Connections[definition.ConnectionId] = definition;
         await state.WriteStateAsync();
+        await integrations.LinkGlobalAsync(S.TenantId, GlobalConnectors.TaskOwner, TaskId, definition);
         logger.LogInformation("Task {TaskId} connected {Plugin} as {Name} ({Tools} tools)", TaskId, plugin.Manifest.Id, name, tools.Count);
         return ConnectionResult.Ok(ToView(definition),
             tools.Count == 0 ? $"Connected {plugin.Manifest.Name} as '{name}', but it offers no tools."
@@ -133,6 +140,7 @@ public sealed class TaskConnectionsGrain(
 
         if (update.Settings is { } changes)
         {
+            if (c.GlobalConnectorId is not null) return ConnectionResult.Fail($"'{c.Name}' uses the global connector '{c.GlobalConnectorName}': change its settings under Connectors.");
             if (plugins.Get(c.PluginId) is not { } plugin) return ConnectionResult.Fail($"The plugin '{c.PluginId}' isn't installed.");
             var merged = ConnectionSettings.Merge(plugin.Manifest, c.Settings, changes, out var invalid);
             if (invalid is not null) return ConnectionResult.Fail(invalid);
@@ -163,8 +171,8 @@ public sealed class TaskConnectionsGrain(
 
     public async Task RemoveConnection(string connectionId)
     {
-        if (!S.Connections.Remove(connectionId)) return;
-        await secrets.DeleteScopeAsync(ConnectionNames.Scope(TaskId, connectionId));
+        if (!S.Connections.Remove(connectionId, out var c)) return;
+        await integrations.ForgetConnectionAsync(TaskId, c);
         await state.WriteStateAsync();
     }
 
@@ -205,6 +213,8 @@ public sealed class TaskConnectionsGrain(
         Tools = c.Tools.Select(t => new ConnectionToolView { Name = t.ExposedName, Description = t.Description, SideEffects = t.SideEffects, Enabled = t.Enabled }).ToList(),
         CreatedAt = c.CreatedAt,
         LastError = c.LastError,
-        SupportsTools = true
+        SupportsTools = true,
+        GlobalConnectorId = c.GlobalConnectorId,
+        GlobalConnectorName = c.GlobalConnectorName
     };
 }

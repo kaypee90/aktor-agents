@@ -94,7 +94,8 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
                     PluginId = c.PluginId ?? string.Empty,
                     Name = c.Name ?? string.Empty,
                     Settings = c.Settings ?? [],
-                    Secrets = c.Secrets ?? []
+                    Secrets = c.Secrets ?? [],
+                    GlobalConnector = c.GlobalConnector
                 }).ToList()
             }, ct);
 

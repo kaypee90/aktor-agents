@@ -27,6 +27,9 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
   const [validation, setValidation] = useState<SolutionValidation | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, Record<string, string>>>({});
+  // Connector → the global connector backing it ("" for its own secrets). On an upgrade, a
+  // connector left out keeps what it uses now.
+  const [globals, setGlobals] = useState<Record<string, string>>({});
   const [force, setForce] = useState(false);
   // After a deploy: the webhook URLs it created. They hold a secret, so this is the one place
   // (besides each workspace's chat) they're shown.
@@ -54,6 +57,11 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
       const values: Record<string, string> = {};
       for (const i of v.summary?.inputs ?? []) values[i.key] = currentInputs?.[i.key] ?? i.default ?? "";
       setInputs(values);
+      // A new install uses the organization's global connector when there's exactly one that fits:
+      // setting a connector up once is the point of having them.
+      const picks: Record<string, string> = {};
+      if (!installId) for (const [connector, options] of Object.entries(v.globals ?? {})) if (options.length === 1) picks[connector] = options[0].name;
+      setGlobals(picks);
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -67,7 +75,9 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
     setError(null);
     try {
       const filled = Object.fromEntries(Object.entries(inputs).filter(([, v]) => v.trim() !== ""));
-      const result = await deploySolution({ installId, bundle, packageRef, inputs: filled, secrets, force });
+      // Secrets typed for a connector that now uses a global connector aren't sent.
+      const ownSecrets = Object.fromEntries(Object.entries(secrets).filter(([c]) => !globals[c]));
+      const result = await deploySolution({ installId, bundle, packageRef, inputs: filled, secrets: ownSecrets, globals, force });
       const id = String(result.install_id ?? installId);
       type Report = { name?: string; key?: string; triggers?: { name: string; webhook_path?: string | null }[] };
       const hooks = ((result.workspaces as Report[] | undefined) ?? []).flatMap((w) =>
@@ -95,7 +105,9 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
     getRegistryPackage(name, version ?? "latest").then((p) => loadRef.current(p.bundle)).catch((e) => setError(apiErrorMessage(e)));
   }, [packageRef]);
 
-  const needed = Object.entries(validation?.secrets ?? {}).filter(([, list]) => list.length > 0);
+  const globalOptions = validation?.globals ?? {};
+  const needed = Object.entries(validation?.secrets ?? {}).filter(([connector, list]) => list.length > 0 && !globals[connector]);
+  const pickable = Object.entries(globalOptions).filter(([, list]) => list.length > 0);
   return (
     <Modal
       open
@@ -168,6 +180,32 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
                 <input className={inputClass} value={inputs[i.key] ?? ""} onChange={(e) => setInputs({ ...inputs, [i.key]: e.target.value })} />
               </Field>
             ))}
+          </div>
+        )}
+
+        {validation?.ok && pickable.length > 0 && (
+          <div className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <Badge tone="brand">Global</Badge>
+              Use connectors your organization already set up, instead of entering their secrets again.
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {pickable.map(([connector, options]) => (
+                <Field key={connector} label={connector}>
+                  <select className={inputClass} value={globals[connector] ?? (installId ? "__keep__" : "")}
+                    onChange={(e) => setGlobals((g) => {
+                      const next = { ...g };
+                      if (e.target.value === "__keep__") delete next[connector];
+                      else next[connector] = e.target.value;
+                      return next;
+                    })}>
+                    {installId && <option value={"__keep__"}>Keep what it uses now</option>}
+                    <option value="">Its own secrets (enter below)</option>
+                    {options.map((o) => <option key={o.connector_id} value={o.name}>Global: {o.name}{o.description ? ` — ${o.description}` : ""}</option>)}
+                  </select>
+                </Field>
+              ))}
+            </div>
           </div>
         )}
 

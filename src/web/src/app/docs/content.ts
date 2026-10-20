@@ -49,7 +49,9 @@ run live, then audit, replay or fork it afterwards.
 | **Registry** | Publish signed, versioned packages; install them by name; yank a bad version. |
 | **Usage** | Cost per end user, workspace or day, to bill your customers. |
 | **Tools** | The \`aktor\` CLI, the TypeScript and Python SDKs, and remote plugins in Node or Python. |
-| **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.2.0. |
+| **Global connectors** | Set an integration up once on the **Connectors** page and link it from any workspace, workflow, solution or (if allowed) task. Rotate a key once; every link uses it. |
+| **Design with AI** | Describe a solution, or a change to it, in the builder's chat. Each answer lists validated changes you apply (or undo). |
+| **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.3.0. |
 
 Upgrading a server: rebuild and restart, and a database migration is applied automatically. Back
 up \`SECRETS_MASTER_KEY\`: it now also signs end-user tokens, records bindings and registry
@@ -200,6 +202,10 @@ are never shown to agents.
 - **Remote plugins:** your own integration in any language, as a small HTTP service the runtime
   calls with a shared secret. The Python SDK (\`aktor.Plugin\`) and the TypeScript SDK
   (\`@aktor/sdk/plugin\`) include the server. See *Remote plugins* below.
+- **Global connectors:** set an integration up once for the organization (**Connectors** in the
+  sidebar) and link it from any workspace, workflow or solution, and from tasks if an admin allows
+  it. Linked connections show a **Global** badge, and global connector ids start with \`gc-\`.
+  Settings and secrets stay with the connector, so a rotated key reaches every link.
 - **MCP gateway:** serve a connection to Claude Code or n8n as an MCP server; the credential stays in the vault.
 - **Notifications and inbound:** run results, alerts and approvals reach people by Slack, SMS, email
   or Telegram. Replies like "approve A1" come back the same way.
@@ -296,7 +302,7 @@ that version.
 | Data model | Entities and fields: type, required, indexed, enum values, which entity a ref points at. Renaming an entity updates everything that names it. |
 | Workspaces | Goal, data access per entity, autonomy, connectors, agent and action stages with "runs after", and triggers: a record change, a schedule, a webhook |
 | Assistant | Instructions, greeting, data access, limits, allowed sites, monthly cost cap, your own sign-in |
-| Inputs & connectors | Values asked for at install; integrations picked from this server's plugins (secrets are asked for at deploy) |
+| Inputs & connectors | Values asked for at install; integrations picked from this server's plugins (secrets are asked for at deploy), or backed by one of your global connectors |
 | Knowledge & skills | Reference text agents search; skills in the Agent Skills format |
 | Evals | Expected status, what the summary mentions, records written |
 | Review & deploy | The \`aktor.yaml\` it makes, the full check, downloads |
@@ -308,6 +314,12 @@ that version.
 - **Package (.zip)** downloads \`aktor.yaml\` and its skill files, for git or the CLI.
   **Edit YAML** lets you change the text and apply it back to the forms.
 - Drafts are saved in your browser until you deploy or discard them.
+
+**Design with AI** (bottom right) is a chat about the solution. Describe the whole app, or one
+change ("add a Vendor entity with name, phone and hourly rate", "add an eval for each workspace").
+It can change every section. Each answer lists the changes, already checked against the server;
+nothing changes until you press **Apply**, and an applied change can be undone. It works on the
+draft as it is now, your own edits included, and asks when a decision is yours to make.
 
 The CLI and SDKs are alternatives for people who want them; anything made in one opens in the other.
 `,

@@ -30,7 +30,7 @@ public static partial class SolutionValidator
 
     /// <summary>The solution platform's version: what a manifest's requires_platform is checked
     /// against. It follows the /api/v1 contract: minor versions only add.</summary>
-    public const string PlatformVersion = "1.2.0";
+    public const string PlatformVersion = "1.3.0";
 
     [GeneratedRegex("^[a-z][a-z0-9-]{1,49}$")]
     private static partial Regex NamePattern();

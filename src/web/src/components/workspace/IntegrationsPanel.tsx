@@ -6,12 +6,13 @@ import {
   addConnection,
   apiErrorMessage,
   listConnections,
+  listGlobalConnectors,
   listPlugins,
   refreshConnection,
   removeConnection,
   updateConnection,
 } from "@/lib/api";
-import type { ConnectionUpdateBody } from "@/lib/api";
+import type { AddConnectionBody, ConnectionUpdateBody, GlobalConnector } from "@/lib/api";
 import type { ConnectionView, NotifyLevel, PluginInfo, SideEffects } from "@/lib/workspaceTypes";
 import { ConnectorIcon } from "./ConnectorIcon";
 import { EndpointsEditor, GatewaySettings, parseEndpoints, serializeEndpoints } from "./ApiEndpoints";
@@ -36,7 +37,7 @@ const field = "w-full rounded border border-zinc-300 bg-white px-2 py-1 dark:bor
 export interface ConnectionsApi {
   key: string;
   list: () => Promise<ConnectionView[]>;
-  add: (body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>; notify_level?: string; allowed_senders?: string[] }) => Promise<unknown>;
+  add: (body: AddConnectionBody) => Promise<unknown>;
   update: (connectionId: string, body: ConnectionUpdateBody) => Promise<unknown>;
   refresh: (connectionId: string) => Promise<unknown>;
   remove: (connectionId: string) => Promise<unknown>;
@@ -68,6 +69,7 @@ export function ConnectionsPanel({ api, onChanged, toolsOnly = false, emptyText 
   emptyText?: string;
 }) {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [globals, setGlobals] = useState<GlobalConnector[]>([]);
   const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,10 @@ export function ConnectionsPanel({ api, onChanged, toolsOnly = false, emptyText 
         setConnections(c);
       })
       .catch((err) => !cancelled && setError(apiErrorMessage(err)));
+    // The organization's global connectors this can link: for a task, only tool providers an admin opened to tasks.
+    listGlobalConnectors()
+      .then((g) => !cancelled && setGlobals(toolsOnly ? g.filter((x) => x.usable_in_tasks) : g))
+      .catch(() => { /* optional: adding by hand still works */ });
     return () => { cancelled = true; };
     // The api object is rebuilt each render; its key names what it points at.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -117,6 +123,7 @@ export function ConnectionsPanel({ api, onChanged, toolsOnly = false, emptyText 
 
       {adding ? (
         <AddConnectionForm api={api} plugins={plugins}
+          globals={globals.filter((g) => plugins.some((p) => p.id === g.plugin_id) && !connections.some((c) => c.global_connector_id === g.connector_id))}
           onDone={async () => { setAdding(false); await changed(); }} onCancel={() => setAdding(false)} />
       ) : (
         <button onClick={() => { setAdding(true); setError(null); }} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600">
@@ -164,20 +171,30 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
           <ConnectorIcon pluginId={c.plugin_id} name={plugin?.name} className="h-4 w-4" />
           <span className="font-semibold">{c.name}</span>
           <span className="text-zinc-500">· {plugin?.name ?? c.plugin_id}</span>
+          {c.global_connector_id && (
+            <a href="/connectors" title={`Uses the organization's global connector '${c.global_connector_name}' (${c.global_connector_id}): its settings and secrets are managed under Connectors.`}
+              className="rounded bg-brand-50 px-1 text-[9px] font-semibold uppercase tracking-wide text-brand-700 ring-1 ring-brand-200 dark:bg-brand-950/60 dark:text-brand-300 dark:ring-brand-900">
+              Global{c.global_connector_name && c.global_connector_name !== c.name ? `: ${c.global_connector_name}` : ""}
+            </a>
+          )}
         </div>
         <div className="flex gap-2">
           {c.supports_tools && (
             <button disabled={busy} onClick={() => run(() => api.refresh(c.connection_id))} className="text-[10px] text-blue-600 hover:underline">refresh</button>
           )}
           <button disabled={busy}
-            onClick={() => confirm(`Remove '${c.name}'? Its stored secrets are deleted.`) && run(() => api.remove(c.connection_id))}
+            onClick={() => confirm(c.global_connector_id
+              ? `Remove '${c.name}'? The global connector '${c.global_connector_name}' and its secrets stay, for everything else that uses it.`
+              : `Remove '${c.name}'? Its stored secrets are deleted.`) && run(() => api.remove(c.connection_id))}
             className="text-[10px] text-rose-600 hover:underline">remove</button>
         </div>
       </div>
       {c.last_error && <div className="text-[11px] text-amber-700 dark:text-amber-300">Last error: {c.last_error}</div>}
       <div className="text-[10px] text-zinc-400">
-        {Object.entries(c.settings).filter(([k]) => k !== "endpoints").map(([k, v]) => `${k}=${v}`).join(" · ")}
-        {c.secret_keys.length > 0 && ` · secrets set: ${c.secret_keys.join(", ")}`}
+        {c.global_connector_id ? "Settings and secrets come from the global connector." : <>
+          {Object.entries(c.settings).filter(([k]) => k !== "endpoints").map(([k, v]) => `${k}=${v}`).join(" · ")}
+          {c.secret_keys.length > 0 && ` · secrets set: ${c.secret_keys.join(", ")}`}
+        </>}
       </div>
 
       {c.supports_notifications && (
@@ -195,7 +212,7 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-zinc-500">Endpoints ({endpoints.length})</span>
-            {!editingEndpoints && (
+            {!editingEndpoints && !c.global_connector_id && (
               <button disabled={busy} onClick={() => setEditingEndpoints(true)} className="text-[10px] text-blue-600 hover:underline">edit endpoints</button>
             )}
           </div>
@@ -250,15 +267,20 @@ function ConnectionCard({ api, connection: c, plugin, onChanged, onError }: {
   );
 }
 
-function AddConnectionForm({ api, plugins, onDone, onCancel }: {
+function AddConnectionForm({ api, plugins, globals, onDone, onCancel }: {
   api: ConnectionsApi;
   plugins: PluginInfo[];
+  /** The organization's global connectors this can link instead of entering keys again. */
+  globals: GlobalConnector[];
   onDone: () => void;
   onCancel: () => void;
 }) {
+  // Linking a global connector is the default when there is one: that's what it's for.
+  const [mode, setMode] = useState<"global" | "new">(globals.length > 0 ? "global" : "new");
+  const [globalId, setGlobalId] = useState(globals[0]?.connector_id ?? "");
   const [pluginId, setPluginId] = useState(plugins[0]?.id ?? "");
   const plugin = plugins.find((p) => p.id === pluginId);
-  const [name, setName] = useState(plugins[0]?.id ?? "");
+  const [name, setName] = useState(globals.length > 0 ? "" : plugins[0]?.id ?? "");
   const [values, setValues] = useState<Record<string, string>>({});
   const [level, setLevel] = useState<NotifyLevel>("Warning");
   const [senders, setSenders] = useState("");
@@ -272,8 +294,34 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
     setError(null);
   }
 
+  const chosenGlobal = globals.find((g) => g.connector_id === globalId);
+  const globalPlugin = plugins.find((p) => p.id === chosenGlobal?.plugin_id);
+
+  async function linkGlobal() {
+    if (!chosenGlobal) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.add({
+        plugin_id: chosenGlobal.plugin_id,
+        name: name.trim() || chosenGlobal.name,
+        settings: {},
+        secrets: {},
+        global_connector: chosenGlobal.connector_id,
+        notify_level: globalPlugin?.supports_notifications ? level : undefined,
+        allowed_senders: senders.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      onDone();
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (mode === "global") return linkGlobal();
     if (!plugin) return;
     setBusy(true);
     setError(null);
@@ -302,6 +350,52 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
 
   return (
     <form onSubmit={submit} className="space-y-2 rounded border border-dashed border-zinc-300 p-2 dark:border-zinc-700">
+      {globals.length > 0 && (
+        <div className="inline-flex overflow-hidden rounded border border-zinc-300 dark:border-zinc-700" role="tablist">
+          {(["global", "new"] as const).map((m) => (
+            <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => { setMode(m); setName(m === "global" ? "" : pluginId); setError(null); }}
+              className={`px-2 py-0.5 ${mode === m ? "bg-brand-500 text-white" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"}`}>
+              {m === "global" ? `Use a global connector (${globals.length})` : "New connection"}
+            </button>
+          ))}
+        </div>
+      )}
+      {mode === "global" ? (
+        <div className="space-y-2">
+          <div className="space-y-1" role="radiogroup" aria-label="Global connector">
+            {globals.map((g) => (
+              <button key={g.connector_id} type="button" role="radio" aria-checked={g.connector_id === globalId} onClick={() => setGlobalId(g.connector_id)}
+                className={`flex w-full min-w-0 items-center gap-1.5 rounded border px-1.5 py-1 text-left ${g.connector_id === globalId
+                  ? "border-brand-500 bg-brand-50 dark:bg-brand-500/10"
+                  : "border-zinc-200 hover:border-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-700"}`}>
+                <ConnectorIcon pluginId={g.plugin_id} name={g.plugin_name} className="h-4 w-4" />
+                <span className="font-mono font-semibold">{g.name}</span>
+                <span className="text-[9px] font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">Global</span>
+                <span className="min-w-0 flex-1 truncate text-zinc-500">{g.plugin_name}{g.description ? ` · ${g.description}` : ""}</span>
+              </button>
+            ))}
+          </div>
+          <label className="block space-y-0.5">
+            <span className="text-zinc-500">Connection name here (tool prefix; default: {chosenGlobal?.name})</span>
+            <input value={name} placeholder={chosenGlobal?.name} onChange={(e) => setName(e.target.value)} className={field} />
+          </label>
+          {globalPlugin?.supports_notifications && (
+            <label className="block space-y-0.5">
+              <span className="text-zinc-500">Forward notifications</span>
+              <select value={level} onChange={(e) => setLevel(e.target.value as NotifyLevel)} className={field}>
+                {LEVELS.map((l) => <option key={l} value={l}>{LEVEL_HELP[l]}</option>)}
+              </select>
+            </label>
+          )}
+          {globalPlugin?.supports_inbound && (
+            <label className="block space-y-0.5">
+              <span className="text-zinc-500">Accept commands from (your number / chat id, comma-separated)</span>
+              <input value={senders} onChange={(e) => setSenders(e.target.value)} className={field} />
+            </label>
+          )}
+          <div className="text-[10px] text-zinc-500">Its settings and secrets stay with the global connector: nothing is copied here, and rotating its key there updates this connection too.</div>
+        </div>
+      ) : (<>
       <div className="grid grid-cols-2 gap-1 sm:grid-cols-3" role="radiogroup" aria-label="Service">
         {plugins.map((p) => (
           <button key={p.id} type="button" role="radio" aria-checked={p.id === pluginId} onClick={() => choose(p.id)} title={p.description}
@@ -361,10 +455,11 @@ function AddConnectionForm({ api, plugins, onDone, onCancel }: {
           <div className="text-[10px] text-zinc-500">🔒 Secret fields are encrypted in the vault and never shown again, or to agents.</div>
         </>
       )}
+      </>)}
       {error && <div className="text-rose-600">{error}</div>}
       <div className="flex gap-2">
-        <button type="submit" disabled={busy || !plugin} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600 disabled:opacity-50">
-          {busy ? "Connecting…" : "Connect"}
+        <button type="submit" disabled={busy || (mode === "global" ? !chosenGlobal : !plugin)} className="rounded bg-brand-500 px-3 py-1 font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+          {busy ? "Connecting…" : mode === "global" ? "Link" : "Connect"}
         </button>
         <button type="button" onClick={onCancel} className="rounded border border-zinc-300 px-3 py-1 dark:border-zinc-700">Cancel</button>
       </div>

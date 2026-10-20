@@ -402,7 +402,9 @@ node sdk/typescript/bin/aktor.mjs test property-mgmt
 
 - **No CLI or YAML needed.** **Solutions → New solution** opens a builder with forms for every
   part, checked as you go, and deploys straight from the page. The YAML and a `.zip` of the package
-  can be downloaded for git or the CLI, which stays an alternative.
+  can be downloaded for git or the CLI, which stays an alternative. **Design with AI** in the builder
+  is a chat that turns "add a Vendor entity and let triage assign vendors" into validated changes
+  you review, apply or undo.
 - **Its own data model.** Entities with typed fields, for example `Lease`, `Ticket` and `Property`.
   Agents get `data__list_/get_/create_/update_/delete_<entity>` tools, and the runtime checks every
   write. A record change can start a run (a `Record` trigger), and your backend reads and writes
@@ -539,6 +541,9 @@ In a workspace's **Integrations** tab you can connect services, and you can add 
 - **Tools:** agents get a connection's tools (`shop__get`, `crm__lookup_customer`). For a REST API,
   add its endpoints by hand or import them from an OpenAPI document, and each becomes a typed tool
   (`store__get_order {order_id}`).
+- **Global connectors:** set an integration up once for the organization (**Connectors**) and link
+  it from any workspace, workflow, solution or (when allowed) task. Its secrets are stored once, so
+  a rotated key reaches every link. Linked connections show a **Global** badge; ids start with `gc-`.
 - **MCP gateway:** serve a connection as its own MCP server, so Claude Code, n8n or any MCP client
   calls your API's endpoints directly with an Aktor API key, under the workspace's safety policy,
   rate limit and audit log, without ever seeing the stored credential.

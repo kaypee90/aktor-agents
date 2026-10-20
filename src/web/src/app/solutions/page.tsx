@@ -342,7 +342,9 @@ function Overview({ solution }: { solution: SolutionView }) {
             <div className="mb-1.5 text-xs font-medium text-zinc-500">Connectors</div>
             <div className="flex flex-wrap gap-1.5">
               <Badge tone="brand">data (its records)</Badge>
-              {solution.connectors.map((c) => <Badge key={c.name}>{c.name} · {c.plugin}</Badge>)}
+              {solution.connectors.map((c) => (
+                <Badge key={c.name} tone={c.global ? "brand" : "neutral"}>{c.name} · {c.plugin}{c.global ? ` · Global: ${c.global}` : ""}</Badge>
+              ))}
             </div>
           </div>
           {solution.webhooks.length > 0 && (

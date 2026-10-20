@@ -684,7 +684,7 @@ export function listTaskConnections(taskId: string) {
   return apiFetch<import("./workspaceTypes").ConnectionView[]>(`/api/tasks/${taskId}/connections`);
 }
 
-export function addTaskConnection(taskId: string, body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string> }) {
+export function addTaskConnection(taskId: string, body: { plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>; global_connector?: string }) {
   return apiFetch<{ message: string; connection: import("./workspaceTypes").ConnectionView }>(`/api/tasks/${taskId}/connections`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -711,10 +711,15 @@ export function listConnections(workspaceId: string) {
   return apiFetch<import("./workspaceTypes").ConnectionView[]>(`/api/workspaces/${workspaceId}/connections`);
 }
 
-export function addConnection(workspaceId: string, body: {
+/** A body for adding a connection: a plugin with its settings and secrets, or a link to a global connector. */
+export interface AddConnectionBody {
   plugin_id: string; name: string; settings: Record<string, string>; secrets: Record<string, string>;
   notify_level?: string; allowed_senders?: string[];
-}) {
+  /** Link this global connector (id or name) instead: plugin, settings and secrets come from it. */
+  global_connector?: string;
+}
+
+export function addConnection(workspaceId: string, body: AddConnectionBody) {
   return apiFetch<{ message: string; connection: import("./workspaceTypes").ConnectionView }>(`/api/workspaces/${workspaceId}/connections`, {
     method: "POST",
     body: JSON.stringify(body),
@@ -749,6 +754,56 @@ export function refreshConnection(workspaceId: string, connectionId: string) {
 
 export function removeConnection(workspaceId: string, connectionId: string) {
   return apiFetch<void>(`/api/workspaces/${workspaceId}/connections/${connectionId}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------- global connectors
+
+/** An integration set up once for the organization and linked from workspaces, tasks and solutions. */
+export interface GlobalConnector {
+  connector_id: string;
+  name: string;
+  plugin_id: string;
+  plugin_name: string;
+  description?: string | null;
+  settings: Record<string, string>;
+  secret_keys: string[];
+  usable_in_tasks: boolean;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  used_by: { owner_kind: "workspace" | "task"; owner_id: string; owner_name?: string | null; connection_id: string; connection_name: string }[];
+}
+
+export interface GlobalConnectorBody {
+  name?: string;
+  plugin_id?: string;
+  description?: string;
+  settings?: Record<string, string>;
+  /** New secret values; ones left out keep what's stored. */
+  secrets?: Record<string, string>;
+  usable_in_tasks?: boolean;
+}
+
+export function listGlobalConnectors() {
+  return apiFetch<GlobalConnector[]>("/api/connectors");
+}
+
+export function createGlobalConnector(body: GlobalConnectorBody) {
+  return apiFetch<GlobalConnector>("/api/connectors", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateGlobalConnector(id: string, body: GlobalConnectorBody) {
+  return apiFetch<{ connector: GlobalConnector; refreshed_connections: number; problems: string[] }>(`/api/connectors/${encodeURIComponent(id)}`, {
+    method: "PATCH", body: JSON.stringify(body),
+  });
+}
+
+export function testGlobalConnector(id: string) {
+  return apiFetch<{ ok: boolean; message: string }>(`/api/connectors/${encodeURIComponent(id)}/test`, { method: "POST" });
+}
+
+export function deleteGlobalConnector(id: string, force = false) {
+  return apiFetch<{ deleted: boolean; removed_connections: number }>(`/api/connectors/${encodeURIComponent(id)}${force ? "?force=true" : ""}`, { method: "DELETE" });
 }
 
 /** Turns "POST /api/workspaces/... failed: 400 {"error":"..."}" into just the error text. */
@@ -1628,7 +1683,7 @@ export interface SolutionView {
   inputs: Record<string, string>;
   workspaces: { key: string; workspace_id: string; name?: string | null }[];
   entities: { name: string; description?: string | null; records: number; title_field?: string | null; fields: Record<string, SolutionFieldDef> }[];
-  connectors: { name: string; plugin: string; required: boolean; description?: string | null }[];
+  connectors: { name: string; plugin: string; required: boolean; description?: string | null; global?: string | null }[];
   assistant: { name: string; greeting?: string | null; data: Record<string, string> } | null;
   evals: { name: string; workspace: string }[];
   webhooks: { url: string; events: string[] }[];
@@ -1650,6 +1705,8 @@ export interface SolutionValidation {
     evals: number;
   } | null;
   secrets: Record<string, { key: string; label: string; required: boolean; description?: string | null }[]> | null;
+  /** For each connector, the organization's global connectors of the same plugin it could use instead. */
+  globals?: Record<string, { connector_id: string; name: string; description?: string | null }[]> | null;
 }
 
 export interface SolutionRecord {
@@ -1678,11 +1735,15 @@ export function validateSolution(bundle: SolutionBundle) {
   return apiFetch<SolutionValidation>("/api/v1/solutions/validate", { method: "POST", body: JSON.stringify(bundle) });
 }
 
-export function deploySolution(input: { installId?: string; bundle: SolutionBundle; packageRef?: string; inputs: Record<string, string>; secrets: Record<string, Record<string, string>>; force?: boolean }) {
+export function deploySolution(input: {
+  installId?: string; bundle: SolutionBundle; packageRef?: string; inputs: Record<string, string>; secrets: Record<string, Record<string, string>>;
+  /** Connector name → global connector name ("" to use its own secrets). */
+  globals?: Record<string, string>;
+  force?: boolean;
+}) {
   // From the registry, the server takes the package by reference (and checks its signature).
-  const body = JSON.stringify(input.packageRef
-    ? { package: input.packageRef, inputs: input.inputs, secrets: input.secrets, force: input.force ?? false }
-    : { bundle: input.bundle, inputs: input.inputs, secrets: input.secrets, force: input.force ?? false });
+  const common = { inputs: input.inputs, secrets: input.secrets, globals: input.globals, force: input.force ?? false };
+  const body = JSON.stringify(input.packageRef ? { package: input.packageRef, ...common } : { bundle: input.bundle, ...common });
   return input.installId
     ? apiFetch<Record<string, unknown>>(`/api/v1/solutions/${encodeURIComponent(input.installId)}`, { method: "PUT", body })
     : apiFetch<Record<string, unknown>>("/api/v1/solutions", { method: "POST", body });
@@ -1800,6 +1861,32 @@ export function solutionUsageCsvUrl(installId: string, by: SolutionUsage["by"]) 
 }
 
 /** A package as structured JSON, for the solution builder (the server reads the YAML). */
+/** One turn of the builder's design conversation. */
+export interface DesignTurn { role: "user" | "assistant"; content: string }
+
+/** The designer's answer: a reply, and the draft its changes would make (validated, not saved). */
+export interface SolutionDesignProposal {
+  reply: string;
+  summary: string;
+  changes: string[];
+  errors: string[];
+  manifest: { [key: string]: import("./solutionPackage").Json } | null;
+  skills: { name: string; description: string; instructions: string; workspace?: string | null }[] | null;
+  problems: string[];
+  warnings: string[];
+  can_apply: boolean;
+}
+
+/** Asks the solution designer for changes to a draft, in plain language. Nothing is saved. */
+export function designSolution(body: {
+  manifest: { [key: string]: import("./solutionPackage").Json };
+  skills: import("./solutionPackage").BuilderSkill[];
+  history: DesignTurn[];
+  request: string;
+}) {
+  return apiFetch<SolutionDesignProposal>("/api/v1/solutions/design", { method: "POST", body: JSON.stringify(body) });
+}
+
 export function parseSolution(bundle: SolutionBundle) {
   return apiFetch<{ manifest: { [key: string]: import("./solutionPackage").Json } | null; files: Record<string, string>; errors: string[] }>(
     "/api/v1/solutions/parse", { method: "POST", body: JSON.stringify(bundle) });

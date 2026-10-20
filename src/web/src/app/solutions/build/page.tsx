@@ -5,15 +5,18 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { DeployDialog } from "@/components/solutions/DeployDialog";
+import { DesignChat } from "@/components/solutions/DesignChat";
 import {
   apiErrorMessage,
   bundleFromFolder,
   getRegistryPackage,
   getSolutionPackage,
+  listGlobalConnectors,
   listPlugins,
   listSolutions,
   parseSolution,
   validateSolution,
+  type GlobalConnector,
   type SolutionBundle,
   type SolutionSummary,
   type SolutionValidation,
@@ -68,6 +71,8 @@ function setIn(root: Obj, path: Path, value: Json | undefined): Obj {
 }
 
 const slug = (s: string, max = 40) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max);
+// For a box being typed into: keeps a trailing dash, or "code-" could never become "code-quality".
+const typedSlug = (s: string, max = 40) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, max);
 const pascal = (s: string) => s.replace(/[^A-Za-z0-9]+/g, " ").trim().split(/\s+/).map((w) => w[0]?.toUpperCase() + w.slice(1)).join("").slice(0, 40);
 const snake = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^([0-9])/, "f_$1").slice(0, 40);
 const toolSlug = (entity: string) => entity.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
@@ -169,6 +174,7 @@ function Builder() {
   const [notice, setNotice] = useState<string | null>(null);
   const [installs, setInstalls] = useState<SolutionSummary[]>([]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [globals, setGlobals] = useState<GlobalConnector[]>([]);
   const [deploying, setDeploying] = useState<SolutionBundle | null>(null);
   const folderInput = useRef<HTMLInputElement>(null);
 
@@ -217,6 +223,7 @@ function Builder() {
     start().catch((e) => setError(apiErrorMessage(e)));
     listSolutions().then(setInstalls).catch(() => {});
     listPlugins().then(setPlugins).catch(() => {});
+    listGlobalConnectors().then(setGlobals).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
@@ -264,7 +271,7 @@ function Builder() {
 
   function discardDraft() {
     if (!window.confirm("Discard your changes and start again from the source?")) return;
-    try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
+    try { localStorage.removeItem(draftKey); localStorage.removeItem(`${draftKey}:chat`); } catch { /* ignore */ }
     window.location.reload();
   }
 
@@ -301,7 +308,7 @@ function Builder() {
         </div>
       </PageHeader>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
+      <div className="mx-auto grid max-w-7xl gap-6 px-6 pb-24 pt-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
         <nav className="space-y-1 lg:sticky lg:top-4 lg:self-start" aria-label="Builder sections">
           {SECTIONS.map((s) => {
             const count = s.id === "review" ? problems.length : bySection(s.id).length;
@@ -339,7 +346,7 @@ function Builder() {
           {section === "data" && <DataModel manifest={manifest} set={set} setManifest={setManifest} />}
           {section === "workspaces" && <Workspaces manifest={manifest} set={set} entities={entities} />}
           {section === "assistant" && <Assistant manifest={manifest} set={set} entities={entities} />}
-          {section === "setup" && <Setup manifest={manifest} set={set} plugins={plugins} />}
+          {section === "setup" && <Setup manifest={manifest} set={set} plugins={plugins} globals={globals} />}
           {section === "knowhow" && <Knowhow manifest={manifest} set={set} skills={skills} setSkills={setSkills} workspaces={workspaces} />}
           {section === "evals" && <Evals manifest={manifest} set={set} entities={entities} workspaces={workspaces} />}
           {section === "review" && (
@@ -354,6 +361,13 @@ function Builder() {
           )}
         </main>
       </div>
+
+      <DesignChat draft={{ manifest, skills }} storageKey={`${draftKey}:chat`}
+        onApply={(next) => {
+          setManifest(next.manifest);
+          setSkills(next.skills);
+          setNotice("Applied the designer's changes. Every section is checked again; undo it from the conversation if it's not what you wanted.");
+        }} />
 
       {deploying && (
         <DeployDialog
@@ -449,7 +463,7 @@ function Basics({ manifest, set, installed }: { manifest: Obj; set: SetFn; insta
           }} placeholder="Property management" />
         </Field>
         <Field label="Name" hint={installed ? `Installed as ${installed.name} ${installed.version}: deploying upgrades it.` : "Lowercase letters, digits and dashes."}>
-          <TextInput mono value={str(manifest.name)} onChange={(v) => set(["name"], slug(v, 50))} placeholder="property-mgmt" />
+          <TextInput mono value={str(manifest.name)} onChange={(v) => set(["name"], typedSlug(v, 50))} placeholder="property-mgmt" />
         </Field>
         <Field label="Version" hint={installed ? `Must be higher than ${installed.version} to upgrade.` : "Semantic version, e.g. 1.0.0."}>
           <div className="flex gap-2">
@@ -511,12 +525,102 @@ function DataModel({ manifest, set, setManifest }: { manifest: Obj; set: SetFn; 
           }}>Add entity</Button>} />
         {names.length === 0 && <p className="p-5 text-sm text-zinc-500">No entities yet. A solution doesn&apos;t need data, but most do.</p>}
       </Card>
-      {names.map((name) => <EntityEditor key={name} name={name} entity={obj(entities[name])} names={names} set={set} rename={rename} />)}
+      {names.map((name) => <EntityEditor key={name} name={name} entity={obj(entities[name])} names={names} set={set} rename={rename}
+        renameField={(from, to) => setManifest((m) => (m ? renameField(m, name, from, to) : m))}
+        removeField={(field) => setManifest((m) => (m ? removeField(m, name, field) : m))} />)}
     </div>
   );
 }
 
-function EntityEditor({ name, entity, names, set, rename }: { name: string; entity: Obj; names: string[]; set: SetFn; rename: (from: string, to: string) => void }) {
+/** Record trigger conditions on an entity's fields, in every workspace (to keep them in step with a field rename). */
+function triggerConditions(m: Obj, entity: string): Obj[] {
+  return list(m.workspaces).flatMap((w) => list(obj(w).triggers).map(obj))
+    .filter((t) => str(t.entity) === entity)
+    .flatMap((t) => list(obj(t.rule).conditions).map(obj));
+}
+
+/** Renames a field everywhere it's named: the field list (keeping its place), the title field,
+ * seed records, and record triggers' conditions. */
+function renameField(manifest: Obj, entity: string, from: string, to: string): Obj {
+  const m = structuredClone(manifest) as Obj;
+  const e = obj(obj(m.entities)[entity]);
+  const fields: Obj = {};
+  for (const [k, v] of Object.entries(obj(e.fields))) fields[k === from ? to : k] = v;
+  e.fields = fields;
+  if (str(e.title_field) === from) e.title_field = to;
+  for (const record of list(obj(m.seed)[entity]).map(obj)) {
+    if (from in record) { record[to] = record[from]; delete record[from]; }
+  }
+  for (const c of triggerConditions(m, entity)) if (str(c.field) === from) c.field = to;
+  return m;
+}
+
+/** Removes a field, and the title field if it was that one (the first string field is used then). */
+function removeField(manifest: Obj, entity: string, field: string): Obj {
+  const m = structuredClone(manifest) as Obj;
+  const e = obj(obj(m.entities)[entity]);
+  const fields = obj(e.fields);
+  delete fields[field];
+  if (str(e.title_field) === field) delete e.title_field;
+  return m;
+}
+
+/** A field after its type changes: settings that only fit the old type (enum values, a ref's
+ * entity, a default of the old type, an index on text/json) are dropped. */
+function retype(field: Obj, type: string): Obj {
+  const next: Obj = { ...field, type };
+  if (type !== "enum") delete next.values;
+  if (type !== "ref") delete next.entity;
+  if (type === "text" || type === "json") delete next.indexed;
+  if (type === "end_user") delete next.required;
+  delete next.default;
+  return next;
+}
+
+/** An enum's allowed values, typed as "a, b, c". Kept as text while typing (so commas and spaces
+ * can be typed) and written to the field as a list; a default no longer allowed is cleared. */
+function EnumValues({ field, onChange }: { field: Obj; onChange: (next: Obj) => void }) {
+  const values = strs(field.values);
+  const parse = (raw: string) => [...new Set(raw.split(",").map((x) => x.trim()).filter(Boolean))];
+  const [text, setText] = useState(values.join(", "));
+  // Values changed elsewhere (the designer, undo): show them, unless they're what's being typed.
+  const joined = values.join("\n");
+  const [seen, setSeen] = useState(joined);
+  if (seen !== joined) {
+    setSeen(joined);
+    if (parse(text).join("\n") !== joined) setText(values.join(", "));
+  }
+  const invalidDefault = field.default !== undefined && field.default !== null && !values.some((v) => v.toLowerCase() === str(field.default).toLowerCase());
+  const commit = (raw: string) => {
+    const parsed = parse(raw);
+    const next: Obj = { ...field, values: parsed };
+    if (field.default !== undefined && !parsed.some((v) => v.toLowerCase() === str(field.default).toLowerCase())) delete next.default;
+    onChange(next);
+  };
+  return (
+    <div className="space-y-1.5">
+      <input className={cx(inputClass, "text-xs")} value={text} placeholder="low, normal, urgent" aria-label="Allowed values"
+        onChange={(e) => { setText(e.target.value); commit(e.target.value); }}
+        onBlur={() => setText(strs(field.values).join(", "))} />
+      <select className={cx(inputClass, "text-xs")} value={str(field.default)} aria-label="Default value"
+        onChange={(e) => {
+          const next: Obj = { ...field };
+          if (e.target.value) next.default = e.target.value;
+          else delete next.default;
+          onChange(next);
+        }}>
+        <option value="">No default</option>
+        {values.map((v) => <option key={v} value={v}>Default: {v}</option>)}
+        {invalidDefault && <option value={str(field.default)}>Default: {str(field.default)} (not allowed: pick another)</option>}
+      </select>
+    </div>
+  );
+}
+
+function EntityEditor({ name, entity, names, set, rename, renameField, removeField }: {
+  name: string; entity: Obj; names: string[]; set: SetFn; rename: (from: string, to: string) => void;
+  renameField: (from: string, to: string) => void; removeField: (field: string) => void;
+}) {
   const [draftName, setDraftName] = useState(name);
   const fields = obj(entity.fields);
   const base = ["entities", name];
@@ -529,9 +633,20 @@ function EntityEditor({ name, entity, names, set, rename }: { name: string; enti
         <div className="ml-auto"><RemoveButton label={`Remove ${name}`} onClick={() => window.confirm(`Remove ${name}?`) && set(base, undefined)} /></div>
       </div>
       <div className="space-y-3 p-5">
-        <Field label="Description">
-          <TextInput value={str(entity.description)} onChange={(v) => set([...base, "description"], v || undefined)} placeholder="A maintenance request" />
-        </Field>
+        <div className="grid gap-3 md:grid-cols-[1fr_14rem]">
+          <Field label="Description">
+            <TextInput value={str(entity.description)} onChange={(v) => set([...base, "description"], v || undefined)} placeholder="A maintenance request" />
+          </Field>
+          <Field label="Title field" hint="What a record is called in lists.">
+            <select className={inputClass} value={str(entity.title_field)} onChange={(e) => set([...base, "title_field"], e.target.value || undefined)}>
+              <option value="">First text field</option>
+              {Object.keys(fields).map((k) => <option key={k} value={k}>{k}</option>)}
+              {str(entity.title_field) && !(str(entity.title_field) in fields) && (
+                <option value={str(entity.title_field)}>{str(entity.title_field)} (no such field: pick another)</option>
+              )}
+            </select>
+          </Field>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-[11px] uppercase tracking-wide text-zinc-500">
@@ -549,20 +664,17 @@ function EntityEditor({ name, entity, names, set, rename }: { name: string; enti
                         onBlur={(e) => {
                           const to = snake(e.target.value);
                           if (!to || to === fname || to in fields) { e.target.value = fname; return; }
-                          const next: Obj = {};
-                          for (const [k, v] of Object.entries(fields)) next[k === fname ? to : k] = v;
-                          set([...base, "fields"], next);
+                          renameField(fname, to);
                         }} />
                     </td>
                     <td className="pr-2">
-                      <select className={cx(inputClass, "w-32 text-xs")} value={type} onChange={(e) => set([...fpath, "type"], e.target.value)}>
+                      <select className={cx(inputClass, "w-32 text-xs")} value={type} onChange={(e) => set(fpath, retype(f, e.target.value))}>
                         {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </td>
                     <td className="pr-2">
                       {type === "enum" ? (
-                        <TextInput className="text-xs" value={strs(f.values).join(", ")} placeholder="low, normal, urgent"
-                          onChange={(v) => set([...fpath, "values"], v.split(",").map((x) => x.trim()).filter(Boolean))} />
+                        <EnumValues field={f} onChange={(next) => set(fpath, next)} />
                       ) : type === "ref" ? (
                         <select className={cx(inputClass, "text-xs")} value={str(f.entity)} onChange={(e) => set([...fpath, "entity"], e.target.value)}>
                           <option value="">Which entity?</option>
@@ -577,7 +689,7 @@ function EntityEditor({ name, entity, names, set, rename }: { name: string; enti
                     </td>
                     <td className="pr-2 pt-2.5"><input type="checkbox" checked={f.required === true} disabled={type === "end_user"} onChange={(e) => set([...fpath, "required"], e.target.checked)} aria-label="Required" /></td>
                     <td className="pr-2 pt-2.5"><input type="checkbox" checked={f.indexed === true} disabled={type === "text" || type === "json"} onChange={(e) => set([...fpath, "indexed"], e.target.checked)} aria-label="Indexed" /></td>
-                    <td><RemoveButton label={`Remove ${fname}`} onClick={() => set(fpath, undefined)} /></td>
+                    <td><RemoveButton label={`Remove ${fname}`} onClick={() => removeField(fname)} /></td>
                   </tr>
                 );
               })}
@@ -620,6 +732,24 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
   const tools = Object.entries(data).flatMap(([e, a]) => ["list", "get", ...(a === "write" ? ["create", "update", "delete"] : [])].map((v) => `data__${v}_${toolSlug(e)}`));
   const [open, setOpen] = useState(index === 0);
   const fieldsOf = (e: string) => Object.keys(obj(obj(obj(manifest.entities)[e]).fields));
+  const stagesPath: Path = [...base, "pipeline", "stages"];
+  // An id no other stage has, so a new stage never ends up running after itself.
+  const newStageId = (prefix: string) => {
+    const taken = new Set(stages.map((s) => str(s.stage_id)));
+    let n = stages.length + 1;
+    while (taken.has(`${prefix}-${n}`)) n++;
+    return `${prefix}-${n}`;
+  };
+  const addStage = (stage: Obj) => set([...stagesPath, stages.length], { ...stage, inputs: stages.length ? [str(stages[stages.length - 1].stage_id)] : [] });
+  // Renaming a stage id carries over to the stages that run after it.
+  const renameStage = (si: number, to: string) => {
+    const from = str(stages[si].stage_id);
+    set(stagesPath, stages.map((s, i) => (i === si ? { ...s, stage_id: to } : { ...s, inputs: strs(s.inputs).map((x) => (x === from ? to : x)) })));
+  };
+  const removeStage = (si: number) => {
+    const id = str(stages[si].stage_id);
+    set(stagesPath, stages.filter((_, i) => i !== si).map((s) => ({ ...s, inputs: strs(s.inputs).filter((x) => x !== id) })));
+  };
   return (
     <Card>
       <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-3 px-5 py-3 text-left">
@@ -632,7 +762,7 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
         <div className="space-y-5 border-t border-zinc-200 p-5 dark:border-zinc-800">
           <div className="grid gap-4 md:grid-cols-3">
             <Field label="Name"><TextInput value={str(ws.name)} onChange={(v) => set([...base, "name"], v)} /></Field>
-            <Field label="Key" hint="Stable across versions: upgrades match workspaces by it."><TextInput mono value={str(ws.key)} onChange={(v) => set([...base, "key"], slug(v))} /></Field>
+            <Field label="Key" hint="Stable across versions: upgrades match workspaces by it."><TextInput mono value={str(ws.key)} onChange={(v) => set([...base, "key"], typedSlug(v))} /></Field>
             <Field label="Daily cost limit (USD)"><NumberInput value={num(ws.daily_cost_usd)} onChange={(v) => set([...base, "daily_cost_usd"], v)} placeholder="no limit" /></Field>
             <Field label="Goal" className="md:col-span-3"><TextArea value={str(ws.goal)} onChange={(v) => set([...base, "goal"], v)} rows={2} placeholder="What this workspace is for" /></Field>
           </div>
@@ -672,8 +802,8 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Pipeline</div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => set([...base, "pipeline", "stages", stages.length], { stage_id: `stage-${stages.length + 1}`, name: `Stage ${stages.length + 1}`, instructions: "", capabilities: ["research"], inputs: stages.length ? [str(stages[stages.length - 1].stage_id)] : [] })}>+ Agent stage</Button>
-                <Button size="sm" onClick={() => set([...base, "pipeline", "stages", stages.length], { stage_id: `action-${stages.length + 1}`, name: `Action ${stages.length + 1}`, kind: "Action", tool: tools[0] ?? "", arguments: "{}", retries: 0, inputs: stages.length ? [str(stages[stages.length - 1].stage_id)] : [] })}>+ Action stage</Button>
+                <Button size="sm" onClick={() => addStage({ stage_id: newStageId("stage"), name: `Stage ${stages.length + 1}`, instructions: "", capabilities: ["research"] })}>+ Agent stage</Button>
+                <Button size="sm" onClick={() => addStage({ stage_id: newStageId("action"), name: `Action ${stages.length + 1}`, kind: "Action", tool: tools[0] ?? "", arguments: "{}", retries: 0 })}>+ Action stage</Button>
               </div>
             </div>
             <div className="space-y-3">
@@ -687,8 +817,8 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
                       <input className={cx(inputClass, "w-56 py-1 text-sm font-medium")} value={str(s.name)} aria-label="Stage name"
                         onChange={(e) => { set([...spath, "name"], e.target.value); }} />
                       <input className={cx(inputClass, "w-40 py-1 font-mono text-xs")} value={str(s.stage_id)} aria-label="Stage id"
-                        onChange={(e) => set([...spath, "stage_id"], slug(e.target.value))} />
-                      <div className="ml-auto"><RemoveButton label="Remove stage" onClick={() => set(spath, undefined)} /></div>
+                        onChange={(e) => renameStage(si, typedSlug(e.target.value))} />
+                      <div className="ml-auto"><RemoveButton label="Remove stage" onClick={() => removeStage(si)} /></div>
                     </div>
                     {isAction ? (
                       <div className="grid gap-3 md:grid-cols-2">
@@ -720,7 +850,7 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
                         </Field>
                       </div>
                     )}
-                    {si > 0 && (
+                    {(si > 0 || strs(s.inputs).length > 0) && (
                       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
                         Runs after:
                         {stages.slice(0, si).map((p) => {
@@ -732,6 +862,13 @@ function WorkspaceEditor({ index, ws, set, entities, connectors, manifest }: { i
                             </label>
                           );
                         })}
+                        {strs(s.inputs).filter((x) => !stages.slice(0, si).some((p) => str(p.stage_id) === x)).map((x) => (
+                          <button key={`bad-${x}`} type="button" title="Not an earlier stage: click to remove"
+                            className="rounded border border-red-300 px-1.5 py-0.5 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                            onClick={() => set([...spath, "inputs"], strs(s.inputs).filter((y) => y !== x))}>
+                            {x === str(s.stage_id) ? `${x} (itself)` : x} ✕
+                          </button>
+                        ))}
                         <span className="text-zinc-400">(none: it starts with the run, in parallel)</span>
                       </div>
                     )}
@@ -906,7 +1043,7 @@ function Assistant({ manifest, set, entities }: { manifest: Obj; set: SetFn; ent
   );
 }
 
-function Setup({ manifest, set, plugins }: { manifest: Obj; set: SetFn; plugins: PluginInfo[] }) {
+function Setup({ manifest, set, plugins, globals }: { manifest: Obj; set: SetFn; plugins: PluginInfo[]; globals: GlobalConnector[] }) {
   const inputs = list(manifest.inputs).map(obj);
   const connectors = list(manifest.connectors).map(obj);
   const choosable = plugins.filter((p) => p.id !== "aktor-records");
@@ -932,12 +1069,26 @@ function Setup({ manifest, set, plugins }: { manifest: Obj; set: SetFn; plugins:
         </div>
       </Card>
       <Card>
-        <CardHeader title="Connectors" description="Integrations it needs (SMS, Slack, a CRM, an MCP server…). Secrets are never in the package: whoever deploys it enters them."
-          actions={<Button size="sm" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => set(["connectors", connectors.length], { name: `connector_${connectors.length + 1}`, plugin: choosable[0]?.id ?? "" })}>Add connector</Button>} />
+        <CardHeader title="Connectors" description="Integrations it needs (SMS, Slack, a CRM, an MCP server…). Secrets are never in the package: whoever deploys it enters them, or picks one of your organization's global connectors."
+          actions={<div className="flex gap-2">
+            {globals.length > 0 && (
+              <select className={cx(inputClass, "h-8 w-auto py-0 text-xs")} value="" aria-label="Add from a global connector"
+                onChange={(e) => {
+                  const g = globals.find((x) => x.connector_id === e.target.value);
+                  if (g) set(["connectors", connectors.length], { name: connectors.some((c) => str(c.name) === g.name) ? `${g.name}_${connectors.length + 1}` : g.name, plugin: g.plugin_id, global: g.name });
+                }}>
+                <option value="">+ From a global connector…</option>
+                {globals.map((g) => <option key={g.connector_id} value={g.connector_id}>{g.name} ({g.plugin_name})</option>)}
+              </select>
+            )}
+            <Button size="sm" className="shrink-0 whitespace-nowrap" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => set(["connectors", connectors.length], { name: `connector_${connectors.length + 1}`, plugin: choosable[0]?.id ?? "" })}>Add connector</Button>
+          </div>} />
         <div className="space-y-3 p-5">
           {connectors.length === 0 && <p className="text-sm text-zinc-500">No connectors: its agents use only their own data and built-in tools.</p>}
           {connectors.map((c, i) => {
             const plugin = plugins.find((p) => p.id === str(c.plugin));
+            const matching = globals.filter((g) => g.plugin_id === str(c.plugin));
+            const global = str(c.global);
             return (
               <div key={i} className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="grid items-center gap-2 md:grid-cols-[12rem_1fr_auto_auto]">
@@ -948,7 +1099,19 @@ function Setup({ manifest, set, plugins }: { manifest: Obj; set: SetFn; plugins:
                   <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={c.required !== false} onChange={(e) => set(["connectors", i, "required"], e.target.checked)} /> required</label>
                   <RemoveButton label="Remove connector" onClick={() => set(["connectors", i], undefined)} />
                 </div>
-                {plugin && plugin.settings.filter((f) => !f.secret).length > 0 && (
+                {(matching.length > 0 || global) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <Badge tone={global ? "brand" : "neutral"}>Global</Badge>
+                    <select className={cx(inputClass, "h-8 w-auto py-0 text-xs")} value={global} aria-label="Global connector"
+                      onChange={(e) => set(["connectors", i, "global"], e.target.value || undefined)}>
+                      <option value="">Don&apos;t use one (enter secrets at deploy)</option>
+                      {matching.map((g) => <option key={g.connector_id} value={g.name}>Use {g.name}{g.description ? ` — ${g.description}` : ""}</option>)}
+                      {global && !matching.some((g) => g.name === global) && <option value={global}>{global} (not in this organization)</option>}
+                    </select>
+                    {global && <span className="text-zinc-500">Its settings and secrets come from the global connector. Deploying elsewhere? Names differ per organization, so it can also be chosen at deploy.</span>}
+                  </div>
+                )}
+                {!global && plugin && plugin.settings.filter((f) => !f.secret).length > 0 && (
                   <div className="mt-2 grid gap-2 md:grid-cols-2">
                     {plugin.settings.filter((f) => !f.secret).map((f) => (
                       <Field key={f.key} label={f.label} hint={f.description ?? undefined}>
@@ -958,7 +1121,7 @@ function Setup({ manifest, set, plugins }: { manifest: Obj; set: SetFn; plugins:
                     ))}
                   </div>
                 )}
-                {plugin && plugin.settings.some((f) => f.secret) && (
+                {!global && plugin && plugin.settings.some((f) => f.secret) && (
                   <p className="mt-2 text-xs text-zinc-500">Asked for at deploy: {plugin.settings.filter((f) => f.secret).map((f) => f.label).join(", ")}.</p>
                 )}
               </div>
@@ -1009,7 +1172,7 @@ function Knowhow({ manifest, set, skills, setSkills, workspaces }: {
             return (
               <div key={i} className="space-y-2 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
                 <div className="flex items-center gap-2">
-                  <TextInput mono value={s.name} placeholder="skill-name" onChange={(v) => update({ name: slug(v, 64) })} className="w-56" />
+                  <TextInput mono value={s.name} placeholder="skill-name" onChange={(v) => update({ name: typedSlug(v, 64) })} className="w-56" />
                   <TextInput value={s.description} placeholder="When to use it (one line)" onChange={(v) => update({ description: v })} />
                   {wsSelect(s.workspace ?? "", (v) => update({ workspace: v }))}
                   <RemoveButton label="Remove skill" onClick={() => setSkills(skills.filter((_, j) => j !== i))} />

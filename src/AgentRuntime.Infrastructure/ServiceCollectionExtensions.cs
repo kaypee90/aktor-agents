@@ -57,6 +57,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SecretsOptions>(configuration.GetSection(SecretsOptions.SectionName));
         services.AddSingleton<SecretProtector>();
         services.AddSingleton<AgentRuntime.Integrations.ISecretStore, PostgresSecretStore>();
+        services.AddSingleton<AgentRuntime.Integrations.IGlobalConnectorStore, Integrations.EfGlobalConnectorStore>();
         services.AddSingleton<ITaskModelSelection, Tasks.PostgresTaskModelSelection>();
         services.AddSingleton<AgentRuntime.Safety.IAuditLog, Persistence.PostgresAuditLog>();
 

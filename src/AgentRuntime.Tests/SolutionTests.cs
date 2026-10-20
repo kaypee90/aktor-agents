@@ -82,12 +82,13 @@ public class SolutionTests
     [InlineData(">=1.0.0", true)]
     [InlineData(">=1.1.0", true)]
     [InlineData(">=1.2.0", true)]
-    [InlineData(">=1.3.0", false)]
+    [InlineData(">=1.3.0", true)]
+    [InlineData(">=1.4.0", false)]
     [InlineData("^1.0.0", true)]
     [InlineData("1.0.0", true)]
     [InlineData("^2.0.0", false)]
     [InlineData("=1.0.0", false)]
-    [InlineData(">1.2.0", false)]
+    [InlineData(">1.3.0", false)]
     public void RequiresPlatform_IsCheckedAgainstThisServer(string requirement, bool ok) =>
         Assert.Equal(ok, SolutionValidator.PlatformMismatch(requirement) is null);
 

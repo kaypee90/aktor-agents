@@ -72,6 +72,7 @@ public static class ConnectionSettings
 public sealed class IntegrationService(
     PluginCatalog catalog,
     ISecretStore secrets,
+    IGlobalConnectorStore globals,
     IOptions<IntegrationsOptions> options,
     ILogger<IntegrationService> logger)
 {
@@ -79,9 +80,21 @@ public sealed class IntegrationService(
 
     public async Task<PluginConnection> BuildConnectionAsync(string workspaceId, ConnectionDefinition definition, CancellationToken ct = default)
     {
-        var scope = ConnectionNames.Scope(workspaceId, definition.ConnectionId);
+        // A linked global connector is read live: its current settings, and every secret its plugin
+        // declares (one may have been added or rotated since the link was made).
+        var settings = definition.Settings;
+        IEnumerable<string> secretKeys = definition.SecretKeys;
+        if (definition.GlobalConnectorId is { Length: > 0 } globalId)
+        {
+            var global = await globals.GetByIdAsync(globalId, ct)
+                         ?? throw new InvalidOperationException($"The global connector behind '{definition.Name}' was deleted.");
+            settings = global.Settings;
+            secretKeys = catalog.Get(global.PluginId)?.Manifest.Settings.Where(f => f.Secret).Select(f => f.Key) ?? global.SecretKeys;
+        }
+
+        var scope = GlobalConnectors.SecretScope(workspaceId, definition);
         var values = new Dictionary<string, string>();
-        foreach (var key in definition.SecretKeys)
+        foreach (var key in secretKeys)
         {
             if (await secrets.GetAsync(scope, key, ct) is { } value) values[key] = value;
         }
@@ -91,7 +104,7 @@ public sealed class IntegrationService(
             ConnectionId = definition.ConnectionId,
             WorkspaceId = workspaceId,
             Name = definition.Name,
-            Settings = definition.Settings,
+            Settings = settings,
             Secrets = values,
             InboundSecret = definition.InboundSecret,
             InboundUrl = InboundUrl(workspaceId, definition)
@@ -132,15 +145,16 @@ public sealed class IntegrationService(
         var plugin = catalog.Get(definition.PluginId);
         if (plugin is null) return (ConnectionCheck.Failure($"No plugin '{definition.PluginId}' is installed."), []);
 
-        var connection = await BuildConnectionAsync(workspaceId, definition, ct);
+        PluginConnection connection;
         ConnectionCheck check;
         try
         {
+            connection = await BuildConnectionAsync(workspaceId, definition, ct);
             check = await plugin.ValidateAsync(connection, ct);
         }
         catch (Exception ex)
         {
-            check = ConnectionCheck.Failure(ex.Message);
+            return (ConnectionCheck.Failure(ex.Message), []);
         }
 
         if (!check.Ok || plugin is not IToolProviderPlugin tools) return (check, []);
@@ -197,6 +211,83 @@ public sealed class IntegrationService(
         {
             return DeliveryResult.Failed(ex.Message);
         }
+    }
+
+    /// <summary>Checks a plugin's settings and secrets before anything is saved (a new or changed
+    /// global connector): whether it connects, and how many tools it offers.</summary>
+    public async Task<(ConnectionCheck Check, int Tools)> CheckAsync(string pluginId, string name, IReadOnlyDictionary<string, string> settings,
+        IReadOnlyDictionary<string, string> secretValues, CancellationToken ct = default)
+    {
+        if (catalog.Get(pluginId) is not { } plugin) return (ConnectionCheck.Failure($"No plugin '{pluginId}' is installed."), 0);
+        var connection = new PluginConnection
+        {
+            ConnectionId = "check",
+            WorkspaceId = "global",
+            Name = name,
+            Settings = new Dictionary<string, string>(settings),
+            Secrets = new Dictionary<string, string>(secretValues)
+        };
+        try
+        {
+            var check = await plugin.ValidateAsync(connection, ct);
+            if (!check.Ok || plugin is not IToolProviderPlugin tools) return (check, 0);
+            return (check, (await tools.ListToolsAsync(connection, ct)).Count);
+        }
+        catch (Exception ex)
+        {
+            return (ConnectionCheck.Failure(ex.Message), 0);
+        }
+    }
+
+    /// <summary>
+    /// A request to link a global connector, turned into the connection it makes: the connector's
+    /// plugin and settings, no secrets of its own (they stay in the connector's vault scope), and
+    /// its name unless one was given. Refuses another organization's connector as if it didn't exist.
+    /// A request without <see cref="ConnectionRequest.GlobalConnector"/> comes back unchanged.
+    /// </summary>
+    public async Task<(ConnectionRequest Request, GlobalConnector? Global, string? Error)> ResolveGlobalAsync(string? tenantId, ConnectionRequest request,
+        string ownerKind = GlobalConnectors.WorkspaceOwner, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.GlobalConnector)) return (request, null, null);
+        var global = await globals.GetAsync(Tenancy.TenantIds.Normalize(tenantId), request.GlobalConnector.Trim(), ct);
+        if (global is null) return (request, null, $"There's no global connector '{request.GlobalConnector}' in this organization.");
+        if (ownerKind == GlobalConnectors.TaskOwner && !global.UsableInTasks && !request.AdminChosenGlobal)
+        {
+            return (request, null, $"The global connector '{global.Name}' isn't available to tasks; an admin can allow it under Connectors.");
+        }
+
+        return (request with
+        {
+            PluginId = global.PluginId,
+            Name = string.IsNullOrWhiteSpace(request.Name) ? global.Name : request.Name,
+            Settings = new Dictionary<string, string>(global.Settings),
+            Secrets = []
+        }, global, null);
+    }
+
+    /// <summary>Records where a global connector is used, so it can be refreshed and isn't deleted under its users.</summary>
+    public Task LinkGlobalAsync(string? tenantId, string ownerKind, string ownerId, ConnectionDefinition connection, CancellationToken ct = default) =>
+        connection.GlobalConnectorId is not { Length: > 0 } id
+            ? Task.CompletedTask
+            : globals.LinkAsync(new GlobalConnectorLink
+            {
+                ConnectorId = id,
+                TenantId = Tenancy.TenantIds.Normalize(tenantId),
+                OwnerKind = ownerKind,
+                OwnerId = ownerId,
+                ConnectionId = connection.ConnectionId,
+                ConnectionName = connection.Name,
+                LinkedAt = DateTimeOffset.UtcNow
+            }, ct);
+
+    /// <summary>
+    /// Forgets a connection's secrets when it's removed: its own vault scope, or, for a link to a
+    /// global connector, only the link (the connector's secrets belong to everyone using it).
+    /// </summary>
+    public async Task ForgetConnectionAsync(string ownerId, ConnectionDefinition connection, CancellationToken ct = default)
+    {
+        if (connection.GlobalConnectorId is { Length: > 0 }) await globals.UnlinkAsync(ownerId, connection.ConnectionId, ct);
+        else await secrets.DeleteScopeAsync(ConnectionNames.Scope(ownerId, connection.ConnectionId), ct);
     }
 
     public async Task<InboundResult> ParseInboundAsync(string workspaceId, ConnectionDefinition definition, InboundRequestDto request, CancellationToken ct = default)

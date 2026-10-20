@@ -750,6 +750,39 @@ can't change).
 **Check:** the downloaded package validates with the CLI; uninstalling archives the workspaces,
 and `--purge` deletes the records (without it they stay, read-only).
 
+### SO11. A global connector, set up once and reused
+
+**Do:** as an Admin, open **Connectors → New connector**, pick **HTTP API** (or Slack), name it
+`team_api`, fill in its settings and key, and save. Open a workspace's **Connections → Add
+connection**: the form starts on **Use a global connector**; link `team_api`. Do the same in a
+second workspace. Back on **Connectors**, press **Edit**, type a new key, save.
+
+**Check:** a bad key is refused before anything is saved. Both workspace connections show a
+**Global** badge and no secrets of their own, and the card on **Connectors** lists both under
+"Used by". After the edit the notice says how many linked connections were refreshed. **Delete**
+asks before also removing the two links; removing one link from a workspace keeps the connector.
+
+### SO12. A solution deploys onto a global connector
+
+**Do:** in the builder's **Inputs & connectors**, use **+ From a global connector…** to add
+`team_api`, or add a connector of the same plugin and choose it in its **Global** picker. Deploy.
+Then deploy a package whose connector names no global connector.
+
+**Check:** the deploy dialog asks for no secrets for that connector, and preselects `team_api`
+when it's the only one that fits. The installed solution shows `crm · http-api · Global: team_api`.
+An upgrade keeps it without being asked again.
+
+### SO13. Designing a solution in a conversation
+
+**Do:** in the builder, press **Design with AI** and send "Add a Vendor entity with name, phone and
+hourly rate" (works on the Mock model). Press **Apply**, then **Undo**. With a real model, start a
+**New solution** and describe a whole app in one message, then ask for a change in a second.
+
+**Check:** the reply lists the changes before anything changes. **Apply** updates the forms, where
+the new entity appears and validation runs; **Undo** puts the draft back. Editing a form and then
+applying an older proposal asks first. The conversation is still there after a reload, and
+**Discard draft** clears it.
+
 ---
 
 ## Dashboard
@@ -835,6 +868,9 @@ Copy this per run to compare models or releases:
 | SO8 | | | | |
 | SO9 | | | | |
 | SO10 | | | | |
+| SO11 | | | | |
+| SO12 | | | | |
+| SO13 | | | | |
 
 For a repeatable measure of spawning decisions, run `SpawnEfficiencyEval` too (see
 [workspaces.md](workspaces.md)).

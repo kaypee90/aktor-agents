@@ -187,6 +187,8 @@ public sealed class SolutionAppService(
     private async Task<ConnectionRequest> ConnectorForAssistantAsync(EndUser user, string name, CancellationToken ct)
     {
         var connector = user.Solution.Manifest.Connectors.First(c => c.Name == name);
+        // Backed by a global connector (chosen by an admin at deploy): link it; its secrets never leave the vault scope.
+        if (connector.Global is { } global) return new ConnectionRequest { PluginId = connector.Plugin, Name = connector.Name, GlobalConnector = global, AdminChosenGlobal = true };
         var copied = new Dictionary<string, string>();
         // Its own vault entry first (given at install for the assistant), else a workspace's connection.
         foreach (var field in plugins.Get(connector.Plugin)?.Manifest.Settings.Where(f => f.Secret) ?? [])
@@ -199,6 +201,11 @@ public sealed class SolutionAppService(
         {
             var view = (await grains.GetGrain<IWorkspaceGrain>(workspaceId).ListConnections()).FirstOrDefault(c => c.Name == name);
             if (view is null) continue;
+            if (view.GlobalConnectorId is { } linked)
+            {
+                return new ConnectionRequest { PluginId = connector.Plugin, Name = connector.Name, GlobalConnector = linked, AdminChosenGlobal = true };
+            }
+
             foreach (var key in view.SecretKeys)
             {
                 if (await secrets.GetAsync(ConnectionNames.Scope(workspaceId, view.ConnectionId), key, ct) is { } value) copied[key] = value;

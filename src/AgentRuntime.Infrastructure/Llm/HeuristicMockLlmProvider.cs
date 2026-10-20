@@ -80,6 +80,12 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             return Task.FromResult(MockStudyBehavior.Participant(request));
         }
 
+        // The solution builder's conversation.
+        if (MockSolutionDesignBehavior.IsDesignRequest(request))
+        {
+            return Task.FromResult(MockSolutionDesignBehavior.Design(request));
+        }
+
         // Workspace pipelines: the natural-language editor, and the stages' agents.
         if (MockPipelineBehavior.IsDesignRequest(request))
         {

@@ -46,7 +46,10 @@ features, and only a major version would remove or change one.
 |---|---|
 | 1.0.0 | Solutions: packages, entities and records, record triggers, end users, the assistant, evals, webhooks |
 | 1.1.0 | `requires_platform`, `assistant.allowed_origins`, webhook triggers updated in place on upgrade |
-| 1.2.0 | `indexed` fields, `end_users.jwt` (your own sign-in), `assistant.monthly_cost_limit_usd_per_user`, installing from the registry | Every package under `samples/solutions` is validated on
+| 1.2.0 | `indexed` fields, `end_users.jwt` (your own sign-in), `assistant.monthly_cost_limit_usd_per_user`, installing from the registry |
+| 1.3.0 | A connector's `global:` (an organization's global connector), `globals` on deploy, `POST /api/v1/solutions/design` |
+
+Every package under `samples/solutions` is validated on
 each build, so a change that would break a published package fails CI.
 
 ## Credentials

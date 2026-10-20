@@ -17,8 +17,9 @@ namespace AgentRuntime.Api.Controllers;
 [ApiController]
 [Route("api/solutions")]
 public sealed class SolutionsController(SolutionService solutions, IRecordStore records, ISolutionCatalog catalog, SolutionTokens tokens,
-    IOptions<SolutionOptions> options, SolutionUsageService usage, SolutionRegistryService registry) : ControllerBase
+    IOptions<SolutionOptions> options, SolutionUsageService usage, SolutionRegistryService registry, SolutionDesignService designer) : ControllerBase
 {
+    public sealed record DesignBody(JsonObject? Manifest, List<DraftSkill>? Skills, List<DesignTurn>? History, string? Request);
     private IActionResult Problem(SolutionException ex) => StatusCode(ex.Status, new { error = ex.Message, errors = ex.Errors });
 
     /// <summary>A deploy from the registry: the package's bundle, integrity-checked, in place of an uploaded one.</summary>
@@ -33,13 +34,26 @@ public sealed class SolutionsController(SolutionService solutions, IRecordStore 
     /// install, and the inputs and secrets it asks for.</summary>
     [HttpPost("validate")]
     [Authorize(Policies.Member)]
-    public IActionResult Validate([FromBody] SolutionBundle bundle) => Ok(solutions.Validate(bundle));
+    public async Task<IActionResult> Validate([FromBody] SolutionBundle bundle, CancellationToken ct) =>
+        Ok(await solutions.ValidateAsync(HttpContext.Caller().TenantId, bundle, ct));
 
     /// <summary>
     /// A package as structured JSON (snake_case, files it includes already inlined), for the
     /// dashboard's solution builder to edit: what aktor.yaml says, without a YAML parser in the
     /// browser. Reading errors are listed; validation is <c>validate</c>'s job.
     /// </summary>
+    /// <summary>
+    /// The builder's conversation: a request in plain language ("add a Vendor entity and let triage
+    /// assign vendors") against the draft as it is now, answered with a reply and the changed draft,
+    /// validated. Nothing is saved; the builder applies it if the person wants it.
+    /// </summary>
+    [HttpPost("design")]
+    [Authorize(Policies.Member)]
+    [RequestSizeLimit(2_000_000)]
+    public async Task<IActionResult> Design([FromBody] DesignBody body, CancellationToken ct) =>
+        Ok(await designer.ProposeAsync(HttpContext.Caller().TenantId, body.Manifest ?? new JsonObject(), body.Skills ?? [], body.History ?? [],
+            body.Request ?? string.Empty, ct));
+
     [HttpPost("parse")]
     [Authorize(Policies.Member)]
     public IActionResult Parse([FromBody] SolutionBundle bundle)

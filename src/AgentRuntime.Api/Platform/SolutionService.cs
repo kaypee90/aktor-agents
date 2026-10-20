@@ -29,6 +29,10 @@ public sealed record SolutionDeployRequest
     public string? Package { get; init; }
     public Dictionary<string, string>? Inputs { get; init; }
     public Dictionary<string, Dictionary<string, string>>? Secrets { get; init; }
+    /// <summary>Connectors to back with the organization's global connectors (connector name →
+    /// global connector name or id) instead of secrets; "" goes back to asking for secrets. Kept
+    /// across upgrades until changed.</summary>
+    public Dictionary<string, string>? Globals { get; init; }
     /// <summary>Upgrades only: allow the same or a lower version (for a development loop).</summary>
     public bool Force { get; init; }
     /// <summary>Upgrades only: check and report what would change, without changing anything.</summary>
@@ -52,6 +56,7 @@ public sealed class SolutionService(
     ISkillStore skills,
     IMemoryStore memory,
     ISecretStore secretStore,
+    IGlobalConnectorStore globalConnectors,
     IOptions<Pipelines.PipelineOptions> pipelineOptions,
     TimeProvider clock,
     ILogger<SolutionService> logger)
@@ -69,6 +74,7 @@ public sealed class SolutionService(
         var stored = new HashSet<string>();
         foreach (var name in manifest.Assistant?.Connectors ?? [])
         {
+            if (manifest.Connectors.FirstOrDefault(c => c.Name == name)?.Global is not null) continue;
             if (secrets?.GetValueOrDefault(name) is not { Count: > 0 } values) continue;
             foreach (var (key, value) in values.Where(v => !string.IsNullOrEmpty(v.Value)))
             {
@@ -88,6 +94,12 @@ public sealed class SolutionService(
         foreach (var name in manifest.Assistant?.Connectors ?? [])
         {
             if (manifest.Connectors.FirstOrDefault(c => c.Name == name) is not { } c) continue;
+            if (c.Global is not null)
+            {
+                connected.Add(name);
+                continue;
+            }
+
             var required = plugins.Get(c.Plugin)?.Manifest.Settings.Where(f => f.Secret && f.Required).Select(f => f.Key).ToList() ?? [];
             var all = true;
             foreach (var key in required) all &= await secretStore.GetAsync(AssistantSecretScope(installId, name), key, ct) is { Length: > 0 };
@@ -167,14 +179,26 @@ public sealed class SolutionService(
             .Select(f => (object)new { key = f.Key, label = f.Label, required = f.Required, description = f.Description })
             .ToList());
 
-    public object Validate(SolutionBundle bundle)
+    public async Task<object> ValidateAsync(string tenantId, SolutionBundle bundle, CancellationToken ct)
     {
         var c = Check(bundle);
+        var available = await globalConnectors.ListAsync(tenantId, ct);
+        var warnings = new List<string>(c.Validation.Warnings);
+        foreach (var connector in c.Manifest?.Connectors.Where(x => x.Global is not null) ?? [])
+        {
+            var match = available.FirstOrDefault(g => string.Equals(g.Name, connector.Global, StringComparison.OrdinalIgnoreCase));
+            if (match is null) warnings.Add($"Connector '{connector.Name}': this organization has no global connector '{connector.Global}'; pick one or enter secrets at deploy.");
+            else if (match.PluginId != connector.Plugin) warnings.Add($"Connector '{connector.Name}': the global connector '{connector.Global}' is {match.PluginId}, not {connector.Plugin}.");
+        }
+
         return new
         {
             ok = c.Validation.Ok,
             errors = c.Validation.Errors,
-            warnings = c.Validation.Warnings,
+            warnings,
+            // The organization's global connectors each connector could use instead of its own secrets.
+            globals = c.Manifest?.Connectors.ToDictionary(x => x.Name, x => available.Where(g => g.PluginId == x.Plugin)
+                .Select(g => new { connector_id = g.ConnectorId, name = g.Name, description = g.Description }).ToList()),
             summary = c.Manifest is null ? null : SolutionValidator.Summarize(c.Manifest),
             secrets = c.Manifest is null ? null : SecretsNeeded(c.Manifest),
             setup_help = c.Manifest?.Connectors.ToDictionary(x => x.Name, x => plugins.Get(x.Plugin)?.Manifest.SetupHelp)
@@ -192,11 +216,15 @@ public sealed class SolutionService(
 
     public async Task<JsonObject> InstallAsync(string tenantId, string by, SolutionDeployRequest request, CancellationToken ct)
     {
-        var (manifest, validation, files) = CheckOrThrow(request.Bundle);
-        var (inputs, inputErrors) = SolutionValidator.ResolveInputs(manifest!, request.Inputs);
-        var secretErrors = MissingSecrets(manifest!, request.Secrets, alreadyConnected: [], assistantConnected: []);
-        if (inputErrors.Count + secretErrors.Count > 0) throw new SolutionException("Some install values are missing or wrong.", 400, [.. inputErrors, .. secretErrors]);
-        manifest = Resolve(manifest!, inputs);
+        var (checkedManifest, validation, files) = CheckOrThrow(request.Bundle);
+        var (manifest, globalErrors) = await BindGlobalsAsync(tenantId, checkedManifest!, request.Globals, previous: null, ct);
+        var (inputs, inputErrors) = SolutionValidator.ResolveInputs(manifest, request.Inputs);
+        var secretErrors = MissingSecrets(manifest, request.Secrets, alreadyConnected: [], assistantConnected: []);
+        if (inputErrors.Count + secretErrors.Count + globalErrors.Count > 0)
+        {
+            throw new SolutionException("Some install values are missing or wrong.", 400, [.. globalErrors, .. inputErrors, .. secretErrors]);
+        }
+        manifest = Resolve(manifest, inputs);
 
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
         {
@@ -286,6 +314,37 @@ public sealed class SolutionService(
         }
     }
 
+    /// <summary>
+    /// Which connectors use a global connector: the deploy's choices, else what the package says,
+    /// else what the install used before (so an upgrade keeps them). Each must exist in this
+    /// organization and be the same plugin.
+    /// </summary>
+    private async Task<(SolutionManifest Manifest, List<string> Errors)> BindGlobalsAsync(string tenantId, SolutionManifest manifest,
+        Dictionary<string, string>? chosen, SolutionManifest? previous, CancellationToken ct)
+    {
+        var errors = new List<string>();
+        foreach (var name in chosen?.Keys.Where(k => manifest.Connectors.All(c => c.Name != k)) ?? []) errors.Add($"'{name}' isn't a connector of this solution.");
+        var bound = new List<SolutionConnector>();
+        foreach (var c in manifest.Connectors)
+        {
+            var global = chosen is not null && chosen.TryGetValue(c.Name, out var pick)
+                ? pick
+                : c.Global ?? previous?.Connectors.FirstOrDefault(p => p.Name == c.Name && p.Plugin == c.Plugin)?.Global;
+            if (string.IsNullOrWhiteSpace(global))
+            {
+                bound.Add(c with { Global = null });
+                continue;
+            }
+
+            var found = await globalConnectors.GetAsync(tenantId, global.Trim(), ct);
+            if (found is null) errors.Add($"Connector '{c.Name}': there's no global connector '{global}' in this organization.");
+            else if (found.PluginId != c.Plugin) errors.Add($"Connector '{c.Name}' needs {c.Plugin}, but the global connector '{found.Name}' is {found.PluginId}.");
+            bound.Add(c with { Global = found?.Name ?? global });
+        }
+
+        return (manifest with { Connectors = bound }, errors);
+    }
+
     /// <summary>The manifest with its inputs filled in where the runtime reads them (connector
     /// settings, webhook URLs, the assistant's instructions and greeting); workspaces see the
     /// inputs as variables.</summary>
@@ -318,7 +377,7 @@ public sealed class SolutionService(
         HashSet<string> assistantConnected)
     {
         var errors = new List<string>();
-        foreach (var c in manifest.Connectors.Where(c => c.Required))
+        foreach (var c in manifest.Connectors.Where(c => c.Required && c.Global is null))
         {
             var workspaceNeeds = manifest.Workspaces.Any(w => w.Connectors.Contains(c.Name)) && !alreadyConnected.Contains(c.Name);
             var assistantNeeds = manifest.Assistant?.Connectors.Contains(c.Name) == true && !assistantConnected.Contains(c.Name);
@@ -343,13 +402,15 @@ public sealed class SolutionService(
     public ConnectionRequest EndUserDataConnection(string tenantId, string installId, SolutionAssistant assistant, string endUserId) =>
         DataConnection(tenantId, installId, assistant.Data, endUserId);
 
-    private static ConnectionRequest ConnectorConnection(SolutionConnector c, Dictionary<string, Dictionary<string, string>>? secrets) => new()
-    {
-        PluginId = c.Plugin,
-        Name = c.Name,
-        Settings = new Dictionary<string, string>(c.Settings),
-        Secrets = secrets?.GetValueOrDefault(c.Name) is { } s ? new Dictionary<string, string>(s) : []
-    };
+    private static ConnectionRequest ConnectorConnection(SolutionConnector c, Dictionary<string, Dictionary<string, string>>? secrets) => c.Global is { } global
+        ? new() { PluginId = c.Plugin, Name = c.Name, GlobalConnector = global }
+        : new()
+        {
+            PluginId = c.Plugin,
+            Name = c.Name,
+            Settings = new Dictionary<string, string>(c.Settings),
+            Secrets = secrets?.GetValueOrDefault(c.Name) is { } s ? new Dictionary<string, string>(s) : []
+        };
 
     private static Dictionary<string, string> Variables(SolutionWorkspace w, IReadOnlyDictionary<string, string> inputs)
     {
@@ -535,8 +596,10 @@ public sealed class SolutionService(
     {
         var row = await RowAsync(tenantId, installId, ct);
         if (row.Status != nameof(SolutionInstallStatus.Active)) throw new SolutionException("Only an active install can be upgraded.", StatusCodes.Status409Conflict);
-        var (manifest, validation, files) = CheckOrThrow(request.Bundle);
-        if (manifest!.Name != row.Name) throw new SolutionException($"This package is '{manifest.Name}', but the install is '{row.Name}'.", StatusCodes.Status409Conflict);
+        var (checkedManifest, validation, files) = CheckOrThrow(request.Bundle);
+        if (checkedManifest!.Name != row.Name) throw new SolutionException($"This package is '{checkedManifest.Name}', but the install is '{row.Name}'.", StatusCodes.Status409Conflict);
+        var old = EfSolutionCatalog.ToSolution(row).Manifest;
+        var (manifest, globalErrors) = await BindGlobalsAsync(tenantId, checkedManifest, request.Globals, old, ct);
         var order = SolutionValidator.CompareVersions(manifest.Version, row.Version);
         if (order <= 0 && !request.Force)
         {
@@ -549,19 +612,26 @@ public sealed class SolutionService(
         var (inputs, inputErrors) = SolutionValidator.ResolveInputs(manifest, request.Inputs, previousInputs);
         var workspaces = JsonSerializer.Deserialize<Dictionary<string, string>>(row.WorkspacesJson) ?? [];
         var oldBundle = JsonSerializer.Deserialize<SolutionBundle>(row.BundleJson, SolutionManifestReader.Json) ?? new SolutionBundle();
-        var old = EfSolutionCatalog.ToSolution(row).Manifest;
 
-        // Connectors a workspace already has don't need their secrets again.
+        // Connectors a workspace already has don't need their secrets again, unless they're moving
+        // between a global connector and their own secrets.
         var connected = new HashSet<string>();
         foreach (var w in manifest.Workspaces.Where(w => workspaces.ContainsKey(w.Key)))
         {
-            foreach (var c in await grains.GetGrain<IWorkspaceGrain>(workspaces[w.Key]).ListConnections()) connected.Add(c.Name);
+            foreach (var c in await grains.GetGrain<IWorkspaceGrain>(workspaces[w.Key]).ListConnections())
+            {
+                var wanted = manifest.Connectors.FirstOrDefault(x => x.Name == c.Name);
+                if (wanted is null || SameGlobal(wanted.Global, c.GlobalConnectorName)) connected.Add(c.Name);
+            }
         }
 
         var assistantConnected = await AssistantConnectedAsync(installId, manifest, ct);
         var newConnectors = manifest.Connectors.Where(c => !connected.Contains(c.Name)).Select(c => c.Name).ToHashSet();
         var secretErrors = MissingSecrets(manifest, request.Secrets, connected, assistantConnected);
-        if (inputErrors.Count + secretErrors.Count > 0) throw new SolutionException("Some values the new version needs are missing or wrong.", 400, [.. inputErrors, .. secretErrors]);
+        if (inputErrors.Count + secretErrors.Count + globalErrors.Count > 0)
+        {
+            throw new SolutionException("Some values the new version needs are missing or wrong.", 400, [.. globalErrors, .. inputErrors, .. secretErrors]);
+        }
         manifest = Resolve(manifest, inputs);
 
         var plan = new JsonObject
@@ -624,6 +694,8 @@ public sealed class SolutionService(
         logger.LogInformation("Upgraded solution {Name} ({InstallId}) from {From} to {To}", manifest.Name, installId, row.Version, manifest.Version);
         return new JsonObject { ["install_id"] = installId, ["name"] = manifest.Name, ["version"] = manifest.Version, ["plan"] = plan, ["workspaces"] = report };
     }
+
+    private static bool SameGlobal(string? a, string? b) => string.Equals(a ?? string.Empty, b ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
     private static bool PipelineDiffers(Pipelines.PipelineDefinition wanted, Pipelines.PipelineDefinition current) =>
         JsonSerializer.Serialize(wanted.Stages) != JsonSerializer.Serialize(current.Stages) ||
@@ -764,6 +836,17 @@ public sealed class SolutionService(
             else problems.Add($"records: {added.Message}");
         }
 
+        // A connector moved to (or off, or between) global connectors: link the new one in its place.
+        foreach (var name in w.Connectors.Where(connections.ContainsKey))
+        {
+            if (manifest.Connectors.FirstOrDefault(c => c.Name == name) is not { } c || SameGlobal(c.Global, connections[name].GlobalConnectorName)) continue;
+            if (c.Global is null && secrets?.GetValueOrDefault(name) is not { Count: > 0 }) continue;
+            await workspace.RemoveConnection(connections[name].ConnectionId);
+            var relinked = await workspace.AddConnection(ConnectorConnection(c, secrets));
+            if (relinked.Success) changes.Add(c.Global is null ? $"connector '{name}' now uses its own secrets" : $"connector '{name}' now uses the global connector '{c.Global}'");
+            else problems.Add($"connector '{name}': {relinked.Message}");
+        }
+
         foreach (var name in w.Connectors.Where(n => !connections.ContainsKey(n)))
         {
             if (manifest.Connectors.FirstOrDefault(c => c.Name == name) is not { } c || plugins.Get(c.Plugin) is null) continue;
@@ -880,7 +963,7 @@ public sealed class SolutionService(
                 ["title_field"] = RecordSchema.TitleField(e.Value),
                 ["fields"] = JsonSerializer.SerializeToNode(e.Value.Fields, SolutionManifestReader.Json)
             })]),
-            ["connectors"] = JsonSerializer.SerializeToNode(m.Connectors.Select(c => new { c.Name, c.Plugin, c.Required, c.Description }), SolutionManifestReader.Json),
+            ["connectors"] = JsonSerializer.SerializeToNode(m.Connectors.Select(c => new { c.Name, c.Plugin, c.Required, c.Description, c.Global }), SolutionManifestReader.Json),
             ["assistant"] = m.Assistant is { } a ? new JsonObject { ["name"] = a.Name, ["greeting"] = a.Greeting, ["data"] = JsonSerializer.SerializeToNode(a.Data) } : null,
             ["evals"] = new JsonArray([.. m.Evals.Select(e => (JsonNode)new JsonObject { ["name"] = e.Name, ["workspace"] = e.Workspace })]),
             ["webhooks"] = new JsonArray([.. m.Webhooks.Select(h => (JsonNode)new JsonObject { ["url"] = h.Url, ["events"] = JsonSerializer.SerializeToNode(h.Events) })]),

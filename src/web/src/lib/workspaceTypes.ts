@@ -195,6 +195,9 @@ export interface ConnectionView {
   gateway?: McpGatewaySettings | null;
   /** Where the connection is served as an MCP server (workspace connections with tools). */
   gateway_path?: string | null;
+  /** Set when it links one of the organization's global connectors (settings and secrets live there). */
+  global_connector_id?: string | null;
+  global_connector_name?: string | null;
 }
 
 export interface McpGatewaySettings {

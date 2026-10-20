@@ -42,6 +42,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<SolutionConversationRecord> SolutionConversations => Set<SolutionConversationRecord>();
     public DbSet<SolutionPackageRecord> SolutionPackages => Set<SolutionPackageRecord>();
     public DbSet<SolutionPackageNameRecord> SolutionPackageNames => Set<SolutionPackageNameRecord>();
+    public DbSet<GlobalConnectorRecord> GlobalConnectors => Set<GlobalConnectorRecord>();
+    public DbSet<GlobalConnectorLinkRecord> GlobalConnectorLinks => Set<GlobalConnectorLinkRecord>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -295,5 +297,17 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasIndex(x => new { x.Visibility, x.PublisherTenantId });
         });
         modelBuilder.Entity<SolutionPackageNameRecord>(b => b.HasKey(x => x.Name));
+
+        // Global connectors (docs/plugins.md#global-connectors).
+        modelBuilder.Entity<GlobalConnectorRecord>(b =>
+        {
+            b.HasKey(x => x.ConnectorId);
+            b.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+        });
+        modelBuilder.Entity<GlobalConnectorLinkRecord>(b =>
+        {
+            b.HasKey(x => new { x.OwnerId, x.ConnectionId });
+            b.HasIndex(x => new { x.TenantId, x.ConnectorId });
+        });
     }
 }

@@ -68,6 +68,33 @@ The builder writes the same package the CLI reads:
 
 The CLI is an alternative for people who prefer the terminal. Neither is required for the other.
 
+### Designing in a conversation
+
+**Design with AI**, at the bottom right of the builder, opens a chat about the solution. You
+describe it in plain language: the whole app ("a helpdesk where customers report issues, an agent
+triages them by urgency, and an assistant answers status questions") or one change ("add a Vendor
+entity with name, phone and hourly rate", "add an eval for each workspace", "send a Slack message
+when an urgent request comes in"). It can change every section: basics, inputs, connectors, the
+data model, workspaces with their pipelines and triggers, skills, knowledge, the assistant, seed
+data, webhooks and evals.
+
+- **You review every change.** Each answer lists the changes it would make, already checked
+  against the server, with any problems they'd leave to fix. Nothing changes until you press
+  **Apply**, and an applied change can be undone from the conversation.
+- **The forms stay the source of truth.** The designer always works on the draft as it is now,
+  including your own edits. If the draft changed since a proposal was made, applying it asks first.
+- **It knows what's available.** That covers the server's plugins and your organization's global
+  connectors (it prefers those for a connector), and the platform's capabilities.
+- **It asks when it must.** When a request needs a decision only you can make, it asks instead of
+  guessing, and proposes nothing.
+- It runs on your organization's model and is billed like any model call. The conversation is kept
+  in your browser with the draft. With the Mock model it handles only a few phrasings (add or remove
+  an entity, rename, add an eval).
+
+The API is `POST /api/v1/solutions/design` with `{manifest, skills, history, request}` (Member). It
+returns `{reply, summary, changes, errors, manifest, skills, problems, warnings, can_apply}` and
+saves nothing.
+
 ## Quick start
 
 ```bash
@@ -127,6 +154,9 @@ connectors:                    # integrations it needs; secrets are asked for at
     plugin: twilio-sms
     settings: { from_number: "{{ inputs.sms_from }}" }
     required: true             # false: installs without it
+  - name: crm
+    plugin: http-api
+    global: team_crm           # optional: use the organization's global connector instead of asking for secrets
 
 entities: { … }                # the data model (below)
 workspaces: [ … ]              # below
@@ -138,7 +168,7 @@ webhooks:  [ … ]               # your backend, told about record changes (belo
 evals:     [ … ]               # below
 ```
 
-`requires_platform` is checked against the server's solution platform version (1.2.0 here; see
+`requires_platform` is checked against the server's solution platform version (1.3.0 here; see
 [api-versioning.md](api-versioning.md)). A server that's too old refuses the package with the
 reason, instead of installing something that half works. Minor versions only add features, so
 `>=1.2.0` (or `^1.2.0`) is the usual choice.
@@ -191,6 +221,24 @@ triggers:
 
 Webhook, form and watch triggers work as in [workspaces.md](workspaces.md). A watch's
 `source_arguments` can be written as an object.
+
+### Using global connectors
+
+A connector can use one of the organization's [global connectors](plugins.md#global-connectors)
+instead of asking for its secrets at every install. The deployer doesn't type the keys again, and
+rotating them on the Connectors page reaches the solution.
+
+- **At deploy.** For each connector, the deploy dialog lists the organization's global connectors
+  of the same plugin. When exactly one fits, a new install uses it by default. Over the API, pass
+  `globals: { crm: "team_crm" }` (connector name → global connector name or id). `""` goes back to
+  the connector's own secrets.
+- **In the package.** `global: team_crm` names one. Names differ between organizations, so for a
+  package you share, choosing at deploy is usually better.
+- **Upgrades keep the choice** unless the deploy changes it. Moving a connector onto a global
+  connector, or off one, relinks the workspaces' connections.
+- **What uses it.** The solution's workspaces link it, and so do its assistant's conversations. The
+  plugin must match, and the connector must be in the deploying organization.
+- `validate` returns `globals`: for each connector, the global connectors that could back it.
 
 ## Data: entities and records
 

@@ -4,12 +4,13 @@ Everything added or changed to make Aktor a platform others build their own agen
 How to use it is in [solutions.md](solutions.md); where it's going is in [platform-builders.md](platform-builders.md).
 This page is the record of what was built, in the order it was built.
 
-Solution platform version: **1.2.0** (see [api-versioning.md](api-versioning.md)).
+Solution platform version: **1.3.0** (see [api-versioning.md](api-versioning.md)).
 
 ## Upgrading a server
 
-- **Rebuild and restart** (`docker compose up --build`). One database migration, `AddSolutions`,
-  is applied automatically when the API starts. It only adds tables, so existing data is untouched.
+- **Rebuild and restart** (`docker compose up --build`). The database migrations `AddSolutions`
+  and `AddGlobalConnectors` are applied automatically when the API starts. They only add tables, so
+  existing data is untouched.
 - **Back up `SECRETS_MASTER_KEY`** (or `keys/secrets-master.key`). Besides encrypting the vault, it
   now signs records bindings, end-user tokens and registry packages. A new key invalidates all three.
 - Nothing else is required. Every existing API, page, task and workspace works as before.
@@ -114,7 +115,30 @@ Solution platform version: **1.2.0** (see [api-versioning.md](api-versioning.md)
 - **New endpoints:** `POST /api/v1/solutions/parse` (a package as structured JSON) and
   `GET /api/v1/solutions/{id}/package` (the package an install came from).
 
-## 5. Fixes along the way
+## 5. Global connectors and designing in a conversation (platform 1.3.0)
+
+- **Global connectors** ([plugins.md](plugins.md#global-connectors)):
+  - an integration is set up once per organization, on the new **Connectors** page, and linked
+    from workspaces, workflows, tasks and solutions;
+  - ids start with `gc-`, and linked connections show a **Global** badge and carry
+    `global_connector_id` and `global_connector_name`;
+  - links read settings and secrets live, so a rotation reaches every link, and their tools are
+    refreshed;
+  - deleting a connector is refused while it's linked, unless forced;
+  - tasks may link one only when an admin allows it (**Usable in tasks**).
+- **Solutions on global connectors** ([solutions.md](solutions.md#using-global-connectors)):
+  - a connector's `global:` field, and `globals` on deploy;
+  - the deploy dialog's picker, and the builder's "From a global connector…";
+  - the choice is kept across upgrades, and the assistant's conversations link it too.
+- **Designing in a conversation** ([solutions.md](solutions.md#designing-in-a-conversation)): the
+  builder's **Design with AI** chat proposes validated changes to every section, applied (and
+  undone) by you. API: `POST /api/v1/solutions/design`.
+- **Migration** `AddGlobalConnectors` adds two tables (`GlobalConnectors`, `GlobalConnectorLinks`);
+  nothing existing changes.
+- **Tests:** `SolutionDesignTests` (unit), `GlobalConnectorTests` (grains), and
+  `GlobalConnectorsApiTests` (API and Postgres).
+
+## 6. Fixes along the way
 
 - **Watch tool calls** now carry the organization, so watches on records work for every organization.
 - **The Mock model** answers end users' messages plainly, instead of quoting the assistant's

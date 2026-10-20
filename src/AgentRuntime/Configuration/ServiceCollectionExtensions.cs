@@ -106,6 +106,7 @@ public static class ServiceCollectionExtensions
         // infrastructure layer, third-party ones loaded from the plugins folder. ISecretStore must
         // also come from the host (encrypted, durable); there is deliberately no default.
         services.AddSingleton<Integrations.PluginCatalog>();
+        services.TryAddSingleton<Integrations.IGlobalConnectorStore, Integrations.InMemoryGlobalConnectorStore>();
 
         // Safety: the audit log defaults to in-memory; the infrastructure layer makes it durable.
         services.TryAddSingleton<Safety.IAuditLog, Safety.InMemoryAuditLog>();

@@ -76,8 +76,10 @@ public sealed class OpenApiImportController : ControllerBase
 [AgentRuntime.Api.Platform.WorkspaceAccess]
 public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
 {
+    /// <param name="GlobalConnector">Link the organization's global connector with this id or name
+    /// instead of entering a plugin, settings and secrets.</param>
     public sealed record AddBody(string PluginId, string Name, Dictionary<string, string>? Settings, Dictionary<string, string>? Secrets,
-        string? NotifyLevel, List<string>? AllowedSenders);
+        string? NotifyLevel, List<string>? AllowedSenders, string? GlobalConnector = null);
     public sealed record UpdateBody(string? NotifyLevel, List<string>? EnabledTools, List<string>? AllowedSenders,
         Dictionary<string, string>? Settings = null, GatewayBody? Gateway = null);
     public sealed record GatewayBody(bool Enabled, List<string>? Tools);
@@ -107,7 +109,8 @@ public sealed class ConnectionsController(IGrainFactory grains) : ControllerBase
             Settings = body.Settings ?? [],
             Secrets = body.Secrets ?? [],
             NotifyLevel = level,
-            AllowedSenders = body.AllowedSenders ?? []
+            AllowedSenders = body.AllowedSenders ?? [],
+            GlobalConnector = body.GlobalConnector
         });
         return result.Success ? Ok(new { message = result.Message, connection = result.Connection }) : BadRequest(new { error = result.Message });
     }
@@ -217,7 +220,8 @@ public sealed class TaskConnectionsController(IGrainFactory grains, AgentRuntime
             PluginId = body.PluginId ?? string.Empty,
             Name = body.Name ?? string.Empty,
             Settings = body.Settings ?? [],
-            Secrets = body.Secrets ?? []
+            Secrets = body.Secrets ?? [],
+            GlobalConnector = body.GlobalConnector
         });
         return result.Success ? Ok(new { message = result.Message, connection = result.Connection }) : BadRequest(new { error = result.Message });
     }

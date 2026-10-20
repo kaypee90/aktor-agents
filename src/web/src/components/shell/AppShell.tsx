@@ -40,6 +40,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: "Connect",
     items: [
+      { href: "/connectors", label: "Connectors", icon: Icons.Plug },
       { href: "/connect", label: "Integrations & API", icon: Icons.Connect },
       { href: "/docs", label: "Documentation", icon: Icons.Book },
     ],
@@ -81,7 +82,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const isActive = (item: NavItem) =>
-    item.href === "/" ? pathname === "/" : pathname.startsWith(item.href) || (item.match ?? []).some((m) => pathname.startsWith(m));
+    // Whole path segments: /connectors isn't /connect.
+    item.href === "/" ? pathname === "/" : [item.href, ...(item.match ?? [])].some((m) => pathname === m || pathname.startsWith(`${m}/`));
 
   const sidebar = (
     <nav className={cx("flex h-full flex-col border-r border-zinc-200 bg-zinc-50/80 dark:border-zinc-800/80 dark:bg-zinc-950", collapsed ? "w-16" : "w-60")}>

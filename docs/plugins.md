@@ -22,6 +22,40 @@ flowchart LR
     U((User)) -- "SMS reply / Telegram message" --> I[/api/channels/.../] --> Workspace
 ```
 
+## Global connectors
+
+A **global connector** is a connection set up once for the whole organization (dashboard:
+**Connectors**). Its settings are stored once and its secrets go into the vault once. Workspaces,
+workflows, solutions and tasks then **link** it, instead of each keeping its own copy of the keys.
+
+- **How to tell them apart.** Global connector ids start with `gc-`. A connection that links one
+  carries `global_connector_id` and `global_connector_name`, and the dashboard marks it **Global**.
+- **One place to change.** Every link reads the connector's settings and secrets *live*. Rotating a
+  key on the Connectors page reaches every link on its next call, and the links' tool lists are
+  refreshed. Names don't change, because links and solutions refer to them.
+- **Each link is still its own connection.** Its tool switches, notification level, allowed
+  senders, MCP gateway, safety policy and audit trail belong to the workspace or task. Only the
+  plugin, settings and secrets are shared. A link can't change the shared settings.
+- **Removing a link** keeps the connector and its secrets for everyone else. **Deleting the
+  connector** is refused while something links it; `?force=true` removes those links too.
+- **Who can use them.** Admins create, edit and delete them, and link them into workspaces. Members
+  can see them (never their secrets). A **task** (a chat) can link one only if an admin turned on
+  **Usable in tasks**, since any member can start a task. A solution's assistant can always link
+  the one an admin chose at deploy.
+- **Solutions** use them through a connector's `global:` field, or the deploy dialog's picker
+  ([solutions.md](solutions.md#using-global-connectors)).
+- **Isolation.** A connector belongs to one organization. Another organization can't see it, link
+  it or deploy onto it; it's answered as if it didn't exist.
+
+```mermaid
+flowchart LR
+    G["Global connector gc-…<br/>(settings once, secrets once)"] --- V[(Vault: global/gc-…)]
+    W1[Workspace A: crm] -. link .-> G
+    W2[Workflow B: crm] -. link .-> G
+    S[Solution assistant: crm] -. link .-> G
+    T[Task: crm, if usable in tasks] -. link .-> G
+```
+
 ## Built-in plugins
 
 | Plugin | Tools | Notifications | Inbound | Notes |
@@ -334,13 +368,18 @@ host doesn't already have); the SDK and `Microsoft.Extensions.*` come from the h
 | Method | Path | |
 |---|---|---|
 | `GET` | `/api/plugins` | Installed plugins and their setting fields |
-| `GET` / `POST` | `/api/workspaces/{id}/connections` | `{plugin_id, name, settings, secrets, notify_level?, allowed_senders?}` |
+| `GET` / `POST` | `/api/workspaces/{id}/connections` | `{plugin_id, name, settings, secrets, notify_level?, allowed_senders?}`, or `{name, global_connector}` to link a global connector |
 | `PATCH` | `/api/workspaces/{id}/connections/{cid}` | `{notify_level?, enabled_tools?, allowed_senders?, settings?, gateway?}`: `settings` changes non-secret settings such as `endpoints` (checked again; refused if invalid); `gateway` is `{enabled, tools}` |
 | `POST` | `/api/integrations/openapi` | `{spec}` (JSON or YAML): `{title, base_url, endpoints, warnings}`; saves nothing. Member |
 | `POST` | `/mcp/gateway/{id}/{cid}` | The connection's MCP gateway (JSON-RPC; `Authorization: Bearer ak_…`) |
 | `POST` | `/api/workspaces/{id}/connections/{cid}/refresh` | Re-list tools, keeping on/off choices |
-| `DELETE` | `/api/workspaces/{id}/connections/{cid}` | Removes it and deletes its secrets |
+| `DELETE` | `/api/workspaces/{id}/connections/{cid}` | Removes it and deletes its secrets (a link to a global connector: only the link) |
 | `POST` | `/api/channels/{workspaceId}/{connectionId}/{secret}` | Public inbound endpoint (set it as the provider's webhook) |
+| `GET` | `/api/connectors` | The organization's global connectors, with `used_by` (no secrets). Member |
+| `POST` | `/api/connectors` | `{name, plugin_id, description?, settings, secrets, usable_in_tasks?}`; checked before it's saved. Admin |
+| `PATCH` | `/api/connectors/{id}` | `{description?, settings?, secrets?, usable_in_tasks?}`: a secret left out keeps its value; linked connections are refreshed. Admin |
+| `POST` | `/api/connectors/{id}/test` | Checks it against the service again. Admin |
+| `DELETE` | `/api/connectors/{id}` | Refused while linked; `?force=true` also removes the links. Admin |
 | `GET` / `POST` | `/api/tasks/{id}/connections` | A task's own tool connections (MCP, HTTP API): `{plugin_id, name, settings, secrets}`; Member |
 | `PATCH` / `DELETE` | `/api/tasks/{id}/connections/{cid}` | `{enabled_tools?, settings?}`, or remove it and its secrets |
 | `POST` | `/api/tasks/{id}/connections/{cid}/refresh` | Re-list its tools |

@@ -375,6 +375,88 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Events");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.GlobalConnectorLinkRecord", b =>
+                {
+                    b.Property<string>("OwnerId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConnectionId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConnectionName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConnectorId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("LinkedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OwnerKind")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("OwnerId", "ConnectionId");
+
+                    b.HasIndex("TenantId", "ConnectorId");
+
+                    b.ToTable("GlobalConnectorLinks");
+                });
+
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.GlobalConnectorRecord", b =>
+                {
+                    b.Property<string>("ConnectorId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PluginId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SecretKeysJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("UsableInTasks")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("ConnectorId");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("GlobalConnectors");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.InvitationRecord", b =>
                 {
                     b.Property<string>("InvitationId")

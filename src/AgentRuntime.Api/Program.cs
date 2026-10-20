@@ -66,6 +66,8 @@ builder.Services.AddSingleton<PipelineDesignService>();
 builder.Services.AddSingleton<ModelProfileRenamer>();
 // Solutions: packaged apps, their records and their end users (docs/solutions.md).
 builder.Services.AddSingleton<SolutionService>();
+builder.Services.AddSingleton<GlobalConnectorService>();
+builder.Services.AddSingleton<SolutionDesignService>();
 builder.Services.AddSingleton<SolutionAppService>();
 builder.Services.AddSingleton<SolutionUsageService>();
 builder.Services.AddSingleton<SolutionRegistryService>();

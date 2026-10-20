@@ -82,6 +82,11 @@ public sealed class ConnectionDefinition
     [Id(13)] public bool SupportsInbound { get; set; }
     /// <summary>Whether the connection is also served as an MCP server to callers outside (docs/plugins.md, "MCP gateway").</summary>
     [Id(14)] public McpGatewaySettings Gateway { get; set; } = new();
+    /// <summary>Set when the connection links an organization's <see cref="GlobalConnector"/>: its
+    /// settings and secrets are then the global connector's, read live.</summary>
+    [Id(15)] public string? GlobalConnectorId { get; set; }
+    /// <summary>The linked global connector's name (names don't change), to show which one it is.</summary>
+    [Id(16)] public string? GlobalConnectorName { get; set; }
 }
 
 /// <summary>A connection served as its own MCP server at /mcp/gateway/{workspace}/{connection}:
@@ -105,6 +110,13 @@ public sealed record ConnectionRequest
     [Id(3)] public Dictionary<string, string> Secrets { get; init; } = [];
     [Id(4)] public NotifyLevel? NotifyLevel { get; init; }
     [Id(5)] public List<string> AllowedSenders { get; init; } = [];
+    /// <summary>Link the organization's global connector with this id or name instead: its plugin,
+    /// settings and secrets are used, and <see cref="PluginId"/>, settings and secrets here are ignored.</summary>
+    [Id(6)] public string? GlobalConnector { get; init; }
+    /// <summary>Set only by the server for connections an admin already chose (a solution's
+    /// assistant): a task may then link a global connector that isn't open to tasks. Never mapped
+    /// from a request body.</summary>
+    [Id(7)] public bool AdminChosenGlobal { get; init; }
 }
 
 [GenerateSerializer]
@@ -151,6 +163,9 @@ public sealed record ConnectionView
     [Id(14)] public McpGatewaySettings? Gateway { get; init; }
     /// <summary>Relative path of the connection's MCP gateway (workspace connections only).</summary>
     [Id(15)] public string? GatewayPath { get; init; }
+    /// <summary>The global connector it links, if any (its settings and secrets are managed there).</summary>
+    [Id(16)] public string? GlobalConnectorId { get; init; }
+    [Id(17)] public string? GlobalConnectorName { get; init; }
 }
 
 [GenerateSerializer]

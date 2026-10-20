@@ -877,6 +877,10 @@ public sealed partial class WorkspaceGrain(
             return ConnectionResult.Fail($"A workspace can have at most {_integrations.MaxConnectionsPerWorkspace} connections.");
         }
 
+        var (resolved, global, globalError) = await integrations.ResolveGlobalAsync(S.TenantId, request);
+        if (globalError is not null) return ConnectionResult.Fail(globalError);
+        request = resolved;
+
         var plugin = plugins.Get(request.PluginId);
         if (plugin is null) return ConnectionResult.Fail($"No plugin '{request.PluginId}' is installed.");
 
@@ -897,7 +901,8 @@ public sealed partial class WorkspaceGrain(
             if (string.IsNullOrWhiteSpace(value)) value = field.Secret ? null : field.DefaultValue;
             if (string.IsNullOrWhiteSpace(value))
             {
-                if (field.Required) return ConnectionResult.Fail($"'{field.Label}' is required.");
+                // A global connector's secrets are in its own vault scope, checked when it was set up.
+                if (field.Required && !(field.Secret && global is not null)) return ConnectionResult.Fail($"'{field.Label}' is required.");
                 continue;
             }
 
@@ -911,7 +916,9 @@ public sealed partial class WorkspaceGrain(
             PluginId = plugin.Manifest.Id,
             Name = name,
             Settings = settings,
-            SecretKeys = secretValues.Keys.ToList(),
+            SecretKeys = global?.SecretKeys.ToList() ?? secretValues.Keys.ToList(),
+            GlobalConnectorId = global?.ConnectorId,
+            GlobalConnectorName = global?.Name,
             SupportsTools = plugin is Plugins.IToolProviderPlugin,
             SupportsNotifications = plugin is Plugins.INotificationChannelPlugin,
             SupportsInbound = plugin is Plugins.IInboundChannelPlugin,
@@ -929,14 +936,15 @@ public sealed partial class WorkspaceGrain(
         var (check, tools) = await integrations.InspectAsync(S.WorkspaceId, definition);
         if (!check.Ok)
         {
-            await secretStore.DeleteScopeAsync(scope);
+            if (global is null) await secretStore.DeleteScopeAsync(scope);
             return ConnectionResult.Fail(check.Message);
         }
 
         definition.Tools = tools;
         S.Connections[definition.ConnectionId] = definition;
+        await integrations.LinkGlobalAsync(S.TenantId, Integrations.GlobalConnectors.WorkspaceOwner, S.WorkspaceId, definition);
 
-        var parts = new List<string> { $"Connected {plugin.Manifest.Name} as '{name}'." };
+        var parts = new List<string> { global is null ? $"Connected {plugin.Manifest.Name} as '{name}'." : $"Linked the global connector '{global.Name}' ({plugin.Manifest.Name}) as '{name}'." };
         if (tools.Count > 0) parts.Add($"{tools.Count(t => t.Enabled)} of {tools.Count} tools enabled for your agents.");
         if (definition.SupportsNotifications) parts.Add($"Notifications: {definition.NotifyLevel.ToString().ToLowerInvariant()}.");
         if (definition.SupportsInbound)
@@ -950,7 +958,7 @@ public sealed partial class WorkspaceGrain(
         await SaveAsync();
         await AuditAsync("user", "user", "You", "connection.added", name, "ok",
             $"Connected {plugin.Manifest.Name} as '{name}' ({tools.Count} tools)",
-            JsonSerializer.Serialize(new { plugin = plugin.Manifest.Id, settings, secret_keys = definition.SecretKeys, notify = definition.NotifyLevel.ToString() }),
+            JsonSerializer.Serialize(new { plugin = plugin.Manifest.Id, settings, secret_keys = definition.SecretKeys, notify = definition.NotifyLevel.ToString(), global = definition.GlobalConnectorId }),
             key: $"connection:{definition.ConnectionId}:added");
         await ChangedAsync($"connection {name} added");
         return ConnectionResult.Ok(ToView(definition), check.Message);
@@ -978,6 +986,7 @@ public sealed partial class WorkspaceGrain(
 
         if (update.Settings is { } changes)
         {
+            if (c.GlobalConnectorId is not null) return ConnectionResult.Fail($"'{c.Name}' uses the global connector '{c.GlobalConnectorName}': change its settings under Connectors.");
             if (plugins.Get(c.PluginId) is not { } plugin) return ConnectionResult.Fail($"The plugin '{c.PluginId}' isn't installed.");
             var merged = ConnectionSettings.Merge(plugin.Manifest, c.Settings, changes, out var invalid);
             if (invalid is not null) return ConnectionResult.Fail(invalid);
@@ -1028,10 +1037,11 @@ public sealed partial class WorkspaceGrain(
         if (!Exists || !S.Connections.Remove(connectionId, out var c)) return;
 
         S.NotificationOutbox.RemoveAll(d => d.ConnectionId == connectionId);
-        await secretStore.DeleteScopeAsync(ConnectionNames.Scope(S.WorkspaceId, connectionId));
-        AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Connection '{c.Name}' removed; its secrets were deleted.");
+        await integrations.ForgetConnectionAsync(S.WorkspaceId, c);
+        var what = c.GlobalConnectorId is null ? "its secrets were deleted" : $"the global connector '{c.GlobalConnectorName}' keeps its secrets";
+        AppendChat(ChatAuthorKind.System, "system", "Workspace", $"Connection '{c.Name}' removed; {what}.");
         await SaveAsync();
-        await AuditAsync("user", "user", "You", "connection.removed", c.Name, "ok", $"Removed '{c.Name}' and deleted its secrets",
+        await AuditAsync("user", "user", "You", "connection.removed", c.Name, "ok", $"Removed '{c.Name}'; {what}",
             key: $"connection:{connectionId}:removed");
         await ChangedAsync($"connection {c.Name} removed");
     }
@@ -1044,7 +1054,11 @@ public sealed partial class WorkspaceGrain(
         foreach (var c in S.Connections.Values.OrderBy(c => c.CreatedAt))
         {
             var secrets = new Dictionary<string, string>();
-            if (includeSecrets)
+            if (c.GlobalConnectorId is not null)
+            {
+                // A copy links the same global connector; its secrets are never exported.
+            }
+            else if (includeSecrets)
             {
                 foreach (var key in c.SecretKeys)
                 {
@@ -1063,7 +1077,8 @@ public sealed partial class WorkspaceGrain(
                 Settings = new Dictionary<string, string>(c.Settings),
                 Secrets = secrets,
                 NotifyLevel = c.NotifyLevel,
-                AllowedSenders = [.. c.AllowedSenders]
+                AllowedSenders = [.. c.AllowedSenders],
+                GlobalConnector = c.GlobalConnectorId
             });
         }
 
@@ -1107,9 +1122,9 @@ public sealed partial class WorkspaceGrain(
         if (S.Status != WorkspaceStatus.Archived) return WorkspaceActionResult.Fail("Archive the workspace before deleting it.");
 
         var name = S.Name;
-        foreach (var connectionId in S.Connections.Keys.ToList())
+        foreach (var connection in S.Connections.Values.ToList())
         {
-            await secretStore.DeleteScopeAsync(ConnectionNames.Scope(S.WorkspaceId, connectionId));
+            await integrations.ForgetConnectionAsync(S.WorkspaceId, connection);
         }
 
         foreach (var trigger in S.Triggers.Values.ToList()) await UnregisterTriggerReminderAsync(trigger.TriggerId);
@@ -1320,7 +1335,9 @@ public sealed partial class WorkspaceGrain(
         SupportsNotifications = c.SupportsNotifications,
         SupportsInbound = c.SupportsInbound,
         Gateway = c.Gateway,
-        GatewayPath = c.SupportsTools ? $"/mcp/gateway/{S.WorkspaceId}/{c.ConnectionId}" : null
+        GatewayPath = c.SupportsTools ? $"/mcp/gateway/{S.WorkspaceId}/{c.ConnectionId}" : null,
+        GlobalConnectorId = c.GlobalConnectorId,
+        GlobalConnectorName = c.GlobalConnectorName
     };
 
     // ---- Safety: policy, approvals, audit ----------------------------------------
