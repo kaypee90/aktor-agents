@@ -15,6 +15,7 @@ import {
   startStudyRun,
   studyNotebookUrl,
   updateStudy,
+  type IdeaBrief,
   type ModelChoice,
   type StudyDetail,
   type StudyEvidence,
@@ -28,11 +29,13 @@ import { StudySources } from "@/components/studies/StudySources";
 import { StudyExperiments, StudyModels, StudyReport } from "@/components/studies/StudyFindings";
 import { EvidenceChip, EvidenceProvider, KIND_TONE, ROLE_LABEL } from "@/components/studies/StudyEvidence";
 import { ModelField, modelName } from "@/components/studies/ModelField";
+import { BusinessCase, IdeaBriefCard, IdeaFields, VerdictCard, blankIdea } from "@/components/studies/IdeaCase";
 
 /**
  * Studies (docs/studies.md): research projects with their own data, documents and connections.
  * Agent teams analyze, model and simulate with real code, review each other, and write a report
- * whose every finding cites its evidence.
+ * whose every finding cites its evidence. An idea study evaluates an idea instead of a question:
+ * its report scores usefulness, feasibility and profitability, the last from simulated finances.
  */
 export default function StudiesPage() {
   return <Suspense><Studies /></Suspense>;
@@ -50,7 +53,7 @@ function StudyList() {
   const canEdit = atLeast((me?.role ?? "Viewer") as Role, "Member");
   const [studies, setStudies] = useState<StudySummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState<{ name: string; question: string; model: string } | null>(null);
+  const [creating, setCreating] = useState<{ name: string; question: string; model: string; idea: IdeaBrief | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [models, setModels] = useState<ModelChoice[]>([]);
 
@@ -63,7 +66,7 @@ function StudyList() {
     if (!creating?.name.trim()) return;
     setBusy(true);
     try {
-      const study = await createStudy(creating.name.trim(), creating.question.trim(), creating.model);
+      const study = await createStudy(creating.name.trim(), creating.question.trim(), creating.model, creating.idea);
       router.push(`/studies?id=${encodeURIComponent(study.study_id)}&tab=sources`);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -75,8 +78,11 @@ function StudyList() {
     <div>
       <PageHeader
         title="Studies"
-        description="Research a question with your own data. Give a study its datasets, documents and connections; agent teams explore the data, fit models, run simulated experiments, review each other's work and report findings that cite their evidence."
-        actions={canEdit && <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => setCreating({ name: "", question: "", model: "" })}>New study</Button>}
+        description="Research a question with your own data, or evaluate an idea. Give a study its datasets, documents and connections; agent teams explore the data, fit models, simulate customers and finances, review each other's work and report findings that cite their evidence."
+        actions={canEdit && <>
+          <Button icon={<Icons.Simulation className="h-3.5 w-3.5" />} onClick={() => setCreating({ name: "", question: "", model: "", idea: blankIdea() })}>Evaluate an idea</Button>
+          <Button variant="primary" icon={<Icons.Plus className="h-3.5 w-3.5" />} onClick={() => setCreating({ name: "", question: "", model: "", idea: null })}>New study</Button>
+        </>}
       />
       <div className="mx-auto max-w-6xl space-y-4 px-6 py-6">
         <ErrorBanner error={error} onClose={() => setError(null)} />
@@ -84,8 +90,11 @@ function StudyList() {
           <div className="grid gap-3 md:grid-cols-2">{[0, 1, 2, 3].map((i) => <div key={i} className="h-28 animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />)}</div>
         ) : studies.length === 0 ? (
           <EmptyState icon={<Icons.Simulation className="h-5 w-5" />} title="No studies yet"
-            description="Start with a question, like “What happens to renewals if rents rise 8%?”, then add the data that can answer it."
-            action={canEdit && <Button variant="primary" onClick={() => setCreating({ name: "", question: "", model: "" })}>New study</Button>} />
+            description="Start with a question, like “What happens to renewals if rents rise 8%?”, then add the data that can answer it. Or describe an idea and let agents judge whether it's useful, feasible and profitable."
+            action={canEdit && <div className="flex gap-2">
+              <Button onClick={() => setCreating({ name: "", question: "", model: "", idea: blankIdea() })}>Evaluate an idea</Button>
+              <Button variant="primary" onClick={() => setCreating({ name: "", question: "", model: "", idea: null })}>New study</Button>
+            </div>} />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
             {studies.map((s) => (
@@ -93,9 +102,9 @@ function StudyList() {
                 className="block rounded-xl border border-zinc-200 bg-white p-4 shadow-sm transition hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-brand-800">
                 <div className="flex items-start justify-between gap-3">
                   <span className="font-semibold text-zinc-900 dark:text-zinc-100">{s.name}</span>
-                  <StatusBadge status={s.status} />
+                  <span className="flex shrink-0 items-center gap-1.5">{s.kind === "idea" && <Badge tone="brand">Idea</Badge>}<StatusBadge status={s.status} /></span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">{s.question || "No question yet."}</p>
+                <p className="mt-1 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">{s.kind === "idea" && s.idea ? s.idea.idea : s.question || "No question yet."}</p>
                 <div className="mt-3 text-xs text-zinc-500">{s.datasets} dataset{s.datasets === 1 ? "" : "s"} · updated {ago(s.updated_at)}</div>
               </Link>
             ))}
@@ -103,19 +112,23 @@ function StudyList() {
         )}
       </div>
 
-      <Modal open={creating !== null} onClose={() => setCreating(null)} title="New study"
-        description="A study has its own datasets, documents and connections; nothing is shared with other studies."
+      <Modal open={creating !== null} onClose={() => setCreating(null)} title={creating?.idea ? "Evaluate an idea" : "New study"} wide={!!creating?.idea}
+        description={creating?.idea
+          ? "Describe the idea; agents check it for usefulness, feasibility and profitability. Add what you know (market reports, competitor notes, cost quotes, survey data) as sources afterwards: the more evidence, the fewer guesses."
+          : "A study has its own datasets, documents and connections; nothing is shared with other studies."}
         footer={<>
           <Button onClick={() => setCreating(null)}>Cancel</Button>
-          <Button variant="primary" disabled={busy || !creating?.name.trim()} onClick={create}>{busy ? "Creating…" : "Create"}</Button>
+          <Button variant="primary" disabled={busy || !creating?.name.trim() || (!!creating?.idea && !creating.idea.idea.trim())} onClick={create}>{busy ? "Creating…" : "Create"}</Button>
         </>}>
         {creating && (
           <div className="space-y-4">
-            <Field label="Name"><input className={inputClass} autoFocus value={creating.name} maxLength={120} placeholder="Lease renewals" onChange={(e) => setCreating({ ...creating, name: e.target.value })} /></Field>
-            <Field label="Question" hint="What the study should find out. You can refine it later.">
-              <textarea className={inputClass} rows={3} value={creating.question} placeholder="What happens to renewals if rents rise 8% next year, and which tenants are most at risk?"
-                onChange={(e) => setCreating({ ...creating, question: e.target.value })} />
-            </Field>
+            <Field label="Name"><input className={inputClass} autoFocus value={creating.name} maxLength={120} placeholder={creating.idea ? "Maintenance triage for landlords" : "Lease renewals"} onChange={(e) => setCreating({ ...creating, name: e.target.value })} /></Field>
+            {creating.idea ? <IdeaFields value={creating.idea} onChange={(idea) => setCreating({ ...creating, idea })} /> : (
+              <Field label="Question" hint="What the study should find out. You can refine it later.">
+                <textarea className={inputClass} rows={3} value={creating.question} placeholder="What happens to renewals if rents rise 8% next year, and which tenants are most at risk?"
+                  onChange={(e) => setCreating({ ...creating, question: e.target.value })} />
+              </Field>
+            )}
             <ModelField models={models} value={creating.model} onChange={(model) => setCreating({ ...creating, model })} />
           </div>
         )}
@@ -124,7 +137,7 @@ function StudyList() {
   );
 }
 
-type StudyTab = "overview" | "sources" | "models" | "experiments" | "evidence" | "report";
+type StudyTab = "overview" | "case" | "sources" | "models" | "experiments" | "evidence" | "report";
 
 function StudyView({ id }: { id: string }) {
   const router = useRouter();
@@ -138,7 +151,7 @@ function StudyView({ id }: { id: string }) {
   const [running, setRunning] = useState<{ instructions: string; model: string } | null>(null);
   const [models, setModels] = useState<ModelChoice[]>([]);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState<{ name: string; question: string; model: string } | null>(null);
+  const [editing, setEditing] = useState<{ name: string; question: string; model: string; idea: IdeaBrief | null } | null>(null);
 
   const load = useCallback(() => {
     getStudy(id).then(setStudy).catch((e) => setError(apiErrorMessage(e)));
@@ -177,7 +190,7 @@ function StudyView({ id }: { id: string }) {
   async function saveEdit() {
     if (!editing) return;
     try {
-      setStudy(await updateStudy(id, { name: editing.name, question: editing.question, model: editing.model }));
+      setStudy(await updateStudy(id, { name: editing.name, question: editing.question, model: editing.model, ...(editing.idea ? { idea: editing.idea } : {}) }));
       setEditing(null);
     } catch (e) {
       setError(apiErrorMessage(e));
@@ -204,17 +217,21 @@ function StudyView({ id }: { id: string }) {
 
   const lastRun = study.runs[0];
   const unassigned = study.data_use_plan.filter((p) => p.role === "unassigned").length;
+  const isIdea = study.kind === "idea";
+  const currentAssumptions = study.assumptions.filter((a) => a.current);
+  const verdict = study.report?.content.verdict;
   return (
     <EvidenceProvider studyId={id}>
       <PageHeader
         title={<span className="flex items-center gap-2"><Link href="/studies" className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">Studies</Link><span className="text-zinc-300">/</span>{study.name}</span>}
-        description={study.question || "No question yet."}
+        description={isIdea ? study.idea?.idea : study.question || "No question yet."}
         actions={<>
           <StatusBadge status={study.status} />
           <span className="text-xs text-zinc-500" title="The model this study's runs use, unless you pick another for a run">
             Model <span className="font-medium text-zinc-700 dark:text-zinc-300">{modelName(models, study.model_profile_id)}</span>
           </span>
-          {canEdit && <Button size="sm" onClick={() => setEditing({ name: study.name, question: study.question, model: study.model_profile_id ?? "" })}>Edit</Button>}
+          {isIdea && <Badge tone="brand">Idea</Badge>}
+          {canEdit && <Button size="sm" onClick={() => setEditing({ name: study.name, question: study.question, model: study.model_profile_id ?? "", idea: study.idea })}>Edit</Button>}
           <a href={studyNotebookUrl(id)}><Button size="sm" icon={<Icons.Download className="h-3.5 w-3.5" />}>Notebook</Button></a>
           {atLeast(role, "Admin") && <Button size="sm" variant="ghost" onClick={remove}>Delete</Button>}
           {canEdit && (
@@ -227,8 +244,9 @@ function StudyView({ id }: { id: string }) {
       >
         <Tabs className="mt-4 border-0" value={tab} onChange={setTab} tabs={[
           { id: "overview", label: "Overview" },
+          ...(isIdea ? [{ id: "case" as const, label: "Business case", count: currentAssumptions.length + study.projections.length }] : []),
           { id: "sources", label: "Sources", count: study.datasets.length + study.documents.files.length + study.connections.length },
-          { id: "models", label: "Models", count: study.models.length },
+          ...(!isIdea || study.models.length > 0 ? [{ id: "models" as const, label: "Models", count: study.models.length }] : []),
           { id: "experiments", label: "Experiments", count: study.simulations.length + study.pending_experiments.filter((p) => p.status === "running").length },
           { id: "evidence", label: "Evidence", count: study.evidence_count },
           { id: "report", label: "Report" },
@@ -239,14 +257,20 @@ function StudyView({ id }: { id: string }) {
         <ErrorBanner error={error} onClose={() => setError(null)} />
         {tab === "overview" && (
           <>
+            {isIdea && verdict && <VerdictCard verdict={verdict} compact onOpen={() => setTab("report")} />}
+            {isIdea && study.idea && <IdeaBriefCard idea={study.idea} />}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat label="Sources" value={study.data_use_plan.length} hint={unassigned ? `${unassigned} without a role yet` : "every source has a role"} />
-              <Stat label="Models" value={study.models.length} hint={`${study.models.filter((m) => m.status === "accepted").length} accepted · ${study.models.filter((m) => m.holdout).length} holdout-scored`} />
+              <Stat label="Sources" value={study.data_use_plan.length} hint={unassigned ? `${unassigned} without a role yet` : isIdea && study.data_use_plan.length === 0 ? "add what you know about the market" : "every source has a role"} />
+              {isIdea ? (
+                <Stat label="Assumptions" value={currentAssumptions.length} hint={`${currentAssumptions.filter((a) => a.evidence.length > 0).length} with evidence · ${currentAssumptions.filter((a) => a.status === "accepted").length} accepted · ${study.projections.length} projection${study.projections.length === 1 ? "" : "s"}`} />
+              ) : (
+                <Stat label="Models" value={study.models.length} hint={`${study.models.filter((m) => m.status === "accepted").length} accepted · ${study.models.filter((m) => m.holdout).length} holdout-scored`} />
+              )}
               <Stat label="Experiments" value={study.simulations.length} hint={`${study.simulations.reduce((n, s) => n + s.decisions, 0)} simulated decisions`} />
               <Stat label="Evidence" value={study.evidence_count} hint="queries, fits, analyses, passages, API calls" />
             </div>
 
-            {study.report && (
+            {study.report && !verdict && (
               <Card className="p-5">
                 <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Latest answer</div>
                 <p className="line-clamp-4 text-sm text-zinc-800 dark:text-zinc-200">{study.report.content.summary}</p>
@@ -258,7 +282,9 @@ function StudyView({ id }: { id: string }) {
               <CardHeader title="Runs" description="Each run starts an agent team on the question; open one to watch its agents live." />
               {study.runs.length === 0 ? (
                 <p className="px-5 py-4 text-sm text-zinc-500">
-                  {study.data_use_plan.length === 0 ? <>Add a dataset, document or connection under <button className="text-brand-600 hover:underline dark:text-brand-400" onClick={() => setTab("sources")}>Sources</button>, then run the study.</> : "Not run yet."}
+                  {isIdea && study.data_use_plan.length === 0
+                    ? <>Run it now on the brief alone, or first add what you know (market reports, competitor notes, cost quotes, survey data) under <button className="text-brand-600 hover:underline dark:text-brand-400" onClick={() => setTab("sources")}>Sources</button> so fewer assumptions are guesses.</>
+                    : study.data_use_plan.length === 0 ? <>Add a dataset, document or connection under <button className="text-brand-600 hover:underline dark:text-brand-400" onClick={() => setTab("sources")}>Sources</button>, then run the study.</> : "Not run yet."}
                 </p>
               ) : (
                 <ul className="divide-y divide-zinc-100 dark:divide-zinc-800">
@@ -294,6 +320,7 @@ function StudyView({ id }: { id: string }) {
             </Card>
           </>
         )}
+        {tab === "case" && <BusinessCase study={study} canEdit={canEdit} onChanged={load} />}
         {tab === "sources" && <StudySources study={study} canEdit={canEdit} onChanged={load} />}
         {tab === "models" && <StudyModels study={study} />}
         {tab === "experiments" && <StudyExperiments study={study} canEdit={canEdit} models={models} onChanged={load} />}
@@ -302,14 +329,16 @@ function StudyView({ id }: { id: string }) {
       </div>
 
       <Modal open={running !== null} onClose={() => setRunning(null)} title={lastRun ? "Run the study again" : "Run the study"}
-        description="An agent team works on the question with this study's sources. It reads the data, fits and reviews models, may run experiments, and finishes with a report."
+        description={isIdea
+          ? "An agent team evaluates the idea with this study's sources: it records the assumptions the case rests on, simulates customers and finances, has the assumptions reviewed, and finishes with a verdict."
+          : "An agent team works on the question with this study's sources. It reads the data, fits and reviews models, may run experiments, and finishes with a report."}
         footer={<>
           <Button onClick={() => setRunning(null)}>Cancel</Button>
           <Button variant="primary" disabled={busy} onClick={run}>{busy ? "Starting…" : "Start"}</Button>
         </>}>
         {running && (
           <div className="space-y-4">
-            <Field label="Instructions for this run (optional)" hint="E.g. “Focus on tenants with more than 3 years of tenure” or “Test a 5% and an 8% increase.”">
+            <Field label="Instructions for this run (optional)" hint={isIdea ? "E.g. “Compare $29 and $49 a month” or “Assume no paid marketing in year one.”" : "E.g. “Focus on tenants with more than 3 years of tenure” or “Test a 5% and an 8% increase.”"}>
               <textarea className={inputClass} rows={3} value={running.instructions} onChange={(e) => setRunning({ ...running, instructions: e.target.value })} />
             </Field>
             <ModelField models={models} value={running.model} onChange={(model) => setRunning({ ...running, model })}
@@ -318,12 +347,13 @@ function StudyView({ id }: { id: string }) {
         )}
       </Modal>
 
-      <Modal open={editing !== null} onClose={() => setEditing(null)} title="Edit study"
+      <Modal open={editing !== null} onClose={() => setEditing(null)} title="Edit study" wide={!!editing?.idea}
         footer={<><Button onClick={() => setEditing(null)}>Cancel</Button><Button variant="primary" onClick={saveEdit}>Save</Button></>}>
         {editing && (
           <div className="space-y-4">
             <Field label="Name"><input className={inputClass} value={editing.name} maxLength={120} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
-            <Field label="Question"><textarea className={inputClass} rows={4} value={editing.question} onChange={(e) => setEditing({ ...editing, question: e.target.value })} /></Field>
+            {editing.idea && <IdeaFields value={editing.idea} onChange={(idea) => setEditing({ ...editing, idea })} />}
+            <Field label="Question" hint={editing.idea ? "What the evaluation sets out to answer." : undefined}><textarea className={inputClass} rows={editing.idea ? 2 : 4} value={editing.question} onChange={(e) => setEditing({ ...editing, question: e.target.value })} /></Field>
             <ModelField models={models} value={editing.model} onChange={(model) => setEditing({ ...editing, model })} />
           </div>
         )}

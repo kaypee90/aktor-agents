@@ -9,8 +9,11 @@ namespace AgentRuntime.Infrastructure.Llm;
 /// How the mock "brain" works on a study (docs/studies.md), so a study runs end to end with
 /// Llm:Provider=Mock: the lead reads the sources, gives each a role, records a hypothesis, fits a
 /// model on the first dataset, has a reviewer agent accept it, scores it on the holdout, runs a
-/// small simulation and submits a report citing the evidence. Simulated participants decide by a
-/// hash of their prompt. Real reasoning comes from a real model; this only exercises the flow.
+/// small simulation and submits a report citing the evidence. On an idea study it records
+/// assumptions instead (citing what a knowledge search found), runs a customer experiment, projects
+/// the finances, has a reviewer accept the assumptions and submits a verdict scored from the
+/// projection. Simulated participants decide by a hash of their prompt. Real reasoning comes from a
+/// real model; this only exercises the flow.
 /// </summary>
 internal static partial class MockStudyBehavior
 {
@@ -56,6 +59,8 @@ internal static partial class MockStudyBehavior
                 ? new { source, role = "not_relevant", reason = "The mock analysis doesn't call connections." }
                 : (object)new { source, role = source.StartsWith("dataset:", StringComparison.Ordinal) ? "model_input" : "scenario" })).ToArray());
         }
+
+        if (sources["study"]?["kind"]?.ToString() == "idea") return Idea(request, history, systemText, sources);
 
         var plan = ModelPlan(sources);
         if (plan is null) return Report(history, systemText, null);
@@ -151,8 +156,170 @@ internal static partial class MockStudyBehavior
         return new LlmCompletionResponse { Content = "Done.", FinishReason = LlmFinishReason.Stop, InputTokens = Tokens(systemText), OutputTokens = 5 };
     }
 
+    /// <summary>The numbers the mock records for an idea, by driver: low, likely, high.</summary>
+    private static readonly (string Name, string Category, double Low, double Likely, double High)[] IdeaAssumptions =
+    [
+        ("market_size", "market", 20_000, 40_000, 60_000),
+        ("adoption_rate", "customer", 0.05, 0.1, 0.2),
+        ("monthly_churn", "customer", 0.02, 0.04, 0.07),
+        ("marketing_spend", "cost", 5_000, 6_000, 7_000),
+        ("cac", "cost", 80, 120, 200),
+        ("variable_cost", "cost", 2, 4, 6),
+        ("fixed_costs", "cost", 8_000, 10_000, 12_000),
+        ("upfront_investment", "cost", 40_000, 60_000, 90_000),
+        ("launch_month", "operations", 3, 4, 6),
+    ];
+
+    private static LlmCompletionResponse Idea(LlmCompletionRequest request, History history, string systemText, JsonObject sources)
+    {
+        var idea = sources["study"]?["idea"] as JsonObject ?? [];
+        // 1. What the documents say (when there are documents and the agent can search them).
+        if (!history.Called("search_knowledge") && request.Tools.Any(t => t.Name == "search_knowledge")
+            && (sources["documents"]?["files"] as JsonArray)?.Count > 0)
+        {
+            return Calls(systemText, Call("search_knowledge", new { query = Clip(idea["idea"]?.ToString() ?? "market", 120) }));
+        }
+
+        // What the knowledge search found (study_sources also lists ids of earlier runs' projections: not evidence for these numbers).
+        var cite = history.LastResult("search_knowledge")?["evidence_id"]?.ToString() is { } found ? new[] { found } : [];
+
+        // 2. The assumptions, with the price read from the brief when it names one.
+        if (!history.Called("record_assumption"))
+        {
+            var price = PricePattern().Match(idea["revenue_model"]?.ToString() ?? string.Empty) is { Success: true } m
+                ? double.Parse(m.Groups[1].Value.Replace(",", string.Empty), System.Globalization.CultureInfo.InvariantCulture)
+                : 49;
+            var calls = IdeaAssumptions.Select(a => Call("record_assumption", new
+                {
+                    name = a.Name, category = a.Category, low = a.Low, likely = a.Likely, high = a.High, evidence = cite,
+                    rationale = "Mock assumption: a placeholder range a real model would derive from the evidence."
+                }))
+                .Append(Call("record_assumption", new { name = "price", category = "pricing", low = price * 0.8, likely = price, high = price, evidence = cite, rationale = "The price in the brief." }))
+                .ToArray();
+            return Calls(systemText, calls);
+        }
+
+        var assumptionIds = history.Results("record_assumption")
+            .Select(r => (Name: r.Args?["name"]?.ToString(), Id: r.Result?["assumption_id"]?.ToString()))
+            .Where(x => x.Name is not null && x.Id is not null).GroupBy(x => x.Name!).ToDictionary(g => g.Key, g => g.Last().Id!);
+
+        // 3. Would the customers switch? (Needs evidence to build the population from.)
+        if (!history.Called("run_simulation") && cite.Length > 0)
+        {
+            return Calls(systemText, Call("run_simulation", new
+            {
+                name = "would-they-switch",
+                population = new
+                {
+                    size = 6,
+                    evidence = cite,
+                    segments = new object[]
+                    {
+                        new { name = "busy", share = 0.5, description = $"You are one of these customers: {Clip(idea["customers"]?.ToString() ?? "a small business owner", 200)}. You have little time." },
+                        new { name = "careful", share = 0.5, description = $"You are one of these customers: {Clip(idea["customers"]?.ToString() ?? "a small business owner", 200)}. You watch every expense." }
+                    }
+                },
+                conditions = new object[]
+                {
+                    new { name = "today", scenario = $"You keep handling it the way you do today. {Clip(idea["problem"]?.ToString() ?? string.Empty, 300)}" },
+                    new { name = "offer", scenario = $"You are offered this: {Clip(idea["idea"]?.ToString() ?? "a new product", 300)} {Clip(idea["revenue_model"]?.ToString() ?? string.Empty, 200)}" }
+                },
+                decision = new { question = "Would you pay for and use it?", options = new[] { "adopt", "maybe", "no" } }
+            }));
+        }
+
+        // 4. The finances: a base case from the register, and a pessimistic case.
+        if (!history.Called("project_financials"))
+        {
+            var drivers = assumptionIds.Where(kv => kv.Key is not "adoption_rate").ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+            if (assumptionIds.TryGetValue("adoption_rate", out var adoption)) drivers["adoption_rate"] = adoption;
+            var pessimistic = new Dictionary<string, object>(drivers)
+            {
+                ["adoption_rate"] = 0.05,
+                ["monthly_churn"] = 0.07,
+                ["cac"] = 200
+            };
+            return Calls(systemText,
+                Call("project_financials", new { name = "base-case", revenue_model = "subscription", drivers }),
+                Call("project_financials", new { name = "pessimistic", revenue_model = "subscription", drivers = pessimistic }));
+        }
+
+        // 5. Another agent reviews the assumptions; wait for it.
+        if (!history.Called("spawn_agent"))
+        {
+            return Calls(systemText, Call("spawn_agent", new
+            {
+                role = "Assumption Reviewer",
+                goal = $"Review the assumptions {string.Join(", ", assumptionIds.Values)} against their evidence: are the ranges supported and wide enough?",
+                capabilities = new[] { "research" },
+                why_not_myself = "An assumption can't be reviewed by the agent that recorded it."
+            }));
+        }
+
+        if (!history.Reported("Assumption Reviewer")) return new LlmCompletionResponse { Content = "Waiting for the reviewer.", FinishReason = LlmFinishReason.Stop, InputTokens = Tokens(systemText), OutputTokens = 10 };
+
+        // 6. The verdict, scored from the base case.
+        var projections = history.Results("project_financials").Where(r => r.Result?["evidence_id"] is not null).ToList();
+        if (projections.Count == 0) return Report(history, systemText, null);
+        var baseCase = projections[0].Result!;
+        var payback = AgentRuntime.Studies.BusinessModelSimulator.Number(baseCase["summary"]?["p_payback"]) ?? 0;
+        var projectionEvidence = projections.Select(p => p.Result!["evidence_id"]!.ToString()).ToArray();
+        var simulation = history.LastResult("run_simulation")?["evidence_id"]?.ToString();
+        var usefulnessEvidence = simulation is not null ? new[] { simulation } : cite.Length > 0 ? cite : projectionEvidence.Take(1).ToArray();
+        var profitability = Math.Round(payback * 10);
+        var recommendation = payback >= 0.6 ? "go" : payback >= 0.3 ? "go_with_changes" : "no_go";
+        if (!history.Called("submit_report") || history.LastResultFailed("submit_report") && history.Count("submit_report") < 2)
+        {
+            return Calls(systemText, Call("submit_report", new
+            {
+                summary = $"Mock verdict: **{recommendation.Replace('_', ' ')}**. The base case pays back in {payback * 100:0}% of simulated futures. A real model writes the actual analysis.",
+                findings = new object[]
+                {
+                    new { claim = $"The base case pays back within the horizon in {payback * 100:0}% of simulated futures.", evidence = projectionEvidence.Take(1).ToArray(), confidence = "medium" },
+                    new { claim = "The pessimistic case shows how much the result depends on adoption, churn and acquisition cost.", evidence = projectionEvidence.Skip(1).ToArray(), confidence = "low" }
+                },
+                limitations = new[] { "Produced by the mock model: the projections are computed, the assumptions and interpretation are placeholders." },
+                open_questions = new[] { "What would real customers pay?" },
+                verdict = new
+                {
+                    recommendation,
+                    feasibility = new { score = 6, summary = "Mock: nothing in the brief looks impossible to build.", evidence = cite.Length > 0 ? cite : projectionEvidence.Take(1).ToArray() },
+                    profitability = new { score = profitability, summary = $"Pays back in {payback * 100:0}% of simulated futures.", evidence = projectionEvidence },
+                    usefulness = new { score = 5, summary = "Mock: the simulated customers were split.", evidence = usefulnessEvidence },
+                    key_assumptions = new[] { "adoption_rate", "cac", "monthly_churn" }.Where(assumptionIds.ContainsKey).Select(n => assumptionIds[n]).ToArray(),
+                    risks = new[] { new { risk = "Customers may not switch from what they do today.", severity = "high", mitigation = "Run a paid pilot with ten customers." } },
+                    next_steps = new[] { "Interview 15 target customers about price.", "Run a landing page test to measure sign-up rates." }
+                }
+            }));
+        }
+
+        if (!history.Called("complete_task") || history.LastResultFailed("complete_task") && history.Count("complete_task") < 3)
+        {
+            var status = history.LastResultFailed("submit_report") ? "partial" : "completed";
+            return Calls(systemText, Call("complete_task", new { status, summary = $"Mock idea evaluation finished: {recommendation.Replace('_', ' ')}." }));
+        }
+
+        return new LlmCompletionResponse { Content = "Done.", FinishReason = LlmFinishReason.Stop, InputTokens = Tokens(systemText), OutputTokens = 5 };
+    }
+
+    private static string Clip(string s, int n) => s.Length > n ? s[..n] : s;
+
     private static LlmCompletionResponse Reviewer(History history, string goal, string systemText)
     {
+        var assumptions = AssumptionIdPattern().Matches(goal).Select(m => m.Value).Distinct().ToList();
+        if (assumptions.Count > 0 && !history.Called("review_assumption"))
+        {
+            return Calls(systemText, assumptions.Select(id => Call("review_assumption", new
+            {
+                assumption_id = id, verdict = "accept", notes = "Mock review: the range is plausible for the evidence cited."
+            })).ToArray());
+        }
+
+        if (assumptions.Count > 0)
+        {
+            return Calls(systemText, Call("complete_task", new { status = "completed", summary = $"Reviewed {assumptions.Count} assumptions: accepted." }));
+        }
+
         if (ModelIdPattern().Match(goal) is { Success: true } m && !history.Called("review_model"))
         {
             return Calls(systemText, Call("review_model", new { model_id = m.Value, verdict = "accept", notes = "Mock review: checked the diagnostics and warnings; nothing disqualifying." }));
@@ -207,8 +374,24 @@ internal static partial class MockStudyBehavior
         public IEnumerable<string> EvidenceIds() => request.Messages.Where(m => m.Role == ChatRole.Tool && m.Content is not null)
             .SelectMany(m => EvidencePattern().Matches(m.Content!).Select(x => x.Groups[1].Value)).Distinct();
 
-        public bool ReviewerReported => request.Messages.Any(m => m.Role is ChatRole.User && m.Content is { } c
-            && c.Contains("Model Reviewer", StringComparison.OrdinalIgnoreCase) && c.Contains("completed", StringComparison.OrdinalIgnoreCase));
+        public bool ReviewerReported => Reported("Model Reviewer");
+
+        /// <summary>Whether the child with this role reported that it completed.</summary>
+        public bool Reported(string role) => request.Messages.Any(m => m.Role is ChatRole.User && m.Content is { } c
+            && c.Contains(role, StringComparison.OrdinalIgnoreCase) && c.Contains("completed", StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Every call of a tool with its arguments and (parsed) result, in order.</summary>
+        public IReadOnlyList<(JsonObject? Args, JsonObject? Result)> Results(string name) => _calls.Where(c => c.Name == name).Select(c =>
+        {
+            var text = request.Messages.LastOrDefault(m => m.Role == ChatRole.Tool && m.ToolCallId == c.Id)?.Content;
+            return (Parse(c.ArgumentsJson), Parse(text));
+        }).ToList();
+
+        private static JsonObject? Parse(string? text)
+        {
+            try { return text is null ? null : JsonNode.Parse(text) as JsonObject; }
+            catch (JsonException) { return null; }
+        }
     }
 
     private static ToolCall Call(string name, object args) => new() { Id = NewId(), Name = name, ArgumentsJson = JsonSerializer.Serialize(args) };
@@ -226,6 +409,12 @@ internal static partial class MockStudyBehavior
 
     [GeneratedRegex(@"mdl-[0-9a-f]{8}")]
     private static partial Regex ModelIdPattern();
+
+    [GeneratedRegex(@"asm-[0-9a-f]{8}")]
+    private static partial Regex AssumptionIdPattern();
+
+    [GeneratedRegex(@"\$\s?([0-9][0-9,]*(?:\.[0-9]+)?)")]
+    private static partial Regex PricePattern();
 
     [GeneratedRegex("\"evidence_id\"\\s*:\\s*\"(ev-[0-9a-f]{8})\"")]
     private static partial Regex EvidencePattern();

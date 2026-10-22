@@ -85,7 +85,8 @@ public static class AgentToolCatalog
     public static readonly string[] StudyTools =
     [
         "study_sources", "query_dataset", "record_hypothesis", "fit_model", "run_analysis", "review_model",
-        "evaluate_on_holdout", "set_source_role", "run_simulation", "submit_report"
+        "evaluate_on_holdout", "set_source_role", "run_simulation", "record_assumption", "review_assumption",
+        "project_financials", "submit_report"
     ];
 
     private static readonly Dictionary<string, string[]> CapabilityToolMap = new(StringComparer.OrdinalIgnoreCase)

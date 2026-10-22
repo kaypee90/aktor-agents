@@ -14,9 +14,10 @@ namespace AgentRuntime.Api.Controllers;
 public sealed class StudiesController(StudyService studies, TenantAccess access) : ControllerBase
 {
     /// <summary>model: an organization model profile id ("server" for the server's); left out, the organization's default.</summary>
-    public sealed record CreateBody(string Name, string? Question, string? Model);
-    /// <summary>model: a profile id, or "" for the organization's default; left out, unchanged.</summary>
-    public sealed record UpdateBody(string? Name, string? Question, string? Model);
+    /// <summary>kind: "question" (default) or "idea", described by idea.</summary>
+    public sealed record CreateBody(string Name, string? Question, string? Model, string? Kind = null, AgentRuntime.Studies.IdeaBrief? Idea = null);
+    /// <summary>model: a profile id, or "" for the organization's default; left out, unchanged. idea: an idea study's new brief.</summary>
+    public sealed record UpdateBody(string? Name, string? Question, string? Model, AgentRuntime.Studies.IdeaBrief? Idea = null);
     public sealed record DatasetBody(Dictionary<string, string>? Dictionary, string? TimeColumn, double? HoldoutFraction);
     public sealed record RunBody(string? Instructions, string? Model);
     /// <summary>spec: run_simulation's arguments (docs/studies.md); model: a profile id, left out the study's.</summary>
@@ -47,7 +48,7 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     [Authorize(Policies.Member)]
     public Task<IActionResult> Create([FromBody] CreateBody body, CancellationToken ct) => Handle(async () =>
     {
-        var study = await studies.CreateAsync(access.TenantId, body.Name ?? string.Empty, body.Question, Who(), ct, body.Model);
+        var study = await studies.CreateAsync(access.TenantId, body.Name ?? string.Empty, body.Question, Who(), ct, body.Model, body.Kind, body.Idea);
         return Ok(await studies.GetDetailAsync(access.TenantId, study.StudyId, ct));
     });
 
@@ -58,7 +59,7 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
     [Authorize(Policies.Member)]
     public Task<IActionResult> Update(string id, [FromBody] UpdateBody body, CancellationToken ct) => Handle(async () =>
     {
-        await studies.UpdateAsync(access.TenantId, id, body.Name, body.Question, ct, body.Model);
+        await studies.UpdateAsync(access.TenantId, id, body.Name, body.Question, ct, body.Model, body.Idea);
         return Ok(await studies.GetDetailAsync(access.TenantId, id, ct));
     });
 
@@ -121,6 +122,16 @@ public sealed class StudiesController(StudyService studies, TenantAccess access)
         await studies.DismissExperimentAsync(access.TenantId, id, experimentId, ct);
         return NoContent();
     });
+
+    /// <summary>The business model's drivers (for a what-if projection).</summary>
+    [HttpGet("projection-drivers")]
+    public IActionResult ProjectionDrivers() => Ok(StudyService.DriverCatalog());
+
+    /// <summary>Runs a what-if projection: project_financials' arguments (drivers from assumption ids, numbers or ranges).</summary>
+    [HttpPost("{id}/projections")]
+    [Authorize(Policies.Member)]
+    public Task<IActionResult> Projection(string id, [FromBody] System.Text.Json.Nodes.JsonObject? spec, CancellationToken ct) => Handle(async () =>
+        Ok(await studies.RunProjectionAsync(access.TenantId, id, spec, ct)));
 
     [HttpGet("{id}/evidence")]
     public Task<IActionResult> Evidence(string id, CancellationToken ct) => Handle(async () => Ok(await studies.ListEvidenceAsync(access.TenantId, id, ct)));

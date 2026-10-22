@@ -61,6 +61,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Studies.StudyToolSupport>();
         services.AddSingleton<Studies.ExperimentRunner>();
         services.AddSingleton<Studies.StudyExperiments>();
+        services.AddSingleton<Studies.StudyProjections>();
         services.AddSingleton<ITool, Studies.StudySourcesTool>();
         services.AddSingleton<ITool, Studies.QueryDatasetTool>();
         services.AddSingleton<ITool, Studies.RecordHypothesisTool>();
@@ -70,6 +71,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITool, Studies.EvaluateOnHoldoutTool>();
         services.AddSingleton<ITool, Studies.SetSourceRoleTool>();
         services.AddSingleton<ITool, Studies.RunSimulationTool>();
+        services.AddSingleton<ITool, Studies.RecordAssumptionTool>();
+        services.AddSingleton<ITool, Studies.ReviewAssumptionTool>();
+        services.AddSingleton<ITool, Studies.ProjectFinancialsTool>();
         services.AddSingleton<ITool, Studies.SubmitReportTool>();
         services.AddSingleton<IToolEvidenceRecorder, Studies.StudyEvidenceRecorder>();
         services.AddSingleton<ICompletionGate, Studies.StudyCompletionGate>();

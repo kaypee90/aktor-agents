@@ -35,12 +35,23 @@ public sealed class StudyPromptSection : ISystemPromptSection
               Simulated people are not real people: label such findings as simulated and directional, and calibrate against
               real rates when the data has them.
             - Report uncertainty: confidence intervals, cross-validation and holdout scores, and what the data can't tell.
+            - When the study evaluates an idea (study_sources shows kind "idea" and the brief), judge it on three things:
+              usefulness (do the customers have the problem, would they switch from today's alternative, what would they
+              pay), profitability, and feasibility (can it be built and run: technology, skills, time, cost, regulation,
+              competition). Every number the case rests on is an assumption (record_assumption): a low-likely-high range
+              citing the evidence it comes from, reviewed by another agent (review_assumption). Treat the numbers in the
+              brief as claims to check, not facts. Test usefulness and willingness to pay with run_simulation (customers
+              choosing between today's alternative and the idea), and compute profitability with project_financials from
+              assumption ids: a base case and at least one pessimistic scenario. The report's verdict scores each dimension
+              0-10 citing evidence, and the runtime refuses a profitability score the projections don't support.
             {{(root
                 ? """
                   As the study's lead: plan the analysis from the question and the sources, do focused work yourself, and spawn
-                  specialists where it pays off (for example a modeler per approach, and a reviewer for the models). When the
-                  evidence answers the question, submit_report (findings citing evidence ids and model ids, limitations, open
-                  questions), then complete_task with the report's summary. complete_task is refused until the report is accepted.
+                  specialists where it pays off (for example a modeler per approach, and a reviewer for the models; for an idea,
+                  perhaps a market and customer researcher, a financial modeler, a feasibility analyst, and a skeptic who
+                  reviews the assumptions). When the evidence answers the question, submit_report (findings citing evidence ids
+                  and model ids, limitations, open questions, and for an idea the verdict), then complete_task with the report's
+                  summary. complete_task is refused until the report is accepted.
                   """
                 : "Report your results to whoever started you with the evidence ids and model ids behind them, then complete_task.")}}
             """;

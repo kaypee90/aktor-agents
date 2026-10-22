@@ -49,6 +49,8 @@ public static class EvidenceKinds
     public const string Passage = "passage";
     public const string Connection = "connection";
     public const string Simulation = "simulation";
+    /// <summary>A financial projection of an idea (project_financials).</summary>
+    public const string Projection = "projection";
 }
 
 /// <summary>Sources are named "dataset:name", "document:file.pdf" or "connection:name".</summary>
@@ -66,6 +68,12 @@ public sealed record StudyInfo
     public required string WorkspaceId { get; init; }
     public required string Name { get; init; }
     public string Question { get; init; } = string.Empty;
+    /// <summary><see cref="StudyKinds.Question"/> or <see cref="StudyKinds.Idea"/>.</summary>
+    public string Kind { get; init; } = StudyKinds.Question;
+    /// <summary>The idea an idea study evaluates.</summary>
+    public IdeaBrief? Idea { get; init; }
+
+    public bool IsIdea => Kind == StudyKinds.Idea;
 }
 
 /// <summary>A dataset of a study: an uploaded file (cleaned, profiled and split into training data

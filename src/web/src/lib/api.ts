@@ -1337,10 +1337,25 @@ export function getAnalytics(filter: AnalyticsFilter) {
 
 export type StudyStatus = "Draft" | "Running" | "Completed" | "Failed";
 
+export type StudyKind = "question" | "idea";
+
+/** What an idea study evaluates (docs/studies.md, "Evaluating an idea"). */
+export interface IdeaBrief {
+  idea: string;
+  customers?: string | null;
+  problem?: string | null;
+  revenue_model?: string | null;
+  costs?: string | null;
+  horizon_months: number;
+  currency: string;
+}
+
 export interface StudySummary {
   study_id: string;
   name: string;
   question: string;
+  kind: StudyKind;
+  idea: IdeaBrief | null;
   status: StudyStatus;
   datasets: number;
   created_at: string;
@@ -1469,6 +1484,124 @@ export interface StudySimulation {
   created_at: string;
 }
 
+export interface StudyAssumption {
+  assumption_id: string;
+  name: string;
+  description: string;
+  category: string;
+  unit: string | null;
+  low: number;
+  likely: number;
+  high: number;
+  evidence: string[];
+  rationale: string | null;
+  status: "candidate" | "accepted" | "challenged";
+  agent_id: string;
+  run_id: string | null;
+  reviewer: string | null;
+  review_notes: string | null;
+  /** False once the same name was recorded again. */
+  current: boolean;
+  created_at: string;
+}
+
+export interface Bands { p10: number; p50: number; p90: number; mean?: number }
+
+export interface ProjectionInput {
+  low: number;
+  likely: number;
+  high: number;
+  source: "assumption" | "given" | "default";
+  assumption_id: string | null;
+  assumption: string | null;
+  assumption_status: string | null;
+  evidence: string[] | null;
+}
+
+/** What project_financials computed (BusinessModelSimulator). */
+export interface ProjectionResult {
+  name: string;
+  revenue_model: string;
+  currency: string;
+  horizon_months: number;
+  iterations: number;
+  seed: number;
+  summary: {
+    p_payback: number;
+    p_profitable_at_end: number;
+    p_npv_positive: number;
+    npv: Bands;
+    final_cash: Bands;
+    funding_need: Bands;
+    revenue_total: Bands;
+    customers_at_end: Bands;
+    payback_month: { p10: number | null; p50: number | null; p90: number | null; never_share: number };
+    first_profitable_month: { p50: number | null; never_share: number };
+  };
+  unit_economics: {
+    gross_margin: number | null;
+    contribution_per_customer_month: number;
+    customer_lifetime_months: number;
+    ltv: number;
+    cac: number | null;
+    ltv_to_cac: number | null;
+    cac_payback_months: number | null;
+    break_even_customers: number | null;
+  };
+  years: { year: number; revenue: Bands; profit: Bands }[];
+  monthly: Record<"revenue" | "profit" | "cash" | "customers", { p10: number[]; p50: number[]; p90: number[] }>;
+  sensitivity: { baseline_npv: number; drivers: { driver: string; low: number; high: number; npv_at_low: number; npv_at_high: number; swing: number }[] };
+  warnings: string[];
+  inputs: Record<string, ProjectionInput>;
+  unsupported_drivers: string[];
+}
+
+/** A driver as project_financials takes it: an assumption id, a number, or a range. */
+export type DriverValue = string | number | { low?: number; likely: number; high?: number };
+
+export interface ProjectionSpec {
+  name: string;
+  revenue_model?: string;
+  horizon_months?: number;
+  iterations?: number;
+  seed?: number;
+  drivers: Record<string, DriverValue>;
+}
+
+export interface StudyProjection {
+  projection_id: string;
+  name: string;
+  run_id: string | null;
+  agent_id: string;
+  manual: boolean;
+  spec: ProjectionSpec;
+  result: ProjectionResult;
+  evidence_id: string;
+  created_at: string;
+}
+
+export interface ProjectionDriverInfo { name: string; description: string; min: number; max: number; default: number | null; unit: string; whole: boolean }
+
+export interface VerdictScore { score: number; summary: string; evidence: string[]; evidence_kinds?: string[] }
+
+export interface StudyVerdict {
+  recommendation: "go" | "go_with_changes" | "no_go" | "needs_more_evidence";
+  feasibility: VerdictScore;
+  profitability: VerdictScore;
+  usefulness: VerdictScore;
+  overall?: number;
+  key_assumptions?: string[];
+  risks?: { risk: string; severity?: "high" | "medium" | "low"; mitigation?: string }[];
+  changes?: string[];
+  next_steps?: string[];
+  projection?: {
+    projection_id: string; evidence_id: string; name: string; currency: string; horizon_months: number;
+    p_payback: number; p_npv_positive: number; npv: Bands; funding_need: Bands;
+    payback_month: { p50: number | null; never_share: number }; ltv_to_cac: number | null;
+  };
+  assumption_check?: { total: number; with_evidence: number; accepted: number; challenged: number; unreviewed: number; guesses: string[] };
+}
+
 export interface StudyFinding {
   claim: string;
   evidence: string[];
@@ -1476,6 +1609,7 @@ export interface StudyFinding {
   confidence: "high" | "medium" | "low";
   status: "supported" | "interpretation";
   simulated: boolean;
+  projected?: boolean;
   evidence_kinds: string[];
 }
 
@@ -1485,6 +1619,7 @@ export interface StudyReportContent {
   limitations: string[];
   open_questions?: string[];
   recommendations?: string[];
+  verdict?: StudyVerdict;
   data_coverage: { source: string; role: string; reason: string | null; evidence_count: number }[];
   warnings: string[];
   checked_at: string;
@@ -1494,6 +1629,8 @@ export interface StudyDetail {
   study_id: string;
   name: string;
   question: string;
+  kind: StudyKind;
+  idea: IdeaBrief | null;
   /** The model runs use unless one is picked for a run; null: the organization's default. */
   model_profile_id: string | null;
   workspace_id: string;
@@ -1512,13 +1649,16 @@ export interface StudyDetail {
   /** Experiments people started that aren't saved yet. */
   pending_experiments: { experiment_id: string; name: string; status: "running" | "failed"; done: number; planned: number; error: string | null; started_by: string; started_at: string }[];
   experiment_limits: { max_participants: number; max_rounds: number; max_conditions: number; max_replications: number; max_cost_usd: number };
+  /** An idea's register: current assumptions first, then superseded ones. */
+  assumptions: StudyAssumption[];
+  projections: StudyProjection[];
   report: { run_id: string; created_at: string; content: StudyReportContent } | null;
   evidence_count: number;
 }
 
 export interface StudyEvidence {
   evidence_id: string;
-  kind: "query" | "model" | "analysis" | "holdout" | "passage" | "connection" | "simulation";
+  kind: "query" | "model" | "analysis" | "holdout" | "passage" | "connection" | "simulation" | "projection";
   run_id: string | null;
   agent_id: string;
   sources: string[];
@@ -1531,8 +1671,11 @@ export function listStudies() {
   return apiFetch<StudySummary[]>("/api/studies");
 }
 
-export function createStudy(name: string, question: string, model?: string | null) {
-  return apiFetch<StudyDetail>("/api/studies", { method: "POST", body: JSON.stringify({ name, question, model: model || null }) });
+export function createStudy(name: string, question: string, model?: string | null, idea?: IdeaBrief | null) {
+  return apiFetch<StudyDetail>("/api/studies", {
+    method: "POST",
+    body: JSON.stringify({ name, question, model: model || null, kind: idea ? "idea" : "question", idea: idea ?? null }),
+  });
 }
 
 export function getStudy(id: string) {
@@ -1540,7 +1683,7 @@ export function getStudy(id: string) {
 }
 
 /** model: a profile id, or "" for the organization's default. */
-export function updateStudy(id: string, patch: { name?: string; question?: string; model?: string }) {
+export function updateStudy(id: string, patch: { name?: string; question?: string; model?: string; idea?: IdeaBrief }) {
   return apiFetch<StudyDetail>(`/api/studies/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
@@ -1576,6 +1719,14 @@ export function startStudyExperiment(id: string, spec: ExperimentSpec, model?: s
 
 export function dismissStudyExperiment(id: string, experimentId: string) {
   return apiFetch<void>(`/api/studies/${encodeURIComponent(id)}/experiments/${encodeURIComponent(experimentId)}`, { method: "DELETE" });
+}
+
+export function runStudyProjection(id: string, spec: ProjectionSpec) {
+  return apiFetch<StudyProjection>(`/api/studies/${encodeURIComponent(id)}/projections`, { method: "POST", body: JSON.stringify(spec) });
+}
+
+export function getProjectionDrivers() {
+  return apiFetch<{ revenue_models: string[]; max_horizon_months: number; drivers: ProjectionDriverInfo[] }>("/api/studies/projection-drivers");
 }
 
 export function listStudyEvidence(id: string) {

@@ -14,6 +14,8 @@ public sealed class InMemoryStudyStore : IStudyStore
     private readonly ConcurrentDictionary<(string, string), SourceRoleEntry> _roles = new();
     private readonly ConcurrentDictionary<string, StudyReport> _reports = new();
     private readonly ConcurrentDictionary<string, StudySimulation> _simulations = new();
+    private readonly ConcurrentDictionary<string, StudyAssumption> _assumptions = new();
+    private readonly ConcurrentDictionary<string, StudyProjection> _projections = new();
 
     public void AddStudy(StudyInfo study) => _studies[study.StudyId] = study;
 
@@ -105,6 +107,36 @@ public sealed class InMemoryStudyStore : IStudyStore
 
     public Task<IReadOnlyList<StudySimulation>> ListSimulationsAsync(string studyId, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<StudySimulation>>(_simulations.Values.Where(s => s.StudyId == studyId).OrderBy(s => s.CreatedAt).ToList());
+
+    public Task AddAssumptionAsync(StudyAssumption assumption, CancellationToken ct = default)
+    {
+        foreach (var old in _assumptions.Values.Where(a => a.StudyId == assumption.StudyId && a.Name == assumption.Name && a.Current))
+        {
+            _assumptions[old.AssumptionId] = old with { Current = false };
+        }
+
+        _assumptions[assumption.AssumptionId] = assumption with { Current = true };
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateAssumptionAsync(StudyAssumption assumption, CancellationToken ct = default)
+    {
+        _assumptions[assumption.AssumptionId] = assumption;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<StudyAssumption>> ListAssumptionsAsync(string studyId, bool currentOnly = true, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<StudyAssumption>>(_assumptions.Values.Where(a => a.StudyId == studyId && (!currentOnly || a.Current))
+            .OrderBy(a => a.CreatedAt).ToList());
+
+    public Task AddProjectionAsync(StudyProjection projection, CancellationToken ct = default)
+    {
+        _projections[projection.ProjectionId] = projection;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<StudyProjection>> ListProjectionsAsync(string studyId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<StudyProjection>>(_projections.Values.Where(p => p.StudyId == studyId).OrderBy(p => p.CreatedAt).ToList());
 }
 
 /// <summary>No sandbox configured (the standalone host): analyses fail with a clear reason.</summary>

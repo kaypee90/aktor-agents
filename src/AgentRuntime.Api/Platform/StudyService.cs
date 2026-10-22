@@ -31,6 +31,7 @@ public sealed class StudyService(
     TaskService tasks,
     LLM.LlmSettingsService modelSettings,
     StudyExperiments experiments,
+    StudyProjections projections,
     IHostApplicationLifetime lifetime,
     IOptions<StudyOptions> options,
     ILogger<StudyService> logger)
@@ -56,7 +57,7 @@ public sealed class StudyService(
                ?? throw new StudyServiceException($"No study '{studyId}'.", StatusCodes.Status404NotFound);
     }
 
-    private static StudyInfo Info(StudyRecord s) => new() { StudyId = s.StudyId, TenantId = s.TenantId, WorkspaceId = s.WorkspaceId, Name = s.Name, Question = s.Question };
+    private static StudyInfo Info(StudyRecord s) => EfStudyStore.Info(s)!;
 
     public async Task<IReadOnlyList<object>> ListAsync(string tenantId, CancellationToken ct)
     {
@@ -72,6 +73,8 @@ public sealed class StudyService(
             study_id = s.StudyId,
             name = s.Name,
             question = s.Question,
+            kind = StudyKinds.Normalize(s.Kind),
+            idea = IdeaBrief.Parse(s.IdeaJson),
             status = StatusOf(s, s.LastRunId is { } r ? runs.GetValueOrDefault(r) : null),
             datasets = datasets.GetValueOrDefault(s.StudyId),
             created_at = s.CreatedAt,
@@ -84,12 +87,26 @@ public sealed class StudyService(
         : lastRun.Status is "Failed" or "TimedOut" or "Terminated" or "Canceled" ? "Failed"
         : "Completed";
 
-    public async Task<StudyRecord> CreateAsync(string tenantId, string name, string? question, string createdBy, CancellationToken ct, string? model = null)
+    /// <summary>Creates a study: a question to answer with data, or (<paramref name="kind"/> "idea")
+    /// an idea to evaluate, described by <paramref name="idea"/>.</summary>
+    public async Task<StudyRecord> CreateAsync(string tenantId, string name, string? question, string createdBy, CancellationToken ct, string? model = null,
+        string? kind = null, IdeaBrief? idea = null)
     {
         var modelProfileId = await CheckModelAsync(tenantId, model, ct);
         name = name.Trim();
         if (name.Length is 0 or > 120) throw new StudyServiceException("A study needs a name of up to 120 characters.");
         if (question?.Length > 4000) throw new StudyServiceException("Keep the question under 4,000 characters.");
+        kind = StudyKinds.Normalize(kind);
+        if (kind == StudyKinds.Idea)
+        {
+            (idea, var error) = IdeaBrief.Clean(idea);
+            if (error is not null) throw new StudyServiceException(error);
+            if (string.IsNullOrWhiteSpace(question)) question = IdeaQuestion;
+        }
+        else
+        {
+            idea = null;
+        }
 
         // The study's workspace holds its connections, knowledge, safety policy and daily budget.
         var workspaceId = WorkspaceIds.New();
@@ -117,6 +134,8 @@ public sealed class StudyService(
             WorkspaceId = workspaceId,
             Name = name,
             Question = question?.Trim() ?? string.Empty,
+            Kind = kind,
+            IdeaJson = idea?.ToJson(),
             ModelProfileId = modelProfileId,
             CreatedBy = createdBy,
             CreatedAt = now,
@@ -129,17 +148,28 @@ public sealed class StudyService(
         return study;
     }
 
-    /// <summary>Renames, rewords the question, or picks the study's model (<paramref name="model"/>
-    /// "" goes back to the organization's default; null leaves it).</summary>
-    public async Task UpdateAsync(string tenantId, string studyId, string? name, string? question, CancellationToken ct, string? model = null)
+    /// <summary>What an idea study sets out to answer unless people word it themselves.</summary>
+    public const string IdeaQuestion = "Is this idea useful to the people it's for, feasible to build and run, and profitable? Should we go ahead, change it, or drop it?";
+
+    /// <summary>Renames, rewords the question, rewrites an idea study's brief, or picks the study's
+    /// model (<paramref name="model"/> "" goes back to the organization's default; null leaves it).</summary>
+    public async Task UpdateAsync(string tenantId, string studyId, string? name, string? question, CancellationToken ct, string? model = null, IdeaBrief? idea = null)
     {
-        await RequireAsync(tenantId, studyId, ct);
+        var study = await RequireAsync(tenantId, studyId, ct);
         if (name is not null && name.Trim().Length is 0 or > 120) throw new StudyServiceException("A study needs a name of up to 120 characters.");
+        if (idea is not null)
+        {
+            if (study.Kind != StudyKinds.Idea) throw new StudyServiceException("Only an idea study has an idea to describe.");
+            (idea, var error) = IdeaBrief.Clean(idea);
+            if (error is not null) throw new StudyServiceException(error);
+        }
+
         var modelProfileId = model is null ? null : await CheckModelAsync(tenantId, model, ct);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var row = await db.Studies.FirstAsync(s => s.StudyId == studyId, ct);
         if (name is not null) row.Name = name.Trim();
-        if (question is not null) row.Question = question.Trim();
+        if (question is not null) row.Question = question.Trim().Length == 0 && row.Kind == StudyKinds.Idea ? IdeaQuestion : question.Trim();
+        if (idea is not null) row.IdeaJson = idea.ToJson();
         if (model is not null) row.ModelProfileId = modelProfileId;
         row.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
@@ -180,6 +210,8 @@ public sealed class StudyService(
             await db.StudySourceRoles.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
             await db.StudyReports.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
             await db.StudySimulations.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
+            await db.StudyAssumptions.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
+            await db.StudyProjections.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
             await db.Studies.Where(x => x.StudyId == studyId).ExecuteDeleteAsync(ct);
         }
 
@@ -342,6 +374,8 @@ public sealed class StudyService(
         var hypotheses = await store.ListHypothesesAsync(studyId, ct);
         var simulations = await store.ListSimulationsAsync(studyId, ct);
         var reports = await store.ListReportsAsync(studyId, ct);
+        var assumptions = await store.ListAssumptionsAsync(studyId, currentOnly: false, ct);
+        var studyProjections = await store.ListProjectionsAsync(studyId, ct);
         var counts = await store.CountEvidenceBySourceAsync(studyId, ct);
         var connections = await grains.GetGrain<IWorkspaceGrain>(study.WorkspaceId).ListConnections();
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -355,6 +389,8 @@ public sealed class StudyService(
             study_id = study.StudyId,
             name = study.Name,
             question = study.Question,
+            kind = info.Kind,
+            idea = info.Idea,
             // The model runs use unless one is picked for a run; null: the organization's default.
             model_profile_id = study.ModelProfileId,
             workspace_id = study.WorkspaceId,
@@ -440,6 +476,39 @@ public sealed class StudyService(
                 max_replications = O.MaxReplications,
                 max_cost_usd = O.MaxSimulationCostUsd
             },
+            // An idea's register: current assumptions first; superseded ones stay for the projections that used them.
+            assumptions = assumptions.OrderByDescending(a => a.Current).ThenBy(a => a.CreatedAt).Select(a => new
+            {
+                assumption_id = a.AssumptionId,
+                name = a.Name,
+                description = a.Description,
+                category = a.Category,
+                unit = a.Unit,
+                low = a.Low,
+                likely = a.Likely,
+                high = a.High,
+                evidence = a.Evidence,
+                rationale = a.Rationale,
+                status = a.Status,
+                agent_id = a.AgentId,
+                run_id = a.RunId,
+                reviewer = a.ReviewerAgentId,
+                review_notes = a.ReviewNotes,
+                current = a.Current,
+                created_at = a.CreatedAt
+            }),
+            projections = studyProjections.Select(p => new
+            {
+                projection_id = p.ProjectionId,
+                name = p.Name,
+                run_id = p.RunId,
+                agent_id = p.AgentId,
+                manual = p.AgentId == StudyExperiments.ManualAgentId,
+                spec = JsonNode.Parse(p.SpecJson),
+                result = JsonNode.Parse(p.ResultJson),
+                evidence_id = p.EvidenceId,
+                created_at = p.CreatedAt
+            }),
             report = latest is null ? null : new { run_id = latest.RunId, created_at = latest.CreatedAt, content = JsonNode.Parse(latest.Json) },
             evidence_count = evidenceCount
         };
@@ -500,13 +569,18 @@ public sealed class StudyService(
 
         var info = Info(study);
         var view = await sources.GetAsync(info, ct);
-        if (view.Datasets.Count == 0 && view.Documents.FileNames.Count == 0 && view.Documents.Facts == 0 && view.Connections.Count == 0)
+        // An idea can be evaluated from its brief alone (agents then mostly record guesses); a question needs data.
+        if (!info.IsIdea && view.Datasets.Count == 0 && view.Documents.FileNames.Count == 0 && view.Documents.Facts == 0 && view.Connections.Count == 0)
         {
             throw new StudyServiceException("Add a dataset, a document or a connection before running the study.");
         }
 
         var question = string.IsNullOrWhiteSpace(study.Question) ? study.Name : study.Question;
-        var goal = $"Study \"{study.Name}\": {question}" + (string.IsNullOrWhiteSpace(instructions) ? string.Empty : $"\n\nFor this run: {instructions.Trim()}");
+        var goal = $"Study \"{study.Name}\": {question}"
+                   + (info.Idea is { } idea
+                       ? $"\n\nThis study evaluates an idea for usefulness, feasibility and profitability, and its report needs a verdict.\n{idea.Render()}"
+                       : string.Empty)
+                   + (string.IsNullOrWhiteSpace(instructions) ? string.Empty : $"\n\nFor this run: {instructions.Trim()}");
         var task = await tasks.StartAsync(tenantId, new StartTaskRequest
         {
             Goal = goal.Length > 8000 ? goal[..8000] : goal,
@@ -572,6 +646,36 @@ public sealed class StudyService(
         if (!experiments.Dismiss(studyId, experimentId)) throw new StudyServiceException("No failed experiment with that id.", StatusCodes.Status404NotFound);
     }
 
+    // ---------------------------------------------------------------- projections
+
+    /// <summary>
+    /// A what-if a person runs (docs/studies.md, "Evaluating an idea"): the same business model as
+    /// project_financials, with drivers from the register or typed in. It runs at once (it's
+    /// arithmetic, not model calls) and is saved like an agent's, recorded as set up by a person.
+    /// </summary>
+    public async Task<object> RunProjectionAsync(string tenantId, string studyId, JsonObject? spec, CancellationToken ct)
+    {
+        var study = await RequireAsync(tenantId, studyId, ct);
+        if (spec is null) throw new StudyServiceException("Describe the projection: a name and its drivers.");
+        var outcome = await projections.RunAsync(Info(study), spec, runId: null, StudyExperiments.ManualAgentId, ct);
+        if (outcome.Projection is null) throw new StudyServiceException(string.Join(" ", outcome.Errors));
+        await TouchAsync(studyId, ct);
+        var p = outcome.Projection;
+        return new
+        {
+            projection_id = p.ProjectionId, name = p.Name, run_id = p.RunId, agent_id = p.AgentId, manual = true,
+            spec = JsonNode.Parse(p.SpecJson), result = outcome.Result, evidence_id = p.EvidenceId, created_at = p.CreatedAt
+        };
+    }
+
+    /// <summary>The business model's drivers, for the what-if form.</summary>
+    public static object DriverCatalog() => new
+    {
+        revenue_models = BusinessModelSimulator.RevenueModels,
+        max_horizon_months = BusinessModelSimulator.MaxHorizonMonths,
+        drivers = BusinessModelSimulator.Catalog.Select(d => new { name = d.Name, description = d.Description, min = d.Min, max = d.Max, @default = d.Default, unit = d.Unit, whole = d.Whole })
+    };
+
     private async Task TouchAsync(string studyId, CancellationToken ct)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
@@ -627,6 +731,11 @@ public sealed class StudyService(
                 case EvidenceKinds.Model when detail is not null:
                     cells.Add(Markdown($"**{e.EvidenceId}** · model · {e.Summary}"));
                     cells.Add(Code(ModelCode(detail)));
+                    break;
+                case EvidenceKinds.Projection:
+                    cells.Add(Markdown($"**{e.EvidenceId}** · projection · {e.Summary}\n\n" +
+                                       "Simulated by the runtime's business model from these drivers (low, likely, high and where each came from):\n\n" +
+                                       $"```json\n{detail?["spec"]?["drivers"]?.ToJsonString(new JsonSerializerOptions { WriteIndented = true })}\n```"));
                     break;
                 case EvidenceKinds.Holdout:
                 case EvidenceKinds.Simulation:

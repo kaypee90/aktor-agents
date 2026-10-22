@@ -22,9 +22,10 @@ public sealed class EfStudyStore(IDbContextFactory<AgentDbContext> dbFactory) : 
         return Info(await db.Studies.AsNoTracking().FirstOrDefaultAsync(s => s.WorkspaceId == workspaceId, ct));
     }
 
-    private static StudyInfo? Info(StudyRecord? r) => r is null ? null : new StudyInfo
+    public static StudyInfo? Info(StudyRecord? r) => r is null ? null : new StudyInfo
     {
-        StudyId = r.StudyId, TenantId = r.TenantId, WorkspaceId = r.WorkspaceId, Name = r.Name, Question = r.Question
+        StudyId = r.StudyId, TenantId = r.TenantId, WorkspaceId = r.WorkspaceId, Name = r.Name, Question = r.Question,
+        Kind = StudyKinds.Normalize(r.Kind), Idea = IdeaBrief.Parse(r.IdeaJson)
     };
 
     public async Task<IReadOnlyList<StudyDataset>> ListDatasetsAsync(string studyId, bool currentOnly = true, CancellationToken ct = default)
@@ -319,6 +320,67 @@ public sealed class EfStudyStore(IDbContextFactory<AgentDbContext> dbFactory) : 
                 SpecJson = s.SpecJson, SummaryJson = s.SummaryJson, DatasetName = s.DatasetName, EvidenceId = s.EvidenceId,
                 Participants = s.Participants, Decisions = s.Decisions, Tokens = s.Tokens, CostUsd = s.CostUsd,
                 DurationMs = s.DurationMs, CreatedAt = s.CreatedAt
+            }).ToList();
+    }
+
+    public async Task AddAssumptionAsync(StudyAssumption a, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await db.StudyAssumptions.Where(x => x.StudyId == a.StudyId && x.Name == a.Name && x.Current)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.Current, false), ct);
+        db.StudyAssumptions.Add(ToRecord(a with { Current = true }));
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task UpdateAssumptionAsync(StudyAssumption a, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        db.StudyAssumptions.Update(ToRecord(a));
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<StudyAssumption>> ListAssumptionsAsync(string studyId, bool currentOnly = true, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return (await db.StudyAssumptions.AsNoTracking().Where(a => a.StudyId == studyId && (!currentOnly || a.Current))
+            .OrderBy(a => a.CreatedAt).ToListAsync(ct)).Select(ToAssumption).ToList();
+    }
+
+    private static StudyAssumptionRecord ToRecord(StudyAssumption a) => new()
+    {
+        AssumptionId = a.AssumptionId, StudyId = a.StudyId, RunId = a.RunId, AgentId = a.AgentId, Name = a.Name,
+        Description = a.Description, Category = a.Category, Unit = a.Unit, Low = a.Low, Likely = a.Likely, High = a.High,
+        EvidenceJson = JsonSerializer.Serialize(a.Evidence, Json), Rationale = a.Rationale, Status = a.Status,
+        ReviewerAgentId = a.ReviewerAgentId, ReviewNotes = a.ReviewNotes, ReviewedAt = a.ReviewedAt, Current = a.Current, CreatedAt = a.CreatedAt
+    };
+
+    private static StudyAssumption ToAssumption(StudyAssumptionRecord a) => new()
+    {
+        AssumptionId = a.AssumptionId, StudyId = a.StudyId, RunId = a.RunId, AgentId = a.AgentId, Name = a.Name,
+        Description = a.Description, Category = a.Category, Unit = a.Unit, Low = a.Low, Likely = a.Likely, High = a.High,
+        Evidence = JsonSerializer.Deserialize<List<string>>(a.EvidenceJson, Json) ?? [], Rationale = a.Rationale, Status = a.Status,
+        ReviewerAgentId = a.ReviewerAgentId, ReviewNotes = a.ReviewNotes, ReviewedAt = a.ReviewedAt, Current = a.Current, CreatedAt = a.CreatedAt
+    };
+
+    public async Task AddProjectionAsync(StudyProjection p, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        db.StudyProjections.Add(new StudyProjectionRecord
+        {
+            ProjectionId = p.ProjectionId, StudyId = p.StudyId, RunId = p.RunId, AgentId = p.AgentId, Name = p.Name,
+            SpecJson = p.SpecJson, ResultJson = p.ResultJson, EvidenceId = p.EvidenceId, CreatedAt = p.CreatedAt
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<StudyProjection>> ListProjectionsAsync(string studyId, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return (await db.StudyProjections.AsNoTracking().Where(p => p.StudyId == studyId).OrderBy(p => p.CreatedAt).ToListAsync(ct))
+            .Select(p => new StudyProjection
+            {
+                ProjectionId = p.ProjectionId, StudyId = p.StudyId, RunId = p.RunId, AgentId = p.AgentId, Name = p.Name,
+                SpecJson = p.SpecJson, ResultJson = p.ResultJson, EvidenceId = p.EvidenceId, CreatedAt = p.CreatedAt
             }).ToList();
     }
 }

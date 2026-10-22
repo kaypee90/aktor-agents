@@ -42,6 +42,15 @@ public interface IStudyStore
 
     Task AddSimulationAsync(StudySimulation simulation, CancellationToken ct = default);
     Task<IReadOnlyList<StudySimulation>> ListSimulationsAsync(string studyId, CancellationToken ct = default);
+
+    /// <summary>Adds an assumption; an older current one with the same name stops being current.</summary>
+    Task AddAssumptionAsync(StudyAssumption assumption, CancellationToken ct = default);
+    Task UpdateAssumptionAsync(StudyAssumption assumption, CancellationToken ct = default);
+    /// <summary>The study's assumptions (current ones only, or every version), oldest first.</summary>
+    Task<IReadOnlyList<StudyAssumption>> ListAssumptionsAsync(string studyId, bool currentOnly = true, CancellationToken ct = default);
+
+    Task AddProjectionAsync(StudyProjection projection, CancellationToken ct = default);
+    Task<IReadOnlyList<StudyProjection>> ListProjectionsAsync(string studyId, CancellationToken ct = default);
 }
 
 /// <summary>Runs one analysis job in an isolated container: no network, nothing from the host

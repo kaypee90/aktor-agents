@@ -1,5 +1,10 @@
 # Aktor Agents
 
+> **Branch `product/studies`: the Studies product line.** Research with your own data, simulated
+> experiments, idea evaluation (usefulness, feasibility, profitability) and the open-ended world
+> simulation live here, developed as a separate product on top of the Aktor runtime. `main` is
+> focused on solutions, workflows and tasks and no longer carries these features.
+
 A production-oriented prototype of an **autonomous multi-agent runtime based on the Actor Model**.
 
 You give it a high-level goal — *"Research the feasibility of an AI-powered property management
@@ -43,7 +48,7 @@ in one folder. `aktor deploy` installs it, and upgrades apply only what changed.
   /AgentRuntime.Evals          aktor-eval: runs goals N times and reports team size, cost, completion, quality
   /web                        Next.js dashboard (tasks, workspaces, studies, agent graph, analytics, settings)
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
-/samples/studies              sample data for the Studies walkthrough (docs/studies-walkthrough.md)
+/samples/studies              sample data for the Studies walkthroughs (docs/studies-walkthrough.md, docs/studies-idea-walkthrough.md)
 /samples/solutions            solution packages to deploy (docs/solutions.md)
 /sdk/typescript               TypeScript SDK, the aktor CLI and the aktor-acp bridge
 /sdk/python                   Python SDK and the remote-plugin server
@@ -469,6 +474,14 @@ flowchart LR
 - **Experiments** replace the old world simulation: a population generated from your data reacts to
   control and treatment scenarios, every decision becomes a dataset, and the runtime reports
   effects, a calibration gap against the real rate, and low-diversity warnings.
+- **Evaluate an idea:** describe an idea (who it's for, the problem, how it makes money, known
+  costs) and give it what you know. Agents record every number the case rests on as an assumption
+  with a range and evidence, review each other's assumptions, test usefulness with simulated
+  customers, and project the finances with a Monte Carlo business model the runtime computes:
+  payback chance, NPV, funding needed, unit economics and which assumptions matter most. The report
+  ends in a verdict (go, go with changes, no go) scoring usefulness, feasibility and profitability;
+  the runtime refuses scores without evidence or at odds with the projections. **What if…** reruns
+  the model with your own numbers.
 - **Analytics → Studies** tracks spend (agents vs. simulated participants), analyses, simulations,
   data sources and evidence quality.
 - **Setup:** `docker compose up` builds the `aktor-analysis:1` image; locally run
@@ -477,6 +490,8 @@ flowchart LR
 - **Try it:** [docs/studies-walkthrough.md](docs/studies-walkthrough.md) runs a rent-increase study
   on sample data with known effects (`samples/studies/lease-renewals/`), so you can check what the
   agents find.
+  [docs/studies-idea-walkthrough.md](docs/studies-idea-walkthrough.md) evaluates a product idea with
+  sample market and cost notes (`samples/studies/idea-maintenance-triage/`).
 
 Open-ended worlds (`/api/worlds`) remain available over the API but no longer have a page.
 

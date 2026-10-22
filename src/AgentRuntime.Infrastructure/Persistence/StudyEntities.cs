@@ -14,6 +14,10 @@ public sealed class StudyRecord
     public string? LastRunId { get; set; }
     /// <summary>The organization model profile runs use unless one is picked for a run; null for the default.</summary>
     public string? ModelProfileId { get; set; }
+    /// <summary>"question" or "idea" (docs/studies.md, "Evaluating an idea").</summary>
+    public string Kind { get; set; } = "question";
+    /// <summary>An idea study's brief (<c>IdeaBrief</c> as JSON); null for a question study.</summary>
+    public string? IdeaJson { get; set; }
     public string? CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -124,6 +128,44 @@ public sealed class StudySimulationRecord
     public long Tokens { get; set; }
     public decimal CostUsd { get; set; }
     public long DurationMs { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>An assumption in an idea's register (<c>StudyAssumption</c>).</summary>
+public sealed class StudyAssumptionRecord
+{
+    public required string AssumptionId { get; set; }
+    public required string StudyId { get; set; }
+    public string? RunId { get; set; }
+    public required string AgentId { get; set; }
+    public required string Name { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public string Category { get; set; } = "other";
+    public string? Unit { get; set; }
+    public double Low { get; set; }
+    public double Likely { get; set; }
+    public double High { get; set; }
+    public string EvidenceJson { get; set; } = "[]";
+    public string? Rationale { get; set; }
+    public string Status { get; set; } = "candidate";
+    public string? ReviewerAgentId { get; set; }
+    public string? ReviewNotes { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    public bool Current { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>A financial projection of an idea (<c>StudyProjection</c>).</summary>
+public sealed class StudyProjectionRecord
+{
+    public required string ProjectionId { get; set; }
+    public required string StudyId { get; set; }
+    public string? RunId { get; set; }
+    public required string AgentId { get; set; }
+    public required string Name { get; set; }
+    public string SpecJson { get; set; } = "{}";
+    public string ResultJson { get; set; } = "{}";
+    public required string EvidenceId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 

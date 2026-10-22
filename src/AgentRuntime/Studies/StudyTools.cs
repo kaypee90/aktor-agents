@@ -92,8 +92,9 @@ public sealed class StudySourcesTool(StudyToolSupport support) : ITool
     {
         Name = "study_sources",
         SideEffects = ToolSideEffects.ReadOnly,
-        Description = "The study's question and sources: datasets (columns, types, ranges, data dictionary), documents, connections, " +
-                      "the data-use plan (which sources still need a role), the models fitted so far and the hypotheses. Call it first.",
+        Description = "The study's question (or the idea it evaluates) and sources: datasets (columns, types, ranges, data dictionary), " +
+                      "documents, connections, the data-use plan (which sources still need a role), the models fitted so far, the " +
+                      "hypotheses, and an idea's assumptions and projections. Call it first.",
         JsonSchema = """{ "type": "object", "properties": {} }"""
     };
 
@@ -105,6 +106,8 @@ public sealed class StudySourcesTool(StudyToolSupport support) : ITool
         var models = await support.Store.ListModelsAsync(study.StudyId, ct);
         var hypotheses = await support.Store.ListHypothesesAsync(study.StudyId, ct);
         var holdoutsUsed = await support.Store.CountHoldoutEvaluationsAsync(study.StudyId, ct);
+        var assumptions = await support.Store.ListAssumptionsAsync(study.StudyId, currentOnly: true, ct);
+        var projections = await support.Store.ListProjectionsAsync(study.StudyId, ct);
         object Dataset(StudyDataset d) => new
         {
             table = d.Name,
@@ -118,7 +121,7 @@ public sealed class StudySourcesTool(StudyToolSupport support) : ITool
         };
         return StudyToolSupport.Ok(new
         {
-            study = new { name = study.Name, question = study.Question },
+            study = new { name = study.Name, question = study.Question, kind = study.Kind, idea = study.Idea },
             datasets = view.Datasets.Select(Dataset),
             simulated_datasets = view.SimulatedDatasets.Select(Dataset),
             documents = new
@@ -141,7 +144,17 @@ public sealed class StudySourcesTool(StudyToolSupport support) : ITool
                 review = m.ReviewNotes, holdout = m.HoldoutJson is null ? null : JsonNode.Parse(m.HoldoutJson)
             }),
             hypotheses = hypotheses.Select(h => new { hypothesis_id = h.HypothesisId, h.Statement, by = h.AgentId }),
-            holdout_evaluations_left = Math.Max(0, support.Options.MaxHoldoutEvaluations - holdoutsUsed)
+            holdout_evaluations_left = Math.Max(0, support.Options.MaxHoldoutEvaluations - holdoutsUsed),
+            assumptions = assumptions.Select(a => new
+            {
+                assumption_id = a.AssumptionId, a.Name, a.Category, a.Unit, a.Low, a.Likely, a.High, a.Evidence,
+                supported = a.Supported, a.Status, by = a.AgentId, review = a.ReviewNotes
+            }),
+            projections = projections.Select(p => new
+            {
+                projection_id = p.ProjectionId, p.Name, evidence_id = p.EvidenceId, by = p.AgentId,
+                p_payback = JsonNode.Parse(p.ResultJson)?["summary"]?["p_payback"]
+            })
         });
     }
 }
@@ -616,7 +629,9 @@ public sealed class SubmitReportTool(StudyToolSupport support) : ITool
         SideEffects = ToolSideEffects.NonIdempotent,
         Description = "Submit the study report. Each finding states a claim and cites the evidence ids (and model ids) behind it; a finding " +
                       "without evidence is shown as interpretation. The runtime refuses the report if a cited id doesn't exist, a cited " +
-                      "model wasn't accepted in review, or a source has no role in the data-use plan. Call complete_task afterwards.",
+                      "model wasn't accepted in review, or a source has no role in the data-use plan. When the study evaluates an idea, add a " +
+                      "verdict: feasibility, profitability and usefulness scored 0-10, each citing evidence (profitability a projection), " +
+                      "and a recommendation. Call complete_task afterwards.",
         JsonSchema = """
         { "type": "object", "properties": {
             "summary": { "type": "string", "description": "The answer to the study's question, in Markdown" },
@@ -628,7 +643,18 @@ public sealed class SubmitReportTool(StudyToolSupport support) : ITool
               "required": ["claim", "evidence"] } },
             "limitations": { "type": "array", "items": { "type": "string" } },
             "open_questions": { "type": "array", "items": { "type": "string" } },
-            "recommendations": { "type": "array", "items": { "type": "string" } } },
+            "recommendations": { "type": "array", "items": { "type": "string" } },
+            "verdict": { "type": "object", "description": "Required when the study evaluates an idea", "properties": {
+                "recommendation": { "type": "string", "enum": ["go", "go_with_changes", "no_go", "needs_more_evidence"] },
+                "feasibility": { "type": "object", "properties": { "score": { "type": "number", "description": "0 (not at all) to 10 (clearly)" }, "summary": { "type": "string" }, "evidence": { "type": "array", "items": { "type": "string" } } }, "required": ["score", "summary", "evidence"] },
+                "profitability": { "type": "object", "properties": { "score": { "type": "number", "description": "0 (not at all) to 10 (clearly)" }, "summary": { "type": "string" }, "evidence": { "type": "array", "items": { "type": "string" }, "description": "Projection evidence ids, the base case first" } }, "required": ["score", "summary", "evidence"] },
+                "usefulness": { "type": "object", "properties": { "score": { "type": "number", "description": "0 (not at all) to 10 (clearly)" }, "summary": { "type": "string" }, "evidence": { "type": "array", "items": { "type": "string" } } }, "required": ["score", "summary", "evidence"] },
+                "key_assumptions": { "type": "array", "items": { "type": "string" }, "description": "Assumption ids the verdict depends on most" },
+                "risks": { "type": "array", "items": { "type": "object", "properties": {
+                    "risk": { "type": "string" }, "severity": { "type": "string", "enum": ["high", "medium", "low"] }, "mitigation": { "type": "string" } } } },
+                "changes": { "type": "array", "items": { "type": "string" }, "description": "What to change for go_with_changes" },
+                "next_steps": { "type": "array", "items": { "type": "string" }, "description": "Cheapest ways to test the riskiest assumptions" } },
+              "required": ["recommendation", "feasibility", "profitability", "usefulness"] } },
           "required": ["summary", "findings", "limitations"] }
         """
     };
@@ -641,12 +667,20 @@ public sealed class SubmitReportTool(StudyToolSupport support) : ITool
         var ct = request.CancellationToken;
         var findings = report["findings"] as JsonArray ?? [];
         var evidenceIds = findings.OfType<JsonObject>().SelectMany(f => StudyReportValidator.Strings(f["evidence"])).Distinct().ToList();
+        if (report["verdict"] is JsonObject verdict)
+        {
+            evidenceIds.AddRange(StudyReportValidator.Dimensions.SelectMany(d => StudyReportValidator.Strings(verdict[d]?["evidence"])));
+        }
+
         var models = (await support.Store.ListModelsAsync(study.StudyId, ct)).ToDictionary(m => m.ModelId);
         evidenceIds.AddRange(models.Values.Select(m => m.EvidenceId));
         var evidence = (await support.Store.GetEvidenceAsync(study.StudyId, evidenceIds.Distinct().ToList(), ct)).ToDictionary(e => e.EvidenceId);
         var view = await support.Sources.GetAsync(study, ct);
+        var assumptions = (await support.Store.ListAssumptionsAsync(study.StudyId, currentOnly: false, ct)).ToDictionary(a => a.AssumptionId);
+        var projections = (await support.Store.ListProjectionsAsync(study.StudyId, ct)).ToDictionary(p => p.EvidenceId);
 
-        var result = StudyReportValidator.Validate(new StudyReportValidator.Input(report, evidence, models, view.SourceKeys.ToHashSet(), view.Roles));
+        var result = StudyReportValidator.Validate(new StudyReportValidator.Input(report, evidence, models, view.SourceKeys.ToHashSet(), view.Roles,
+            study.Kind, assumptions, projections));
         if (!result.Ok) return ToolExecutionResult.Fail("The report wasn't accepted: " + string.Join(" ", result.Errors));
 
         var checkedReport = result.Report;

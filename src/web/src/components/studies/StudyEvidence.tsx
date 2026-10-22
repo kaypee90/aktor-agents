@@ -14,7 +14,7 @@ export function num(v: unknown, digits = 3): string {
 export const pct = (v: number | null | undefined, digits = 0) => (typeof v === "number" ? `${(v * 100).toFixed(digits)}%` : "—");
 
 export const KIND_TONE: Record<string, Tone> = {
-  query: "blue", model: "brand", analysis: "blue", holdout: "green", passage: "neutral", connection: "neutral", simulation: "amber",
+  query: "blue", model: "brand", analysis: "blue", holdout: "green", passage: "neutral", connection: "neutral", simulation: "amber", projection: "brand",
 };
 
 export const ROLE_LABEL: Record<string, string> = {

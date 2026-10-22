@@ -35,6 +35,8 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<StudySourceRoleRecord> StudySourceRoles => Set<StudySourceRoleRecord>();
     public DbSet<StudyReportRecord> StudyReports => Set<StudyReportRecord>();
     public DbSet<StudySimulationRecord> StudySimulations => Set<StudySimulationRecord>();
+    public DbSet<StudyAssumptionRecord> StudyAssumptions => Set<StudyAssumptionRecord>();
+    public DbSet<StudyProjectionRecord> StudyProjections => Set<StudyProjectionRecord>();
     public DbSet<OrganizationTemplateRecord> OrganizationTemplates => Set<OrganizationTemplateRecord>();
     public DbSet<SolutionInstallRecord> SolutionInstalls => Set<SolutionInstallRecord>();
     public DbSet<SolutionRecordEntity> SolutionRecords => Set<SolutionRecordEntity>();
@@ -219,6 +221,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasKey(x => x.StudyId);
             b.HasIndex(x => new { x.TenantId, x.CreatedAt });
             b.HasIndex(x => x.WorkspaceId).IsUnique();
+            b.Property(x => x.Kind).HasDefaultValue("question");
         });
         modelBuilder.Entity<StudyDatasetRecord>(b =>
         {
@@ -249,6 +252,16 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         modelBuilder.Entity<StudySimulationRecord>(b =>
         {
             b.HasKey(x => x.SimulationId);
+            b.HasIndex(x => x.StudyId);
+        });
+        modelBuilder.Entity<StudyAssumptionRecord>(b =>
+        {
+            b.HasKey(x => x.AssumptionId);
+            b.HasIndex(x => new { x.StudyId, x.Name, x.Current });
+        });
+        modelBuilder.Entity<StudyProjectionRecord>(b =>
+        {
+            b.HasKey(x => x.ProjectionId);
             b.HasIndex(x => x.StudyId);
         });
         modelBuilder.Entity<OrganizationTemplateRecord>(b =>

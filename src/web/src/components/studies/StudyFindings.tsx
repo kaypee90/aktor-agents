@@ -7,6 +7,7 @@ import { Badge, Button, Card, CardHeader, EmptyState, ErrorBanner, ago, cx } fro
 import { Icons } from "@/components/ui/icons";
 import { EvidenceChip, ROLE_LABEL, num, pct } from "./StudyEvidence";
 import { ExperimentForm } from "./ExperimentForm";
+import { VerdictCard, VerdictDetails } from "./IdeaCase";
 
 const METHOD_LABEL: Record<string, string> = { linear_regression: "Linear regression", logistic_regression: "Logistic regression", arima: "ARIMA" };
 const METRIC_LABEL: Record<string, string> = {
@@ -25,6 +26,8 @@ export function StudyReport({ study }: { study: StudyDetail }) {
   const modelById = new Map(study.models.map((m) => [m.model_id, m]));
   return (
     <div className="space-y-5">
+      {report.verdict && <VerdictCard verdict={report.verdict} />}
+      {report.verdict && <VerdictDetails verdict={report.verdict} assumptions={study.assumptions} />}
       <Card className="p-5">
         <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
           <span>Report of run <span className="font-mono">{study.report!.run_id.slice(0, 13)}</span> · {ago(study.report!.created_at)}</span>
@@ -45,6 +48,7 @@ export function StudyReport({ study }: { study: StudyDetail }) {
                 <Badge tone={f.status === "supported" ? "green" : "neutral"}>{f.status === "supported" ? "Supported" : "Interpretation"}</Badge>
                 <Badge tone={f.confidence === "high" ? "green" : f.confidence === "medium" ? "blue" : "neutral"}>{f.confidence} confidence</Badge>
                 {f.simulated && <Badge tone="amber">Simulated: directional</Badge>}
+                {f.projected && <Badge tone="brand">Projection: depends on its assumptions</Badge>}
               </div>
               <p className="text-sm text-zinc-800 dark:text-zinc-200">{f.claim}</p>
               {(f.evidence.length > 0 || (f.models?.length ?? 0) > 0) && (

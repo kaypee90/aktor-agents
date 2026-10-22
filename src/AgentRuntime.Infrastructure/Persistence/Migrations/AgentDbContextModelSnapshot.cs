@@ -1205,6 +1205,79 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("SolutionRecords");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyAssumptionRecord", b =>
+                {
+                    b.Property<string>("AssumptionId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Current")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<double>("High")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Likely")
+                        .HasColumnType("double precision");
+
+                    b.Property<double>("Low")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Rationale")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReviewNotes")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ReviewerAgentId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Unit")
+                        .HasColumnType("text");
+
+                    b.HasKey("AssumptionId");
+
+                    b.HasIndex("StudyId", "Name", "Current");
+
+                    b.ToTable("StudyAssumptions");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyDatasetRecord", b =>
                 {
                     b.Property<string>("DatasetId")
@@ -1426,6 +1499,48 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("StudyModels");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyProjectionRecord", b =>
+                {
+                    b.Property<string>("ProjectionId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EvidenceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RunId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SpecJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("StudyId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("ProjectionId");
+
+                    b.HasIndex("StudyId");
+
+                    b.ToTable("StudyProjections");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.StudyRecord", b =>
                 {
                     b.Property<string>("StudyId")
@@ -1436,6 +1551,15 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
+
+                    b.Property<string>("IdeaJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("question");
 
                     b.Property<string>("LastRunId")
                         .HasColumnType("text");
