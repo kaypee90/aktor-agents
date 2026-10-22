@@ -1,7 +1,7 @@
 # The platform: organizations, access, API and billing
 
 One server hosts many **organizations** (tenants). Each one has its own members, API keys,
-workspaces, tasks, studies, worlds, agents, memory, scratch database, solutions (with their records
+workspaces, tasks, agents, memory, scratch database, solutions (with their records
 and end users) and plan, and none of them can see another's. An organization's own customers use its
 solutions as **end users**, through the apps API; they're never members of it ([solutions.md](solutions.md#end-users)). The same build runs self-hosted for one team or as a multi-tenant service.
 
@@ -20,7 +20,7 @@ flowchart LR
 ## Organizations and isolation
 
 The tenant is stamped by the runtime and inherited, never chosen by an agent.
-- An organization's id is set on every workspace, task, study and world when it's created, from whoever
+- An organization's id is set on every workspace and task when it's created, from whoever
   made the request.
 - Every agent those create, and every agent *they* create, inherits the same id.
 - Nothing in a prompt, message or tool call can change it.
@@ -48,8 +48,8 @@ and the first account created on a server takes it over.
 | Role | Can |
 |---|---|
 | Viewer | See everything: workspaces, agents, events, approvals, the audit log, usage. The exception is other people's [private workspaces](workspaces.md#private-workspaces), which no role can see. |
-| Member | Also create workspaces, tasks, studies and worlds, pick or switch a task's or study's model, clone workspaces and save them as templates, add knowledge and datasets, instruct agents, add triggers, and decide approvals. |
-| Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys, and delete knowledge, archived workspaces, studies and organization templates. |
+| Member | Also create workspaces and tasks, pick or switch a task's model, clone workspaces and save them as templates, add knowledge, instruct agents, add triggers, and decide approvals. |
+| Admin | Also manage connections, safety policies (each workspace's and the organization's), workspace budgets, skills, AI models ([llm-settings.md](llm-settings.md)), members, invitations and API keys, and delete knowledge, archived workspaces and organization templates. |
 | Owner | Also manage billing and who is an owner. An organization always keeps at least one owner. |
 
 **Accounts** are email and password.
@@ -219,7 +219,7 @@ each organization's model settings (models, their prices and API keys).
 | `PUT` | `/api/admin/tenants/{id}/plan` | operator | |
 | `GET` | `/openapi/v1.json` | anyone | |
 
-Everything else (`/api/workspaces`, `/api/tasks`, `/api/studies`, `/api/agents`, `/api/events`, `/api/worlds`,
+Everything else (`/api/workspaces`, `/api/tasks`, `/api/agents`, `/api/events`,
 `/ws/events`) needs a signed-in session or a key. Reading needs Viewer or above; changing things
 needs Member, or Admin where noted in [workspaces.md](workspaces.md), [plugins.md](plugins.md) and
 [safety.md](safety.md).

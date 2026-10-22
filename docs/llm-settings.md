@@ -24,8 +24,8 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
    **Load models** asks the provider which models the key can use; ones not on the price list
    (fine-tunes, new releases) appear under "From your account". **Custom model…** takes any other
    model id the provider serves.
-3. Optionally a **fast model**: a cheaper one from the same provider for routine work (standing
-   agents handling events, history summaries). Planning and real work use the main model.
+3. Optionally a **fast model**: a cheaper one from the same provider for routine work (summarizing
+   long histories). Planning and real work use the main model.
 4. **Prices**, in USD per million tokens. Budgets, spend, cost estimates and analytics are counted
    with these. A listed model is priced from the price list, so there's nothing to enter; **Use a
    different price** sets your own (e.g. a negotiated rate). A model that isn't listed, or any model
@@ -39,7 +39,7 @@ configuration (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` in `.env`) is always a
 A model's **id** (its `@handle`, and what stages and tasks store) comes from its name: "GPT-5 mini
 (cheap)" is `gpt-5-mini-cheap`. Renaming a model gives it the id of its new name (unless another
 model has it), and the organization's workspace pipelines (every saved version, and `@mentions` in
-stage instructions), saved templates, and recorded tasks, agents and studies follow. The old id
+stage instructions), saved templates, and recorded tasks and agents follow. The old id
 stays as an alias, so a running agent or anything still naming it gets the renamed model. A model
 renamed before ids followed names gets its new id the next time it's saved.
 
@@ -53,8 +53,8 @@ renamed before ids followed names gets its new id the next time it's saved.
   kept, and the switch appears in the run's Activity. Over the API: `POST /api/tasks/{id}/model`
   with `{"model": "<model id>"}`.
 - **After it finishes:** the model picker stays (in the header and next to the chat's message
-  box): the task's next follow-up runs on the model chosen there (same API). A pipeline or study run takes no follow-ups, so it's run again
-  from its workspace or study instead. To compare models on the same work, fork it from any step
+  box): the task's next follow-up runs on the model chosen there (same API). A pipeline run takes no follow-ups, so it's run again
+  from its workspace instead. To compare models on the same work, fork it from any step
   onto another model (**Journal & replay → Fork after step**, with the model picker next to it):
   the steps before the fork are copied, so both runs share the same start and the diff shows how
   the models differ.
@@ -128,7 +128,7 @@ reasoning), or leave it out.
 | POST | `/api/llm/models` | Admin | `{provider, base_url, api_key, profile_id}`: the provider's model ids. |
 | GET | `/api/llm/providers` | any | The providers, what each needs, and suggested models. |
 | POST | `/api/tasks`, `/api/tasks/preview` | Member | `model`: the model to run on. |
-| POST | `/api/tasks/{id}/model` | Member | Switch a task's model, running or finished (its next follow-up uses it). `409` for a finished pipeline or study run. |
+| POST | `/api/tasks/{id}/model` | Member | Switch a task's model, running or finished (its next follow-up uses it). `409` for a finished pipeline run. |
 | POST | `/api/tasks/{id}/replay` | Member | `model`: for a fork, the model the live part runs on. |
 | GET | `/api/tasks/{id}` | any | Includes `model`: the model the task runs on now. |
 

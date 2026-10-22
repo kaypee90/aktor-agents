@@ -11,7 +11,6 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<ArtifactRecord> Artifacts => Set<ArtifactRecord>();
     public DbSet<MemoryEntity> MemoryEntries => Set<MemoryEntity>();
     public DbSet<ToolCallRecord> ToolCalls => Set<ToolCallRecord>();
-    public DbSet<WorldRecord> Worlds => Set<WorldRecord>();
     public DbSet<WorkspaceRecord> Workspaces => Set<WorkspaceRecord>();
     public DbSet<SecretRecord> Secrets => Set<SecretRecord>();
     public DbSet<AuditRecord> AuditEntries => Set<AuditRecord>();
@@ -27,14 +26,6 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<JournalStepRecord> JournalSteps => Set<JournalStepRecord>();
     public DbSet<SkillRecord> Skills => Set<SkillRecord>();
     public DbSet<LlmCallRecord> LlmCalls => Set<LlmCallRecord>();
-    public DbSet<StudyRecord> Studies => Set<StudyRecord>();
-    public DbSet<StudyDatasetRecord> StudyDatasets => Set<StudyDatasetRecord>();
-    public DbSet<StudyEvidenceRecord> StudyEvidence => Set<StudyEvidenceRecord>();
-    public DbSet<StudyHypothesisRecord> StudyHypotheses => Set<StudyHypothesisRecord>();
-    public DbSet<StudyModelRecord> StudyModels => Set<StudyModelRecord>();
-    public DbSet<StudySourceRoleRecord> StudySourceRoles => Set<StudySourceRoleRecord>();
-    public DbSet<StudyReportRecord> StudyReports => Set<StudyReportRecord>();
-    public DbSet<StudySimulationRecord> StudySimulations => Set<StudySimulationRecord>();
     public DbSet<OrganizationTemplateRecord> OrganizationTemplates => Set<OrganizationTemplateRecord>();
     public DbSet<SolutionInstallRecord> SolutionInstalls => Set<SolutionInstallRecord>();
     public DbSet<SolutionRecordEntity> SolutionRecords => Set<SolutionRecordEntity>();
@@ -49,7 +40,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     {
         // Rows written before multi-tenancy belong to the default organization.
         foreach (var type in new[] { typeof(TaskRecord), typeof(AgentRecord), typeof(MessageRecord), typeof(EventRecord), typeof(ArtifactRecord),
-                     typeof(MemoryEntity), typeof(ToolCallRecord), typeof(WorldRecord), typeof(WorkspaceRecord) })
+                     typeof(MemoryEntity), typeof(ToolCallRecord), typeof(WorkspaceRecord) })
         {
             modelBuilder.Entity(type).Property<string>("TenantId").HasDefaultValue("default");
         }
@@ -213,54 +204,10 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
             b.HasIndex(w => new { w.TenantId, w.Visibility });
         });
 
-        // Studies (docs/studies.md).
-        modelBuilder.Entity<StudyRecord>(b =>
-        {
-            b.HasKey(x => x.StudyId);
-            b.HasIndex(x => new { x.TenantId, x.CreatedAt });
-            b.HasIndex(x => x.WorkspaceId).IsUnique();
-        });
-        modelBuilder.Entity<StudyDatasetRecord>(b =>
-        {
-            b.HasKey(x => x.DatasetId);
-            b.HasIndex(x => new { x.StudyId, x.Name, x.Version }).IsUnique();
-        });
-        modelBuilder.Entity<StudyEvidenceRecord>(b =>
-        {
-            b.HasKey(x => x.EvidenceId);
-            b.HasIndex(x => new { x.StudyId, x.CreatedAt });
-        });
-        modelBuilder.Entity<StudyHypothesisRecord>(b =>
-        {
-            b.HasKey(x => x.HypothesisId);
-            b.HasIndex(x => x.StudyId);
-        });
-        modelBuilder.Entity<StudyModelRecord>(b =>
-        {
-            b.HasKey(x => x.ModelId);
-            b.HasIndex(x => x.StudyId);
-        });
-        modelBuilder.Entity<StudySourceRoleRecord>(b => b.HasKey(x => new { x.StudyId, x.SourceKey }));
-        modelBuilder.Entity<StudyReportRecord>(b =>
-        {
-            b.HasKey(x => x.RunId);
-            b.HasIndex(x => x.StudyId);
-        });
-        modelBuilder.Entity<StudySimulationRecord>(b =>
-        {
-            b.HasKey(x => x.SimulationId);
-            b.HasIndex(x => x.StudyId);
-        });
         modelBuilder.Entity<OrganizationTemplateRecord>(b =>
         {
             b.HasKey(x => x.TemplateId);
             b.HasIndex(x => new { x.TenantId, x.CreatedAt });
-        });
-
-        modelBuilder.Entity<WorldRecord>(b =>
-        {
-            b.HasKey(w => w.WorldId);
-            b.HasIndex(w => new { w.TenantId, w.CreatedAt });
         });
 
         // Solutions (docs/solutions.md).

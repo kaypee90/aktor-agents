@@ -10,7 +10,6 @@ public sealed class ConnectorMentionsSection : LLM.ISystemPromptSection
 
     public string Render(LLM.AgentPromptContext context)
     {
-        if (context.State.IsResident) return string.Empty;
         var named = Pipelines.Mentions.ConnectorsIn([context.State.Goal, context.State.Metadata.GetValueOrDefault("initial_context")]);
         if (named.Count == 0) return string.Empty;
         var lines = named.Select(name =>

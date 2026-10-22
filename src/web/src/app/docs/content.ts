@@ -27,8 +27,8 @@ You can use Aktor in two ways:
 
 | As… | You… |
 |---|---|
-| **A product** | Chat with a team in **Tasks**, run reusable pipelines in **Workspaces**, research with your own data in **Studies**. |
-| **A platform** | Package a business application as a **solution**, with its own data model, the assistant your customers talk to, and evals. Deploy it with the \`aktor\` CLI and put it in front of your own customers. |
+| **A platform** | Package a business application as a **solution**, with its own data model, the workflows that run it, the assistant your customers talk to, and evals. Deploy it with the \`aktor\` CLI and put it in front of your own customers. |
+| **A product** | Chat with a team in **Tasks**, and run reusable workflows in **Workspaces**: the building blocks every solution is made of. |
 
 Everything is on the record: messages, tool calls, decisions, spend and approvals. You can watch a
 run live, then audit, replay or fork it afterwards.
@@ -159,18 +159,6 @@ Every change is a new version you can restore.
 
 Start from **Templates** (incident response, support triage, PR review, research reports and more),
 or save a workspace as your organization's own template.
-`,
-  },
-  {
-    id: "studies",
-    group: "Use it",
-    title: "Studies",
-    summary: "Research a question with your own data, with reviewed models and cited evidence.",
-    body: `
-A study answers a question from your own datasets (CSV, Excel, Parquet, JSON). Agents explore the
-data, record hypotheses, and fit models in a sandbox. A second agent reviews every model, and results
-are checked on held-out data. Simulated experiments are calibrated against the real data. The report
-cites the evidence behind each finding.
 `,
   },
   {
@@ -615,7 +603,7 @@ Each guarantee names the code that enforces it and the test that proves it, in \
     summary: "A walkthrough to check solutions work on your own server.",
     body: `
 Each step builds on the last; \`docs/manual-testing.md\` has the full version, with checks for
-tasks, studies and workspaces too. With the Mock model you check the plumbing; with a real model,
+tasks and workspaces too. With the Mock model you check the plumbing; with a real model,
 the judgement.
 
 1. **Build and deploy with no files:** Solutions → New solution, change something, break it on

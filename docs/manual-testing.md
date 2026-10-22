@@ -1,6 +1,6 @@
 # Manual test prompts
 
-Prompts for testing Tasks, Studies, Workspaces, Solutions and the dashboard by hand. Each test says what it covers, the
+Prompts for testing Tasks, Workspaces, Solutions and the dashboard by hand. Each test says what it covers, the
 prompt to use, and what to check. Run them in order within a section: later tests build on
 earlier ones.
 
@@ -22,7 +22,6 @@ model makes good decisions with the runtime's tools and limits.
   |---|---|
   | Tasks | the agent graph, the Activity and Result tabs, the agent details panel |
   | Analytics | the trend, what consumes the most, tools, durations, runs to look at |
-  | Studies | sources, models, experiments, evidence and the report |
   | Workspaces | the team view, chat widget, and the Agents, Files, Triggers, Safety and Events tabs |
   | Solutions | the Solutions page (registry, installs) and each install's Overview, Data, End users, Usage, Evals and History tabs; the builder |
 
@@ -250,46 +249,6 @@ server: `PORT=3005 npx -y @modelcontextprotocol/server-everything streamableHttp
 - [ ] Another task doesn't see the server's tools.
 
 ---
-
-## Studies
-
-A study researches a question with its own datasets, documents and connections
-([studies.md](studies.md)). It needs Docker and the analysis image
-(`docker build -t aktor-analysis:1 docker/analysis`).
-
-### ST1. A question answered from a dataset
-
-**Tests:** profiling, the sealed holdout, models, review, the report's checks.
-
-1. **Studies → New study**, name "Renewals", question "What drives lease renewals?".
-2. **Sources → Add dataset**: a CSV with a 0/1 `renewed` column and a few explanatory columns
-   (rent increase, tenure, unit type). Open it: columns, kinds, ranges and the sealed rows show;
-   write a meaning for `renewed` in the data dictionary and save.
-3. **Run study.**
-
-- [ ] The run's agents show under **Overview → Runs → Agents**.
-- [ ] **Models**: a fitted model with coefficients, intervals and diagnostics; it's accepted by a
-      different agent than its author, and has a holdout score.
-- [ ] **Report**: findings with evidence ids that open what was run; a data coverage table in which
-      every source has a role.
-- [ ] **Notebook** downloads a `.ipynb` with the queries and model code.
-
-### ST2. An experiment calibrated against real data
-
-**Tests:** simulation, calibration, simulated datasets.
-
-Run the study again with the instructions "Simulate an 8% rent increase against no increase,
-calibrated against the real renewal rate."
-
-- [ ] **Experiments**: shares per condition, the effect against the control, and the calibration gap.
-- [ ] **Sources → Simulated datasets** has the decisions; findings that rest on them are marked
-      *Simulated*.
-
-### ST3. Isolation and limits
-
-- [ ] Another study doesn't see this study's datasets, documents or connections.
-- [ ] A connected tool that changes something asks for approval.
-- [ ] **Analytics → Studies** shows the runs, the analyses, the simulation and the evidence quality.
 
 ## Workspaces
 

@@ -108,7 +108,7 @@ return rows.filter((r) => r.Email).map((r) => ({ name: r.Name, email: r.Email.tr
 JavaScript code runs inside an `async` function, so `await` works. In the stage editor, **Try it on
 sample data** runs the code against the latest run's data (or data you type) before you save it.
 
-**The sandbox** (`DockerScriptRunner`, as for `shell_exec` and study analyses):
+**The sandbox** (`DockerScriptRunner`, as for `shell_exec`):
 
 - one throwaway container per run, from a stock `python:3.12-slim` or `node:22-slim` image;
 - no network, a read-only filesystem except a 64 MB `/tmp`, and nothing from the host mounted;
@@ -116,8 +116,7 @@ sample data** runs the code against the latest run's data (or data you type) bef
   (`Scripts:CpuLimit`, 0.5), processes (64) and time (`Scripts:DefaultTimeoutSeconds`, 30; at most
   `Scripts:MaxTimeoutSeconds`, 300).
 
-Set `Scripts:PythonImage=aktor-analysis:1` to add pandas, numpy, scipy and duckdb (the study
-analysis image). Pull the images once (`docker pull python:3.12-slim node:22-slim`) so the first
+Set `Scripts:PythonImage` to your own image to add libraries such as pandas or numpy. Pull the images once (`docker pull python:3.12-slim node:22-slim`) so the first
 script doesn't spend its time limit downloading. Without Docker, scripts are refused; they never run
 on the host.
 

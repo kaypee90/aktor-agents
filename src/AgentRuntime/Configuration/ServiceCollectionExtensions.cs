@@ -1,7 +1,6 @@
 using AgentRuntime.Agents;
 using AgentRuntime.Events;
 using AgentRuntime.LLM;
-using AgentRuntime.Simulation;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Configuration;
@@ -33,14 +32,12 @@ public static class ServiceCollectionExtensions
             key => configuration[$"{LlmOptions.SectionName}:{key}"] is not null));
         services.Configure<AutonomyOptions>(configuration.GetSection(AutonomyOptions.SectionName));
         services.Configure<SupervisionOptions>(configuration.GetSection(SupervisionOptions.SectionName));
-        services.Configure<SimulationOptions>(configuration.GetSection(SimulationOptions.SectionName));
         services.Configure<Integrations.IntegrationsOptions>(configuration.GetSection(Integrations.IntegrationsOptions.SectionName));
         services.Configure<Workspaces.WorkspaceOptions>(configuration.GetSection(Workspaces.WorkspaceOptions.SectionName));
         services.Configure<Pipelines.PipelineOptions>(configuration.GetSection(Pipelines.PipelineOptions.SectionName));
         services.Configure<Pipelines.ScriptOptions>(configuration.GetSection(Pipelines.ScriptOptions.SectionName));
         services.Configure<Durability.DurabilityOptions>(configuration.GetSection(Durability.DurabilityOptions.SectionName));
         services.Configure<Tenancy.BillingOptions>(configuration.GetSection(Tenancy.BillingOptions.SectionName));
-        services.Configure<Studies.StudyOptions>(configuration.GetSection(Studies.StudyOptions.SectionName));
 
         services.AddSingleton<InMemoryEventBus>();
         services.AddSingleton<IEventPublisher>(sp => sp.GetRequiredService<InMemoryEventBus>());
@@ -52,27 +49,6 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<Durability.IStepJournal, Durability.InMemoryStepJournal>();
         services.AddSingleton<Durability.RecordedLlmProvider>();
         services.AddSingleton<ToolRegistry>();
-
-        // Studies (docs/studies.md): in memory and without a sandbox by default; the infrastructure
-        // layer makes the store durable and runs analyses in Docker.
-        services.TryAddSingleton<Studies.IStudyStore, Studies.InMemoryStudyStore>();
-        services.TryAddSingleton<Studies.IAnalysisSandbox, Studies.UnavailableAnalysisSandbox>();
-        services.AddSingleton<Studies.StudySources>();
-        services.AddSingleton<Studies.StudyToolSupport>();
-        services.AddSingleton<Studies.ExperimentRunner>();
-        services.AddSingleton<Studies.StudyExperiments>();
-        services.AddSingleton<ITool, Studies.StudySourcesTool>();
-        services.AddSingleton<ITool, Studies.QueryDatasetTool>();
-        services.AddSingleton<ITool, Studies.RecordHypothesisTool>();
-        services.AddSingleton<ITool, Studies.FitModelTool>();
-        services.AddSingleton<ITool, Studies.RunAnalysisTool>();
-        services.AddSingleton<ITool, Studies.ReviewModelTool>();
-        services.AddSingleton<ITool, Studies.EvaluateOnHoldoutTool>();
-        services.AddSingleton<ITool, Studies.SetSourceRoleTool>();
-        services.AddSingleton<ITool, Studies.RunSimulationTool>();
-        services.AddSingleton<ITool, Studies.SubmitReportTool>();
-        services.AddSingleton<IToolEvidenceRecorder, Studies.StudyEvidenceRecorder>();
-        services.AddSingleton<ICompletionGate, Studies.StudyCompletionGate>();
 
         // Governance tools: always available to every agent, independent of capabilities.
         services.AddSingleton<ITool, SpawnAgentTool>();
@@ -91,12 +67,6 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<Skills.ISkillStore, Skills.InMemorySkillStore>();
         services.AddSingleton<ITool, Skills.LoadSkillTool>();
         services.AddSingleton<ITool, Skills.ReadSkillFileTool>();
-
-        // Simulation: world actions for residents (never granted to task agents), genesis, and a
-        // no-op archive that the infrastructure layer replaces with Postgres.
-        services.AddWorldTools();
-        services.AddSingleton<IWorldGenesis, LlmWorldGenesis>();
-        services.TryAddSingleton<IWorldArchive, NullWorldArchive>();
 
         // Workspaces: long-running environments with triggers and a user channel.
         services.AddSingleton<ITool, Workspaces.PlanRequestTool>();
@@ -119,8 +89,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentPromptBuilder, AgentPromptBuilder>();
         services.AddSingleton<ISystemPromptSection, RoleSection>();
         services.AddSingleton<ISystemPromptSection, GoalSection>();
-        services.AddSingleton<ISystemPromptSection, ResidentPersonaSection>();
-        services.AddSingleton<ISystemPromptSection, WorldRulesSection>();
         services.AddSingleton<ISystemPromptSection, Workspaces.WorkspaceSection>();
         services.AddSingleton<ISystemPromptSection, CurrentStateSection>();
         services.AddSingleton<ISystemPromptSection, CapabilitiesSection>();
@@ -134,7 +102,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISystemPromptSection, SpawningRulesSection>();
         services.AddSingleton<ISystemPromptSection, CompletionCriteriaSection>();
         services.AddSingleton<ISystemPromptSection, AnswerFormatSection>();
-        services.AddSingleton<ISystemPromptSection, Studies.StudyPromptSection>();
         services.AddSingleton<ISystemPromptSection, BehavioralRulesSection>();
         services.Configure<PromptOptions>(configuration.GetSection(PromptOptions.SectionName));
         services.AddSingleton<ISystemPromptSection, OperatorInstructionsSection>();

@@ -97,7 +97,7 @@ export default function DocsPage() {
               </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 {[
-                  { href: "#tasks", icon: Icons.Tasks, title: "Use it", body: "Tasks, workspaces, studies" },
+                  { href: "#tasks", icon: Icons.Tasks, title: "Use it", body: "Tasks and workspaces" },
                   { href: "#solutions", icon: Icons.Solutions, title: "Build on it", body: "Solutions, end users, registry" },
                   { href: "#api", icon: Icons.Book, title: "Reference", body: "API, guarantees, settings" },
                 ].map((c) => (

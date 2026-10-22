@@ -49,12 +49,6 @@ public sealed class AgentState
 
     [Id(27)] public string TaskId { get; set; } = string.Empty;
 
-    /// <summary>Set when this agent is a resident of a simulated world rather than a task worker.
-    /// Residents run short per-tick turns and act through world tools instead of completing a goal.</summary>
-    [Id(28)] public string? WorldId { get; set; }
-
-    public bool IsResident => WorldId is not null;
-
     // ---- Durable execution journal (docs/durability.md) ----
     // The transcript is the step journal: an assistant entry records the LLM's decision and each
     // tool entry records a completed call. These fields hold what the transcript can't: where a
@@ -155,13 +149,6 @@ public sealed class AgentState
 
     /// <summary>Replaying and still on the recording.</summary>
     public bool IsReplaying => Replay is not null && !ReplayDiverged;
-
-    /// <summary>Agents with a budget for their whole life (all but simulation residents): these
-    /// wrap up instead of failing when it runs out.</summary>
-    public bool HasLifetimeBudget => !IsResident;
-
-    /// <summary>Routine event handling (simulation residents) that can use the fast model tier.</summary>
-    public bool UsesFastTier => IsResident;
 
     public bool IsTerminal => Status is AgentStatus.Completed or AgentStatus.Failed or AgentStatus.Terminated or AgentStatus.TimedOut;
 

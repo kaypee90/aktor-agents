@@ -2,7 +2,6 @@ using AgentRuntime.Agents;
 using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
-using AgentRuntime.Simulation;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -31,13 +30,6 @@ public sealed class AdminController(
     [HttpPost("reset")]
     public async Task<IActionResult> Reset(CancellationToken ct)
     {
-        // Stop running worlds first, or their clocks would keep waking residents after the reset.
-        var liveWorlds = await db.Worlds.Where(w => w.Status != nameof(WorldStatus.Ended)).Select(w => w.WorldId).ToListAsync(ct);
-        foreach (var worldId in liveWorlds)
-        {
-            await grainFactory.GetGrain<IWorldGrain>(worldId).End("reset by the operator");
-        }
-
         // Archive live workspaces first so their schedules stop firing.
         var liveWorkspaces = await db.Workspaces.Where(w => w.Status != "Archived").Select(w => w.WorkspaceId).ToListAsync(ct);
         foreach (var workspaceId in liveWorkspaces)
@@ -65,7 +57,6 @@ public sealed class AdminController(
         await db.ToolCalls.ExecuteDeleteAsync(ct);
         await db.Artifacts.ExecuteDeleteAsync(ct);
         await db.MemoryEntries.ExecuteDeleteAsync(ct);
-        await db.Worlds.ExecuteDeleteAsync(ct);
         await db.Workspaces.ExecuteDeleteAsync(ct);
         // Model settings (profiles, their prices and API keys, scope "llm:<org>") survive a reset;
         // connection secrets go with their workspaces.

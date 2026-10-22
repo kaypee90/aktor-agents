@@ -15,10 +15,9 @@ what is guaranteed, how it works, and where the limits are.
 | after a message was accepted for an agent | The message is delivered exactly once. |
 | after a pause, stop or retire request was accepted | The request is applied. |
 | after an agent completed or failed, before its parent was told | The parent is still told, exactly once. |
-| while a world simulation was running | The world's clock restarts from the last saved tick; perceptions for a replayed tick are deduplicated. |
 
-"Recovery" needs no human and no incoming request. A durable reminder re-activates any agent or
-world with interrupted work on a live silo, within about one reminder period
+"Recovery" needs no human and no incoming request. A durable reminder re-activates any agent with
+interrupted work on a live silo, within about one reminder period
 (`Durability:RecoveryReminderPeriod`, default one minute) of a silo being available.
 
 ### What is not guaranteed
@@ -40,7 +39,7 @@ world with interrupted work on a live silo, within about one reminder period
 
 ### Durable state
 
-Orleans grain state (agents, mailboxes, the agent registry, worlds) is stored in PostgreSQL through
+Orleans grain state (agents, mailboxes, the agent registry, workspaces) is stored in PostgreSQL through
 Orleans' ADO.NET provider (`Silo:Storage=AdoNet`, the default), using Orleans' binary serializer.
 That format is version tolerant, keyed by each field's `[Id]`, so new fields can be added to
 agent state and state saved years earlier still loads.
@@ -74,7 +73,6 @@ side effects are keyed by it:
 |---|---|
 | `spawn_agent` | Child id = hash of the key; the registry and `Initialize` accept a repeat of the same id. |
 | `send_message` | Message id = hash of the key; the recipient's mailbox drops a repeated id. |
-| World actions | The world records each action's result by key and returns it on replay. |
 | `write_memory` | An upsert by key. |
 | Parent notifications | Fixed id per child and outcome. |
 
@@ -103,8 +101,7 @@ Grain timers live in memory; reminders are stored in PostgreSQL (`orleansreminde
 on whichever silo is alive.
 - An agent holds a reminder while a turn is in progress or its outbox is non-empty, and drops it
   when idle, so idle agents cost nothing.
-- A running world holds a reminder that restarts its tick timer.
-- An agent or world re-activated for any reason also checks for interrupted work in
+- An agent re-activated for any reason also checks for interrupted work in
   `OnActivateAsync`.
 
 ## Configuration
@@ -134,8 +131,7 @@ checked without anything poking the agent:
 - a non-idempotent call runs exactly once, and the agent is told its outcome is unknown;
 - an idempotent call is retried with the same key;
 - a message sent just before the crash is seen exactly once;
-- a stop request sent just before the crash is honoured;
-- a running world finishes its ticks.
+- a stop request sent just before the crash is honoured.
 
 The durable test doubles (`TestSupport/DurableTestInfrastructure.cs`) keep state outside the
 silo, as a database would. These tests fail if that storage is made non-durable, or if the

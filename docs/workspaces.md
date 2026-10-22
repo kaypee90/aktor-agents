@@ -297,8 +297,7 @@ workspace visible to the organization before handing it over.
   ([templates.md](templates.md)), variables included: no secrets, knowledge, runs or files.
 - **Delete** (Admins, archived workspaces only) removes the workspace with its integrations and
   their secrets, triggers, skills, knowledge and its own files. Its runs' history (with their files)
-  and the audit log are kept as the record of what happened. A study's workspace is deleted with
-  its study.
+  and the audit log are kept as the record of what happened.
 
 ## Workspaces made before pipelines
 

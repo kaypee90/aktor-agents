@@ -432,12 +432,9 @@ public sealed class TasksController(IAgentOrchestrator orchestrator, AgentDbCont
             result_summary = task.ResultSummary,
             correlation_id = task.CorrelationId,
             source = task.Source,
-            // A run of a workspace's pipeline or of a study: neither takes follow-ups (a new run does).
-            kind = task.Source switch { "pipeline" => "pipeline_run", "study" => "study_run", _ => "task" },
-            workspace_id = task.Source == "study" ? null : task.WorkspaceId,
-            study_id = task.Source == "study" && task.WorkspaceId is { } studyWorkspace
-                ? await db.Studies.AsNoTracking().Where(s => s.WorkspaceId == studyWorkspace).Select(s => s.StudyId).FirstOrDefaultAsync(ct)
-                : null,
+            // A run of a workspace's pipeline doesn't take follow-ups (a new run does).
+            kind = task.Source == "pipeline" ? "pipeline_run" : "task",
+            workspace_id = task.WorkspaceId,
             replay_of_task_id = task.ReplayOfTaskId,
             replay_mode = task.ReplayMode,
             fork_after_step = task.ForkAfterStep,

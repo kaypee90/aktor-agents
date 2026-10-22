@@ -105,7 +105,7 @@ public sealed class SkillsSection(IOptions<SkillOptions> options) : ISystemPromp
 
     public string Render(AgentPromptContext context)
     {
-        if (context.State.IsResident || context.Skills.Count == 0) return string.Empty;
+        if (context.Skills.Count == 0) return string.Empty;
 
         // Skills a person named in this agent's goal or context (@skill:name) come first and are required.
         var named = Pipelines.Mentions.SkillsIn([context.State.Goal, context.State.Metadata.GetValueOrDefault("initial_context")]);

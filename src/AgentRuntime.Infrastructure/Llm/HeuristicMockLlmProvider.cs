@@ -62,24 +62,6 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
             });
         }
 
-        // Simulation traffic is recognisable by its tools: genesis offers only define_world, and
-        // every resident has end_turn.
-        if (request.Tools.Any(t => t.Name == "define_world"))
-        {
-            return Task.FromResult(MockWorldBehavior.Genesis(request));
-        }
-
-        if (request.Tools.Any(t => t.Name == "end_turn"))
-        {
-            return Task.FromResult(MockWorldBehavior.Resident(request));
-        }
-
-        // Studies: simulated participants decide; study agents follow the study flow.
-        if (MockStudyBehavior.IsParticipant(request))
-        {
-            return Task.FromResult(MockStudyBehavior.Participant(request));
-        }
-
         // The solution builder's conversation.
         if (MockSolutionDesignBehavior.IsDesignRequest(request))
         {
@@ -102,11 +84,6 @@ public sealed class HeuristicMockLlmProvider : ILLMProvider
         // The goal as written: the section goes on with attached files and follow-ups after a blank line.
         var goal = ExtractSection(systemText, "## GOAL")?.Split("\n\n", 2)[0].Trim() ?? "the assigned goal";
         var isRoot = role.Contains("Root", StringComparison.OrdinalIgnoreCase);
-
-        if (MockStudyBehavior.IsStudyAgent(request))
-        {
-            return Task.FromResult(MockStudyBehavior.Agent(request, systemText, isRoot, goal));
-        }
 
         // A solution's assistant talking with one of its end users (SolutionAppService): answer
         // the latest message in a sentence, as a chat assistant would, without quoting its

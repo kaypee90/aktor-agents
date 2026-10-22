@@ -20,7 +20,8 @@ public enum ControlKind
 {
     Pause,
     Resume,
-    /// <summary>Clears a pause without forcing a turn; the next message or event wakes the agent.</summary>
+    /// <summary>Clears a pause without forcing a turn. Nothing sends it any more; kept so mail
+    /// already queued is still understood and the values after it don't shift.</summary>
     Unpause,
     Stop
 }

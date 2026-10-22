@@ -111,8 +111,8 @@ public enum RuntimeEventType
     ArtifactCreated,
     EnvironmentChanged,
 
-    // Simulation (living world) events. The world grain publishes these with TaskId = world id,
-    // so the existing per-task SSE filter and event persistence work unchanged.
+    // Retired: events of the world simulation, which moved to the Studies product (branch
+    // product/studies). Kept so the values after them don't shift; nothing publishes them.
     WorldCreated,
     WorldTick,
     WorldActivity,

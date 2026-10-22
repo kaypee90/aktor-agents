@@ -87,7 +87,7 @@ public sealed record PolicyVerdict(PolicyDecisionKind Decision, string Reason)
 public static class PolicyEngine
 {
     /// <summary>Tools with effects outside the platform. Everything else (agents messaging each
-    /// other, schedules, memory, notifying the user, the sandboxed workspace files, simulations)
+    /// other, schedules, memory, notifying the user, the sandboxed workspace files)
     /// is internal and never needs a human's approval.</summary>
     public static bool IsExternal(string toolName) =>
         toolName.Contains("__", StringComparison.Ordinal) || toolName is "shell_exec" or "http_request" or "database_query";

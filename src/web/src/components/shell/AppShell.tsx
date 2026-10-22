@@ -34,7 +34,6 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { href: "/analytics", label: "Analytics", icon: Icons.Analytics },
       { href: "/runs", label: "Run history", icon: Icons.Runs, match: ["/replay"] },
-      { href: "/studies", label: "Studies", icon: Icons.Simulation, match: ["/simulation"] },
     ],
   },
   {

@@ -200,8 +200,8 @@ finished root took one up). Both show in the Activity stream.
 - **Each agent can start at most `MaxChildrenPerAgent` agents (default 10) over its whole life**,
   finished ones included. After several rounds of follow-ups, the root may have to do more of the
   work itself.
-- **A finished pipeline or study run can't be moved to another model** (it takes no follow-ups);
-  run it again from its workspace or study. Any other task can switch models at any time with the
+- **A finished pipeline run can't be moved to another model** (it takes no follow-ups);
+  run it again from its workspace. Any other task can switch models at any time with the
   picker next to the chat's message box: its next follow-up uses the new one
   ([llm-settings.md](llm-settings.md)).
 - **Generated PowerPoint decks are plain**: titles and bullets, no images, charts or speaker notes.

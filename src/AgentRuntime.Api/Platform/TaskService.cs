@@ -46,12 +46,7 @@ public sealed record StartTaskRequest
     public string? StartedBy { get; init; }
     /// <summary>Tool connections (MCP servers, APIs) the task's agents can use from their first step.</summary>
     public IReadOnlyList<Integrations.ConnectionRequest>? Connections { get; init; }
-    /// <summary>A study run (docs/studies.md): the task works inside the study's workspace with the
-    /// study tools. Set by <see cref="StudyService"/> only.</summary>
-    public StudyRunLaunch? Study { get; init; }
 }
-
-public sealed record StudyRunLaunch(string StudyId, string WorkspaceId);
 
 /// <summary>A task (or a workspace pipeline's run) as every protocol reports it.</summary>
 public sealed record TaskView
@@ -167,7 +162,7 @@ public sealed class TaskService(
         var modelProfileId = await CheckModelAsync(tenantId, request.ModelProfileId, ct);
         // Checked before the task exists, so an expired upload doesn't leave a task behind.
         var staged = request.UploadIds is { Count: > 0 } uploadIds ? uploads.Find(tenantId, uploadIds) : [];
-        var taskId = request.Study is null ? Guid.NewGuid().ToString("n") : Studies.StudyIds.NewRun();
+        var taskId = Guid.NewGuid().ToString("n");
 
         // Connected (and their tools discovered) before the task exists, so a server that can't be
         // reached is reported at once and leaves no task behind.
@@ -211,8 +206,7 @@ public sealed class TaskService(
                 CallbackUrl = request.CallbackUrl,
                 PreviewId = estimateJson is null ? null : request.PreviewId,
                 EstimateJson = estimateJson,
-                StartedBy = request.StartedBy,
-                WorkspaceId = request.Study?.WorkspaceId
+                StartedBy = request.StartedBy
             });
             await db.SaveChangesAsync(ct);
         }
@@ -247,9 +241,7 @@ public sealed class TaskService(
                 CorrelationId = correlationId,
                 TeamPolicy = request.TeamPolicy,
                 Replay = request.Replay,
-                InitialContext = initialContext,
-                WorkspaceId = request.Study?.WorkspaceId,
-                ExtraTools = request.Study is null ? [] : [.. Tools.AgentToolCatalog.StudyTools]
+                InitialContext = initialContext
             }, ct);
         }
         catch (InvalidOperationException ex)
@@ -320,11 +312,12 @@ public sealed class TaskService(
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var task = await (await VisibleTasksAsync(db, tenantId, ct)).FirstOrDefaultAsync(t => t.TaskId == taskId, ct)
                    ?? throw new TaskServiceException($"No task '{taskId}'.", StatusCodes.Status404NotFound);
-        // A finished task takes follow-ups, which run on the model chosen now. Pipeline and study
-        // runs take none (they run again from their workspace or study), so for them it's moot.
+        // A finished task takes follow-ups, which run on the model chosen now. Pipeline runs take
+        // none (they run again from their workspace), so for them it's moot. ("study" runs come from
+        // the Studies product, on the product/studies branch, and can remain in a shared database.)
         if (task.CompletedAt is not null && task.Source is "pipeline" or "study")
         {
-            throw new TaskServiceException("This run has finished; run it again from its workspace or study to use another model.", StatusCodes.Status409Conflict);
+            throw new TaskServiceException("This run has finished; run it again from its workspace to use another model.", StatusCodes.Status409Conflict);
         }
 
         var next = await CheckModelAsync(tenantId, profileId, ct) ?? LLM.ModelProfiles.ServerId;

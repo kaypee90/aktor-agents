@@ -131,7 +131,7 @@ letters, digits, `.`, `-` and `_` turned into `-`). An agent whose instructions 
 told to read it first, with **`read_knowledge`**: every agent has it next to `search_knowledge`, and
 it returns a whole document (all its passages, in order, up to 60,000 characters) or a fact, by
 name. It reads only what the agent could search anyway: its workspace's knowledge first, then its
-organization's. Inside a study, what it returns is recorded as evidence like a search.
+organization's.
 
 ## Knowledge from files
 

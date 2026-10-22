@@ -59,16 +59,10 @@ public interface IAgentGrain : IGrainWithStringKey
     [AlwaysInterleave]
     Task Stop();
 
-    /// <summary>Like <see cref="Stop"/>, but with a reason recorded on the termination event — used
-    /// when a simulated world retires a resident (vote removal, leaving, world end).</summary>
+    /// <summary>Like <see cref="Stop"/>, but with a reason recorded on the termination event (e.g. a
+    /// workspace retiring its standing agents when it becomes a pipeline).</summary>
     [AlwaysInterleave]
     Task Retire(string reason);
-
-    /// <summary>Clears a pause without forcing a reasoning turn; the agent's next message or event
-    /// wakes it as usual. One-way because the world grain calls it while the resident may itself
-    /// be mid-turn waiting on the world (see <c>IWorldGrain</c>'s deadlock rule).</summary>
-    [OneWay]
-    Task ClearPause();
 
     /// <summary>
     /// Applies pending operator requests (pause/stop), drains the inbox into the transcript, and

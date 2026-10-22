@@ -4,7 +4,6 @@ using AgentRuntime.Contracts;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.LLM;
 using AgentRuntime.Messaging;
-using AgentRuntime.Simulation;
 using Orleans.TestingHost;
 using Xunit;
 
@@ -191,54 +190,5 @@ public sealed class CrashRecoveryTests : IAsyncLifetime
 
         // The interrupted call finishes, then the durable stop applies at the next safe point.
         await WaitForRegistryStatusAsync(agentId, AgentStatus.Terminated);
-    }
-
-    [Fact]
-    public async Task RunningWorld_ResumesItsClockAfterACrash_AndFinishes()
-    {
-        ScriptedLlmProviderRegistry.Current = _ => Respond(Call("end_turn", new { plan = "Rest." }));
-
-        var world = Grains.GetGrain<IWorldGrain>(WorldIds.New());
-        await world.Create(new WorldBlueprint
-        {
-            Name = "Crashville",
-            Locations = [new LocationBlueprint { Name = "Square" }],
-            Residents = [new ResidentBlueprint { Name = "Ann", Role = "tester" }, new ResidentBlueprint { Name = "Ben", Role = "tester" }]
-        }, new WorldSettings { Seed = "crash test", TickIntervalSeconds = 1, MaxTicks = 6, MaxDurationMinutes = 5 });
-        await world.Start();
-
-        var deadline = DateTime.UtcNow.AddSeconds(30);
-        while ((await world.GetSnapshot())!.Tick < 2 && DateTime.UtcNow < deadline) await Task.Delay(200);
-
-        await _cluster.CrashAndRestartAsync();
-
-        // Don't touch the world: its durable reminder has to bring it back.
-        var ended = await WaitForWorldAsync(world, s => s.Status == WorldStatus.Ended, 90);
-        Assert.Equal(6, ended.Tick);
-        Assert.Contains("tick limit", ended.EndReason);
-    }
-
-    private static async Task<WorldSnapshot> WaitForWorldAsync(IWorldGrain world, Func<WorldSnapshot, bool> condition, int timeoutSeconds)
-    {
-        // Give the reminder a chance to act first; only then start polling (which also activates).
-        await Task.Delay(TimeSpan.FromSeconds(5));
-        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
-        WorldSnapshot? snapshot = null;
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                snapshot = await world.GetSnapshot();
-                if (snapshot is not null && condition(snapshot)) return snapshot;
-            }
-            catch (Exception) when (DateTime.UtcNow < deadline)
-            {
-                // Cluster still recovering.
-            }
-
-            await Task.Delay(250);
-        }
-
-        throw new TimeoutException($"World condition not met (status {snapshot?.Status}, tick {snapshot?.Tick}).");
     }
 }

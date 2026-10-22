@@ -286,13 +286,11 @@ function Working({ steps, roles, active, onStop }: { steps: RuntimeEvent[]; role
  * instructions and files. Files open beside the conversation, the way they would look opened.
  * A follow-up on a finished task reopens it with everything the team already knows.
  */
-export function TaskChat({ taskId, running, events, agents, budget, ceiling, onStop, onShowAgents, workspaceId, studyId, modelPicker }: {
+export function TaskChat({ taskId, running, events, agents, budget, ceiling, onStop, onShowAgents, workspaceId, modelPicker }: {
   taskId: string;
   running: boolean;
   /** Set for a run of a workspace's pipeline: it takes no follow-ups, so the composer links back there. */
   workspaceId?: string | null;
-  /** A study's run: it's run again from the study, not continued here. */
-  studyId?: string | null;
   /** Switches the task's model (follow-ups run on it), shown next to the attach button. */
   modelPicker?: React.ReactNode;
   events: RuntimeEvent[];
@@ -403,15 +401,7 @@ export function TaskChat({ taskId, running, events, agents, budget, ceiling, onS
           </div>
         </div>
 
-        {studyId ? (
-          <div className="px-4 pb-4">
-            <div className="mx-auto flex max-w-3xl items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-              <Icons.Simulation className="h-4 w-4 shrink-0" />
-              <span className="flex-1">This is a run of a study. Its models, experiments and report are on the study; to go again, run the study from there.</span>
-              <Link href={`/studies?id=${encodeURIComponent(studyId)}`} className="shrink-0 font-medium text-brand-600 hover:underline dark:text-brand-400">Open the study</Link>
-            </div>
-          </div>
-        ) : workspaceId ? (
+        {workspaceId ? (
           <div className="px-4 pb-4">
             <div className="mx-auto flex max-w-3xl items-center gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
               <Icons.Workspaces className="h-4 w-4 shrink-0" />

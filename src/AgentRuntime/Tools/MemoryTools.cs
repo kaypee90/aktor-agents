@@ -194,7 +194,6 @@ public sealed class KnowledgeMentionsSection : LLM.ISystemPromptSection
 
     public string Render(LLM.AgentPromptContext context)
     {
-        if (context.State.IsResident) return string.Empty;
         var named = Pipelines.Mentions.KnowledgeIn([context.State.Goal, context.State.Metadata.GetValueOrDefault("initial_context")]);
         if (named.Count == 0) return string.Empty;
         return $"Your instructions name {string.Join(", ", named.Select(n => $"@knowledge:{n}"))}: read {(named.Count == 1 ? "it" : "each")} " +

@@ -42,6 +42,11 @@ const features = [
 // What people do with it: the product's areas, as they appear in the dashboard.
 const products = [
   {
+    icon: Icons.Solutions,
+    title: "Solutions you build and ship",
+    body: "Package your own agentic app with its data model, workflows, a customer-facing assistant and evals. Deploy it with one command, publish it to the registry, and upgrade it without breaking work in progress.",
+  },
+  {
     icon: Icons.Tasks,
     title: "Tasks",
     body: "Chat with a team like you would with an assistant. Detailed answers with copyable commands, follow-ups that keep every step, files in, and Word, PDF, Excel and slide decks out.",
@@ -52,11 +57,6 @@ const products = [
     body: "Reusable pipelines of agents you edit in plain language or on a canvas. Run them on schedules, webhooks, watches and forms, mix agents with actions and scripts that need no model, and clone or share them as templates.",
   },
   {
-    icon: Icons.Simulation,
-    title: "Studies",
-    body: "Research a question with your own data. Statistics run in a sandbox, a second agent reviews every model, simulated experiments are calibrated against real data, and every finding cites its evidence.",
-  },
-  {
     icon: Icons.Knowledge,
     title: "Knowledge and skills",
     body: "Upload documents and facts, teach your ways of working as skills, and point agents at either with an @mention.",
@@ -65,11 +65,6 @@ const products = [
     icon: Icons.Connect,
     title: "Your APIs as tools and MCP servers",
     body: "Connect MCP servers and REST APIs, add endpoints by hand or from OpenAPI, and serve them to Claude Code or n8n as an MCP server. The credential never leaves the vault.",
-  },
-  {
-    icon: Icons.Solutions,
-    title: "Solutions you build and ship",
-    body: "Package your own agentic app with its data model, workflows, a customer-facing assistant and evals. Deploy it with one command, publish it to the registry, and upgrade it without breaking work in progress.",
   },
   {
     icon: Icons.Analytics,

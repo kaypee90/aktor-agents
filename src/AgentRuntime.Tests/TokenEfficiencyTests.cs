@@ -135,10 +135,4 @@ public class TokenEfficiencyTests
         Assert.Equal(0.001m, tiered.CostOf(r, fast: true));
         Assert.Equal(0.01m, tiered.CostOf(r, fast: false));
     }
-
-    [Theory]
-    [InlineData(true, true)]   // a simulation resident: routine moves
-    [InlineData(false, false)] // real work: main model
-    public void FastTier_IsForRoutineEventHandling(bool resident, bool expected) =>
-        Assert.Equal(expected, new AgentState { WorldId = resident ? "world-1" : null, Role = "Worker" }.UsesFastTier);
 }

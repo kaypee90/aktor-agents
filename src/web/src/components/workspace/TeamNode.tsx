@@ -4,7 +4,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { WorkspaceAgentView } from "@/lib/workspaceTypes";
 import { Icons } from "@/components/ui/icons";
 import { BotIcon } from "../BotIcon";
-import { accentFor } from "../world/worldUi";
+import { accentFor } from "@/lib/accent";
 import { pauseInfo } from "./pauseInfo";
 
 // Nodes have a fixed size, which the canvas passes to React Flow as already measured. The canvas

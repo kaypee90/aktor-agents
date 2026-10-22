@@ -16,7 +16,6 @@ public sealed record AgentInitializationRequest
     [Id(10)] public int Depth { get; init; }
     [Id(11)] public string? InitialContext { get; init; }
     [Id(12)] public string TaskId { get; init; } = string.Empty;
-    [Id(13)] public string? WorldId { get; init; }
     [Id(14)] public Dictionary<string, string> Metadata { get; init; } = [];
 
     /// <summary>Start the agent's first turn as part of initialization — one durable write, so a
@@ -50,11 +49,6 @@ public sealed record TaskLaunchOptions
     [Id(4)] public Durability.ReplaySpec? Replay { get; init; }
     /// <summary>Context the root agent starts with besides its goal (e.g. excerpts of attached files).</summary>
     [Id(5)] public string? InitialContext { get; init; }
-    /// <summary>The root works inside this workspace (a study's): its connections, knowledge, safety
-    /// policy and daily budget apply to it and every agent it starts.</summary>
-    [Id(6)] public string? WorkspaceId { get; init; }
-    /// <summary>Tools the root gets beyond the defaults (a study's), inherited by its agents.</summary>
-    [Id(7)] public List<string> ExtraTools { get; init; } = [];
 }
 
 /// <summary>Tool-facing request produced by an agent's LLM turn asking to spawn a child.</summary>
@@ -173,7 +167,6 @@ public sealed record AgentSnapshot
     [Id(16)] public int Depth { get; init; }
     [Id(19)] public string TaskId { get; init; } = string.Empty;
     [Id(17)] public string? FailureReason { get; init; }
-    [Id(20)] public string? WorldId { get; init; }
     [Id(21)] public string? WorkspaceId { get; init; }
     [Id(23)] public string TenantId { get; init; } = string.Empty;
     [Id(24)] public int SpawnsThisRequest { get; init; }

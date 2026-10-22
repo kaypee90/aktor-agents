@@ -8,7 +8,6 @@ using AgentRuntime.LLM;
 using AgentRuntime.Messaging;
 using AgentRuntime.Resources;
 using AgentRuntime.Safety;
-using AgentRuntime.Simulation;
 using AgentRuntime.Skills;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
@@ -43,7 +42,6 @@ public sealed class AgentGrain(
     IOptions<LlmOptions> llmOptions,
     IOptions<DurabilityOptions> durabilityOptions,
     IAgentOrchestrator orchestrator,
-    IOptions<SimulationOptions> simulationOptions,
     IntegrationService integrations,
     ContextCompactor compactor,
     IAuditLog audit,
@@ -53,7 +51,6 @@ public sealed class AgentGrain(
     ILlmSettingsResolver llmSettings,
     ITaskModelSelection taskModels,
     LlmSettingsService modelSettings,
-    IToolEvidenceRecorder evidenceRecorder,
     ILogger<AgentGrain> logger) : Grain, IAgentGrain, IRemindable
 {
     private const string TurnReminder = "agent-turn";
@@ -65,7 +62,6 @@ public sealed class AgentGrain(
     private const string DeadlineReminder = "agent-deadline";
 
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
-    private readonly SimulationOptions _simulation = simulationOptions.Value;
     private readonly SupervisionOptions _supervision = supervisionOptions.Value;
     /// <summary>The model settings in force: the server's, or the organization's own
     /// (docs/llm-settings.md). Refreshed at the start of every step.</summary>
@@ -142,7 +138,6 @@ public sealed class AgentGrain(
         s.Depth = request.Depth;
         s.TaskId = request.TaskId;
         s.TenantId = Tenancy.TenantIds.Normalize(request.TenantId);
-        s.WorldId = request.WorldId;
         s.WorkspaceId = request.WorkspaceId;
         s.TeamPolicy = request.TeamPolicy;
         s.JournalPath = string.IsNullOrEmpty(request.JournalPath) ? "r" : request.JournalPath;
@@ -235,7 +230,7 @@ public sealed class AgentGrain(
     public async Task FollowUp(TaskFollowUp followUp)
     {
         // Read-only checks: this interleaves with a running turn, so it never touches state.
-        if (!IsInitialized || S.ParentAgentId is not null || S.InWorkspace || S.IsResident)
+        if (!IsInitialized || S.ParentAgentId is not null || S.InWorkspace)
         {
             throw new InvalidOperationException("Only a task's root agent takes follow-up instructions.");
         }
@@ -257,7 +252,6 @@ public sealed class AgentGrain(
 
     public Task Retire(string reason) => EnqueueControl(ControlKind.Stop, reason);
 
-    public Task ClearPause() => EnqueueControl(ControlKind.Unpause);
 
     private Task EnqueueControl(ControlKind kind, string? reason = null) =>
         Mailbox.Enqueue(new MailItem { Id = $"ctl-{Guid.NewGuid():n}", Kind = MailKind.Control, Control = kind, Reason = reason });
@@ -444,11 +438,6 @@ public sealed class AgentGrain(
             if (s.CanTransitionTo(AgentStatus.Waiting)) s.TransitionTo(AgentStatus.Waiting);
         }
 
-        if (s.IsResident)
-        {
-            TrimResidentTranscript();
-        }
-
         await state.WriteStateAsync();
         await Mailbox.Acknowledge(s.LastConsumedMailSeq);
 
@@ -512,9 +501,7 @@ public sealed class AgentGrain(
 
         await EnsureTurnReminderAsync();
 
-        // Residents take short turns — perceive, act a little, end the turn — and are woken again
-        // by the next world tick, so they get a much smaller per-wake cap than task agents.
-        var maxIterations = s.IsResident ? _simulation.ResidentMaxIterationsPerTurn : _limits.MaxReasoningIterationsPerTurn;
+        var maxIterations = _limits.MaxReasoningIterationsPerTurn;
 
         while (true)
         {
@@ -561,24 +548,7 @@ public sealed class AgentGrain(
                 return;
             }
 
-            if (s.HasLifetimeBudget)
-            {
-                if (await ApplyBudgetGuardAsync()) return;
-            }
-            else
-            {
-                if (BudgetExhausted(out var budgetReason))
-                {
-                    await FailAsync($"Budget exhausted: {budgetReason}");
-                    return;
-                }
-
-                if (DurationExceeded())
-                {
-                    await TimeOutAsync();
-                    return;
-                }
-            }
+            if (await ApplyBudgetGuardAsync()) return;
 
             if (s.WorkspaceId is { } workspaceId)
             {
@@ -650,8 +620,8 @@ public sealed class AgentGrain(
 
             s.LlmStep++;
 
-            var callCost = _llmOptions.CostOf(response, fast: s.UsesFastTier);
-            if (!replayed) await RecordLlmCallAsync(response, callCost, s.UsesFastTier, _lastLlmCallMs);
+            var callCost = _llmOptions.CostOf(response, fast: false);
+            if (!replayed) await RecordLlmCallAsync(response, callCost, false, _lastLlmCallMs);
             s.Usage = s.Usage with
             {
                 TokensUsed = s.Usage.TokensUsed + response.InputTokens + response.OutputTokens,
@@ -699,9 +669,7 @@ public sealed class AgentGrain(
                 AppendTranscript(new AgentTranscriptEntry
                 {
                     Role = "user",
-                    Content = s.IsResident
-                        ? "Reminder: you act only through your tools (say, talk_to, move_to, ...). If you are done for now, call end_turn with a one-line plan."
-                        : "Reminder: act through your tools. If your goal is satisfied, call complete_task; if you can't " +
+                    Content = "Reminder: act through your tools. If your goal is satisfied, call complete_task; if you can't " +
                           "get further, call complete_task with status \"partial\" and list what's left in remaining_work."
                 });
                 await state.WriteStateAsync();
@@ -794,11 +762,10 @@ public sealed class AgentGrain(
     }
 
     /// <summary>Runs pending tool calls, journaling each result. Returns true when the turn is
-    /// over: the agent completed its goal, or (residents) called end_turn.</summary>
+    /// over: the agent completed its goal.</summary>
     private async Task<bool> ExecuteToolCallsAsync(IReadOnlyList<TranscriptToolCall> calls)
     {
         var s = S;
-        var endTurn = false;
 
         foreach (var call in calls)
         {
@@ -839,7 +806,7 @@ public sealed class AgentGrain(
             // through the workspace, with the side-effect class their plugin declared.
             // A task's own connections (added by its owner) work the same way.
             ConnectionToolTarget? connectionTool = null;
-            if (ConnectionNames.IsConnectionTool(call.Name) && s.GrantedPermissions.HasFlag(ToolPermission.Integrations) && !s.IsResident)
+            if (ConnectionNames.IsConnectionTool(call.Name) && s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
             {
                 connectionTool = s.WorkspaceId is { } toolWorkspace
                     ? await GrainFactory.GetGrain<IWorkspaceGrain>(toolWorkspace).ResolveConnectionTool(call.Name)
@@ -876,7 +843,7 @@ public sealed class AgentGrain(
                     continue;
                 }
             }
-            else if (!s.IsResident)
+            else
             {
                 // A task has no workspace policy, but its organization's applies. Nobody is there to
                 // approve a call in a task, so one the organization says needs approval doesn't run.
@@ -957,14 +924,12 @@ public sealed class AgentGrain(
                     : ConnectionNames.IsConnectionTool(call.Name) && (s.InWorkspace || s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
                     ? ToolExecutionResult.Fail($"'{call.Name}' isn't available: its connection was removed, the tool was disabled, or you lack the Integrations permission.")
                     : await toolRegistry.ExecuteAsync(toolRequest,
-                        s.IsResident ? s.AllowedTools : [.. s.AllowedTools, .. SkillToolNames], s.GrantedPermissions);
+                        [.. s.AllowedTools, .. SkillToolNames], s.GrantedPermissions);
             }
 
             var toolElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(toolStarted);
-            // Inside a study, knowledge searches and connection calls become citable evidence.
-            if (s.WorkspaceId is not null && !s.IsReplaying) result = await evidenceRecorder.AttachAsync(toolRequest, result);
             s.Usage = s.Usage with { ToolCallsUsed = s.Usage.ToolCallsUsed + 1 };
-            if (!s.IsResident) await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
+            await Tenant.RecordUsage(new Tenancy.UsageDelta { ToolCalls = 1 });
             s.InFlightToolCallIds.Remove(call.Id);
             AppendToolResult(call, result);
             await JournalAsync(JournalStep.ToolKind, call.Id, call.Name, ReplayPolicy.ToolPayload(result));
@@ -990,13 +955,6 @@ public sealed class AgentGrain(
                 return true;
             }
 
-            // Keep executing the rest of this response: every tool call needs its result recorded,
-            // or the next LLM call would carry an unanswered tool_use.
-            if (call.Name is "end_turn" && result.Success)
-            {
-                endTurn = true;
-            }
-
             if (call.Name == "spawn_agent" && result.Success)
             {
                 RecordSpawnedChild(result.ResultJson);
@@ -1011,12 +969,6 @@ public sealed class AgentGrain(
 
             // Journal the result (and any bookkeeping above) before the next call runs.
             await state.WriteStateAsync();
-        }
-
-        if (endTurn)
-        {
-            await EndTurnAsync($"Agent '{s.Name}' ended its turn.");
-            return true;
         }
 
         return false;
@@ -1089,8 +1041,6 @@ public sealed class AgentGrain(
     private async Task AuditToolCallAsync(TranscriptToolCall call, ToolSideEffects sideEffects, ToolExecutionResult result, string outcome)
     {
         var s = S;
-        if (s.IsResident || call.Name is "end_turn") return; // simulation moves and turn ends aren't actions
-
         try
         {
             await audit.AppendAsync(new AuditEntry
@@ -1122,11 +1072,10 @@ public sealed class AgentGrain(
 
     private static readonly string[] SkillToolNames = [Skills.LoadSkillTool.Name, Skills.ReadSkillFileTool.Name];
 
-    /// <summary>Enabled skills of the agent's organization (none for simulation residents). A store
+    /// <summary>Enabled skills of the agent's organization. A store
     /// outage costs the agent its skills for this step, never the step itself.</summary>
     private async Task<IReadOnlyList<Skills.SkillSummary>> SkillsForAgentAsync()
     {
-        if (S.IsResident) return [];
         try
         {
             // The organization's skills, plus its own workspace's (only that workspace's agents see those).
@@ -1295,7 +1244,6 @@ public sealed class AgentGrain(
     private async Task JournalAsync(string kind, string key, string? toolName, string payloadJson)
     {
         var s = S;
-        if (s.IsResident) return;
         try
         {
             await journal.RecordAsync(new JournalStep
@@ -1477,8 +1425,8 @@ public sealed class AgentGrain(
     private async Task RegisterDeadlineReminderAsync()
     {
         var s = S;
-        // Residents have no deadline; very long budgets aren't worth a reminder.
-        if (!s.HasLifetimeBudget || s.Budget.MaxDurationSeconds > TimeSpan.FromDays(30).TotalSeconds) return;
+        // Very long budgets aren't worth a reminder.
+        if (s.Budget.MaxDurationSeconds > TimeSpan.FromDays(30).TotalSeconds) return;
 
         var started = s.StartedExecutionAt ?? DateTimeOffset.UtcNow;
         var due = started.AddSeconds(s.Budget.MaxDurationSeconds) - DateTimeOffset.UtcNow;
@@ -1488,7 +1436,6 @@ public sealed class AgentGrain(
 
     private async Task ReleaseDeadlineReminderAsync()
     {
-        if (!S.HasLifetimeBudget) return;
         var reminder = await this.GetReminder(DeadlineReminder);
         if (reminder is not null) await this.UnregisterReminder(reminder);
     }
@@ -1634,10 +1581,7 @@ public sealed class AgentGrain(
                     : new ToolDefinitionSummary(name, "(unavailable)"))
                 .ToList(),
             AutonomyLevel = Contracts.AutonomyLevel.Autonomous,
-            EnvironmentSummary = s.IsResident
-                ? $"You live in the simulated world '{s.Metadata.GetValueOrDefault("world_name")}'. " +
-                  s.Metadata.GetValueOrDefault("world_description", string.Empty)
-                : s.InWorkspace
+            EnvironmentSummary = s.InWorkspace
                 ? "You run inside a long-lived workspace owned by one user. Other agents in it can be found with " +
                   "find_agents. Current UTC time: " + DateTimeOffset.UtcNow.ToString("u")
                 : "You are running inside an autonomous multi-agent runtime. " +
@@ -1647,7 +1591,7 @@ public sealed class AgentGrain(
         // A workspace's connection tools are looked up per call, so a newly connected service (or
         // a tool the user just switched off) takes effect on the agents' very next step.
         IReadOnlyList<ConnectionToolDescriptor> connectionTools = [];
-        if (s.GrantedPermissions.HasFlag(ToolPermission.Integrations) && !s.IsResident)
+        if (s.GrantedPermissions.HasFlag(ToolPermission.Integrations))
         {
             connectionTools = s.WorkspaceId is { } workspaceId
                 ? await GrainFactory.GetGrain<IWorkspaceGrain>(workspaceId).GetConnectionTools()
@@ -1664,7 +1608,7 @@ public sealed class AgentGrain(
         }
 
         // The organization's skills: listed in the prompt, loaded on demand through two read-only
-        // tools every (non-resident) agent gets while the organization has any.
+        // tools every agent gets while the organization has any.
         var orgSkills = await SkillsForAgentAsync();
         if (orgSkills.Count > 0)
         {
@@ -1680,7 +1624,7 @@ public sealed class AgentGrain(
         }
 
         // The organization's models, for agents that can spawn and may pick one for the new agent.
-        if (s.AllowedTools.Contains("spawn_agent") && !s.IsResident)
+        if (s.AllowedTools.Contains("spawn_agent"))
         {
             var models = await modelSettings.GetAsync(Tenancy.TenantIds.Normalize(s.TenantId));
             if (models.AgentsMayChoose && models.Profiles.Count > 0)
@@ -1706,13 +1650,9 @@ public sealed class AgentGrain(
 
         var systemMessage = promptBuilder.BuildSystemPrompt(context);
         var messages = new List<LLM.ChatMessage> { systemMessage };
-        // Residents see only their recent past (their notes carry anything longer-lived). Everyone
-        // else sends the whole remaining transcript: compaction keeps it bounded, and the summary
-        // of what was compacted is in the system prompt.
-        var history = s.IsResident
-            ? s.Transcript.Skip(SafeWindowStart(s.Transcript, _simulation.ResidentTranscriptWindow))
-            : s.Transcript;
-        messages.AddRange(history.Select(ToLlmMessage));
+        // The whole remaining transcript: compaction keeps it bounded, and the summary of what was
+        // compacted is in the system prompt.
+        messages.AddRange(s.Transcript.Select(ToLlmMessage));
 
         var toolDefs = s.AllowedTools
             .Concat(orgSkills.Count > 0 ? SkillToolNames.Except(s.AllowedTools) : [])
@@ -1735,32 +1675,10 @@ public sealed class AgentGrain(
             ModelProfileId = ProfileIdOf(_llmOptions),
             Messages = messages,
             Tools = toolDefs,
-            // Routine event handling can run on the cheaper tier; planning and real work don't.
-            Model = _llmOptions.ModelFor(s.UsesFastTier),
-            MaxTokens = finalStep ? Math.Min(_limits.FinalStepMaxOutputTokens, _llmOptions.MaxOutputTokens)
-                : s.UsesFastTier ? _llmOptions.FastMaxOutputTokens : _llmOptions.MaxOutputTokens,
-            Temperature = s.IsResident ? _simulation.ResidentTemperature : 0.4
+            Model = _llmOptions.ModelFor(fast: false),
+            MaxTokens = finalStep ? Math.Min(_limits.FinalStepMaxOutputTokens, _llmOptions.MaxOutputTokens) : _llmOptions.MaxOutputTokens,
+            Temperature = 0.4
         });
-    }
-
-    /// <summary>Index of the first entry in a window of at most <paramref name="maxEntries"/>
-    /// recent entries that starts on a user message — starting anywhere else could begin with a
-    /// tool result whose tool call was cut off, which providers reject.</summary>
-    private static int SafeWindowStart(List<AgentTranscriptEntry> transcript, int maxEntries)
-    {
-        var start = Math.Max(0, transcript.Count - maxEntries);
-        for (var i = start; i < transcript.Count; i++)
-        {
-            if (transcript[i].Role == "user") return i;
-        }
-
-        // No user entry inside the window: fall back to the latest one before it.
-        for (var i = start - 1; i >= 0; i--)
-        {
-            if (transcript[i].Role == "user") return i;
-        }
-
-        return 0;
     }
 
     /// <summary>
@@ -1773,7 +1691,7 @@ public sealed class AgentGrain(
         var t = s.Transcript;
         // A replay keeps the history as it is: its decisions come from the journal, and a summary
         // would need a live model call.
-        if (s.IsResident || s.IsReplaying || PendingToolCalls().Count > 0) return false;
+        if (s.IsReplaying || PendingToolCalls().Count > 0) return false;
 
         if (ContextCompactor.EstimateTokens(t) <= _llmOptions.CompactAboveTokens) return false;
         var start = SafeCompactionStart(t, _llmOptions.CompactKeepRecentEntries);
@@ -1825,18 +1743,6 @@ public sealed class AgentGrain(
         }
 
         return 0;
-    }
-
-    /// <summary>Bounds a resident's stored transcript; only its recent window is ever sent to the
-    /// LLM, so older entries are dead weight in grain state.</summary>
-    private void TrimResidentTranscript()
-    {
-        var t = S.Transcript;
-        var keep = _simulation.ResidentTranscriptWindow * 2;
-        if (t.Count <= keep * 2) return;
-
-        var start = SafeWindowStart(t, keep);
-        if (start > 0) t.RemoveRange(0, start);
     }
 
     private static LLM.ChatMessage ToLlmMessage(AgentTranscriptEntry entry) => new()
@@ -1892,17 +1798,6 @@ public sealed class AgentGrain(
         }
 
         return JsonSerializer.Serialize(new { error = result.ErrorMessage, code = result.ErrorCode, details });
-    }
-
-    private bool BudgetExhausted(out string reason)
-    {
-        var s = S;
-        // Reserved (granted-to-children) budget counts: it's already spoken for.
-        if (s.Budget.RemainingTokens(s.Usage) <= 0) { reason = "token budget"; return true; }
-        if (s.Budget.RemainingToolCalls(s.Usage) <= 0) { reason = "tool-call budget"; return true; }
-        if (s.Budget.RemainingCostUsd(s.Usage) <= 0) { reason = "cost budget"; return true; }
-        reason = string.Empty;
-        return false;
     }
 
     private bool DurationExceeded()
@@ -1963,7 +1858,6 @@ public sealed class AgentGrain(
         Usage = s.Usage,
         Depth = s.Depth,
         FailureReason = s.FailureReason,
-        WorldId = s.WorldId,
         WorkspaceId = s.WorkspaceId,
         TenantId = Tenancy.TenantIds.Normalize(s.TenantId),
         SpawnsThisRequest = s.SpawnsThisRequest,

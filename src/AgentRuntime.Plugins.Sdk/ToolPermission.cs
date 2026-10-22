@@ -18,11 +18,9 @@ public enum ToolPermission
     SpawnAgents = 1 << 8,
     SendMessages = 1 << 9,
 
-    /// <summary>Acting inside a simulated world (move, speak, vote, ...). Only residents get this.</summary>
-    WorldActions = 1 << 10,
-
-    // 1 << 11 was WorkspaceActions (workspace agents' own triggers and notifications, before
-    // pipelines). Kept unused so stored permissions keep their meaning.
+    // 1 << 10 was WorldActions (the world simulation, now on the product/studies branch) and
+    // 1 << 11 WorkspaceActions (workspace agents' own triggers and notifications, before
+    // pipelines). Both kept unused so stored permissions keep their meaning.
 
     /// <summary>Using tools provided by the workspace's connections (MCP servers, APIs, messaging).</summary>
     Integrations = 1 << 12

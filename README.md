@@ -1,6 +1,23 @@
 # Aktor Agents
 
-A production-oriented prototype of an **autonomous multi-agent runtime based on the Actor Model**.
+**A governed platform for building agentic applications.** A *solution* is a business application
+packaged as plain files: the **workflows** that run it, its own data model, the assistant its
+customers talk to, and its evals. `aktor deploy` installs it, and upgrades apply only what changed.
+See [section 10a](#10a-build-on-aktor-solutions) and [docs/solutions.md](docs/solutions.md).
+
+Solutions are built from two building blocks:
+
+- **Workflows** (workspaces): reusable agent pipelines you edit in plain language or on a canvas,
+  run by hand or on schedules, webhooks, record changes, watches and forms, mixing agent stages
+  with actions and scripts that need no model ([docs/workflows.md](docs/workflows.md)).
+- **Tasks**: a goal handed to an agent team, used like a chat, with follow-ups, files in and
+  documents out ([docs/tasks.md](docs/tasks.md)).
+
+Underneath both is a production-oriented **autonomous multi-agent runtime based on the Actor
+Model**.
+
+> Research with your own data, simulated experiments, idea evaluation and the world simulation are
+> a separate product, developed on the `product/studies` branch.
 
 You give it a high-level goal — *"Research the feasibility of an AI-powered property management
 SaaS"* or *"Add user authentication to this application"* — and it creates a Root Agent that
@@ -22,11 +39,6 @@ to enforce a system-level constraint — the runtime always is.
 **What the runtime guarantees**, each with the code that enforces it and the test that proves it:
 [docs/guarantees.md](docs/guarantees.md).
 
-**Build your own agentic app on it.** A *solution* is a business application packaged as plain
-files. Its workspaces, its own data model, the assistant its customers talk to, and its evals go
-in one folder. `aktor deploy` installs it, and upgrades apply only what changed. See
-[section 10a](#10a-build-on-aktor-solutions) and [docs/solutions.md](docs/solutions.md).
-
 ---
 
 ## 1. What's in here
@@ -41,14 +53,13 @@ in one folder. `aktor deploy` installs it, and upgrades apply only what changed.
   /AgentRuntime.IntegrationTests  tests against real Orleans grains, scripted LLM, and the real API
                                against a throwaway Postgres container
   /AgentRuntime.Evals          aktor-eval: runs goals N times and reports team size, cost, completion, quality
-  /web                        Next.js dashboard (tasks, workspaces, studies, agent graph, analytics, settings)
+  /web                        Next.js dashboard (solutions, workspaces, tasks, agent graph, analytics, settings)
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
-/samples/studies              sample data for the Studies walkthrough (docs/studies-walkthrough.md)
 /samples/solutions            solution packages to deploy (docs/solutions.md)
 /sdk/typescript               TypeScript SDK, the aktor CLI and the aktor-acp bridge
 /sdk/python                   Python SDK and the remote-plugin server
                               (the Node remote-plugin server is @aktor/sdk/plugin in /sdk/typescript)
-/docker                       Dockerfiles for the API, the web app and the analysis sandbox
+/docker                       Dockerfiles for the API and the web app
 docker-compose.yml
 .env.example
 ```
@@ -241,8 +252,7 @@ Admin adds any number of named models (a provider, a model id picked from a list
 custom model, and its own API key stored encrypted), tests each one, and picks a default. Known
 models come with their list prices built in (per million input, output and cached tokens, from
 each provider's pricing page); only a custom model needs prices entered. Each task picks its model
-when it starts and can switch to another at any time, even after it finished; a study has its own
-model. The `.env` settings above are always
+when it starts and can switch to another at any time, even after it finished. The `.env` settings above are always
 available as the "Server default" model. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ### Local models with Ollama
@@ -271,9 +281,8 @@ LLM_BASE_URL=            # blank = Ollama on the Docker host (host.docker.intern
   (`OLLAMA_HOST=0.0.0.0` before `ollama serve`, or set it as a Windows environment variable).
 - Or run Ollama inside Compose: `docker compose --profile ollama up -d --build`, set
   `LLM_BASE_URL=http://ollama:11434`, then `docker compose exec ollama ollama pull qwen2.5:7b`.
-- Ollama answers one request at a time by default, so a study's simulated experiments (one call
-  per participant per round) are slow on it; keep them small, or raise `OLLAMA_NUM_PARALLEL` if
-  you have the VRAM. Ollama models are free, so cost budgets don't limit them: rely on the token,
+- Ollama answers one request at a time by default, so parallel agents queue on it; raise
+  `OLLAMA_NUM_PARALLEL` if you have the VRAM. Ollama models are free, so cost budgets don't limit them: rely on the token,
   time and tool-call limits.
 
 ## 9. Running the demonstration
@@ -329,7 +338,7 @@ produces.
     (PDF, Word, Excel, PowerPoint, CSV, text) for them, for the whole organization or one workspace
     ([docs/memory.md](docs/memory.md#organization-and-workspace-knowledge)). Upload by clicking or
     dropping files; Admins delete entries or whole files.
-  - **Analytics**, for tasks, workspaces and studies: spend, tokens (input, output, cache read and
+  - **Analytics**, for tasks and workspaces: spend, tokens (input, output, cache read and
     write), runs and durations over time; a usage overview (median tokens per run, active days,
     spend per active day, tool share); what
     consumes the most by agent role; spend and response time by model; spend by source or by
@@ -338,7 +347,7 @@ produces.
     ([docs/analytics.md](docs/analytics.md)).
   - **Run history**: every run with its source (API, MCP, A2A, ACP, replay), status, agents and
     cost, with links to its graph and its journal (step through, replay, fork, diff).
-  - **Studies** (research with your own data, below), **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
+  - **Integrations & API** (key creation and copy-paste MCP, A2A, ACP and REST
     snippets), and **Settings** (organization, members, AI models, API keys, usage and billing,
     your account).
 - **Result tab**: once the root agent finishes (Completed/Failed/Terminated/TimedOut), the run's
@@ -439,46 +448,6 @@ Two complete examples: [samples/solutions/property-mgmt](samples/solutions/prope
 **Documentation in the app:** the dashboard has a public **/docs** page, a guided tour of what the
 platform does and how to use it, from a first task to shipping a solution. The public homepage is
 at **/welcome**.
-
-## 10b. Studies: research with your own data
-
-**Studies** (`/studies`) puts an agent team on a research question with your data
-([docs/studies.md](docs/studies.md)). A study has its own **datasets** (CSV, Excel, Parquet, JSON:
-profiled on upload, with a share sealed as holdout), **documents** and **connections** (MCP
-servers and APIs, with secrets in the vault). Nothing is shared with other studies.
-
-```mermaid
-flowchart LR
-    Q[Question + sources] --> Lead[Lead agent]
-    Lead -- spawn --> M[Modelers] & R[Reviewer]
-    Lead & M -- "query_dataset / fit_model / run_analysis" --> Box[Python sandbox<br/>no network, data read-only]
-    M -- "run_simulation" --> Sim[Simulated population<br/>built from the data]
-    Box & Sim --> Ev[(Evidence ids)]
-    R -- review_model --> Reg[(Model registry)]
-    Lead -- "submit_report (cites evidence)" --> Check{Runtime checks}
-    Check --> Report[Report + data coverage + notebook]
-```
-
-- **Models decide, code computes.** Statistics (linear and logistic regression, ARIMA, anything
-  else in Python: scipy, statsmodels, sympy) run in a locked-down container; every result gets an
-  evidence id the report cites.
-- **The runtime enforces rigor:** citations must exist, a model counts only after another agent
-  accepts it, the holdout is scored only through `evaluate_on_holdout` (a few times per study),
-  every source needs a role in the data-use plan, and the run can't finish without an accepted
-  report.
-- **Experiments** replace the old world simulation: a population generated from your data reacts to
-  control and treatment scenarios, every decision becomes a dataset, and the runtime reports
-  effects, a calibration gap against the real rate, and low-diversity warnings.
-- **Analytics → Studies** tracks spend (agents vs. simulated participants), analyses, simulations,
-  data sources and evidence quality.
-- **Setup:** `docker compose up` builds the `aktor-analysis:1` image; locally run
-  `docker build -t aktor-analysis:1 docker/analysis`. With `LLM_PROVIDER=Mock` a study still runs
-  end to end (real statistics, scripted interpretation).
-- **Try it:** [docs/studies-walkthrough.md](docs/studies-walkthrough.md) runs a rent-increase study
-  on sample data with known effects (`samples/studies/lease-renewals/`), so you can check what the
-  agents find.
-
-Open-ended worlds (`/api/worlds`) remain available over the API but no longer have a page.
 
 ## 10b-2. Workspaces: reusable agent pipelines
 
@@ -657,16 +626,15 @@ any OpenAI-compatible service, Gemini or Ollama, each with its own key, tested b
 of them the default. The model is picked from a list with list prices built in; a custom model
 needs its prices entered. A task picks its model when it starts and can **switch to another at
 any time** (the whole team moves from each agent's next step; after it finished, the next
-follow-up uses it), and can be forked onto another model to compare them from the same start. A
-study has its own model, and each of its runs can use another. Agents can also give different models
+follow-up uses it), and can be forked onto another model to compare them from the same start. Agents can also give different models
 to the agents they spawn, so a goal can say it in plain language: "use Careful for the analysis and
 Quick for collecting prices". Keys are encrypted, never returned, and never sent to an address they
 weren't saved for. See [docs/llm-settings.md](docs/llm-settings.md).
 
 ## 10b-8d. Analytics
 
-**Analytics** shows where tokens and money go and what takes long, for tasks, workspaces and
-studies: a usage overview (tokens by kind: input, output, cache read and cache write; median
+**Analytics** shows where tokens and money go and what takes long, for tasks and workspaces:
+a usage overview (tokens by kind: input, output, cache read and cache write; median
 tokens per run; active days and spend per active day; tool share), trends per hour or day, consumption by agent role, spend and response time **by model** (which one
 is cheaper or faster), spend by source or by workspace, tool timings and failures, triggers and
 approvals, run durations, and the most expensive and slowest runs, with changes against the
@@ -820,8 +788,8 @@ This is a prototype, and a few things are deliberately simplified rather than fu
 - **Single silo by default.** Agent state, mailboxes and reminders are durable in Postgres (see
   [docs/durability.md](docs/durability.md)), so a restart or crash resumes in-flight work. For
   failover across machines, set `Silo:Clustering=AdoNet` to run several silos.
-- **`POST /api/admin/reset` has no auth** — anyone who can reach the API can wipe all data. Fine
-  for a local prototype; a shared deployment should gate this behind an operator role.
+- **`POST /api/admin/reset` wipes everything.** It's limited to platform admins, but on a shared
+  deployment consider removing it altogether.
 - **Agents read text, not pixels.** Attached images are stored and previewed but not passed to the
   models; legacy `.doc`/`.xls`/`.ppt` files aren't read. Generated decks are titles and bullets
   ([docs/tasks.md](docs/tasks.md#limits)).

@@ -116,8 +116,8 @@ public sealed class LlmOptions
     public decimal PricePerInputTokenUsd { get; set; } = 0.000003m;
     public decimal PricePerOutputTokenUsd { get; set; } = 0.000015m;
 
-    /// <summary>A cheaper/faster model (same provider) for routine work: standing agents handling
-    /// events, simulation residents, and summarizing long histories. Empty: everything uses Model.</summary>
+    /// <summary>A cheaper/faster model (same provider) for routine work: summarizing long histories.
+    /// Empty: everything uses Model.</summary>
     public string? FastModel { get; set; }
     public decimal? FastPricePerInputTokenUsd { get; set; }
     public decimal? FastPricePerOutputTokenUsd { get; set; }

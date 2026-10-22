@@ -85,8 +85,8 @@ all the checks.
 ## 3. Model routing
 
 Set `LLM_FAST_MODEL` (e.g. `claude-haiku-4-5-20251001` or `gpt-4o-mini`) and routine work moves to
-it: world residents, a study's simulated participants and history summaries. Routine calls also get a smaller output cap
-(`FastMaxOutputTokens`). Task agents and pipeline stages, which do the substantive work, stay on
+it: today that's the summaries of long histories (see below). Routine calls also get a smaller
+output cap (`FastMaxOutputTokens`). Task agents and pipeline stages, which do the substantive work, stay on
 `LLM_MODEL` (or the model a stage names). Costs are tracked at each tier's own
 price (`FastPricePerInputTokenUsd`, `FastPricePerOutputTokenUsd`).
 
@@ -103,7 +103,6 @@ Every LLM call resends the agent's history, so history length is a direct multip
     outright.
   - Cuts happen only where no tool call is separated from its result, which keeps the journal
     valid for crash recovery.
-- **Residents** keep their cheaper sliding window plus notes.
 
 ## Settings
 

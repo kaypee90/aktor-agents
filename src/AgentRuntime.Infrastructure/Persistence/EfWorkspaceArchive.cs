@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AgentRuntime.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,6 +8,12 @@ namespace AgentRuntime.Infrastructure.Persistence;
 /// <summary>Upserts one row per workspace with its latest snapshot.</summary>
 public sealed class EfWorkspaceArchive(IDbContextFactory<AgentDbContext> dbFactory) : IWorkspaceArchive
 {
+    public static readonly JsonSerializerOptions SnapshotJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     public async Task SaveAsync(WorkspaceSnapshot snapshot, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -28,7 +35,7 @@ public sealed class EfWorkspaceArchive(IDbContextFactory<AgentDbContext> dbFacto
         record.OwnerId = snapshot.OwnerId;
         record.Visibility = snapshot.Visibility.ToString();
         record.UpdatedAt = DateTimeOffset.UtcNow;
-        record.SnapshotJson = JsonSerializer.Serialize(snapshot, EfWorldArchive.SnapshotJsonOptions);
+        record.SnapshotJson = JsonSerializer.Serialize(snapshot, SnapshotJsonOptions);
 
         await db.SaveChangesAsync(cancellationToken);
     }

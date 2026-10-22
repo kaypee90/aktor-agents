@@ -121,7 +121,7 @@ public sealed class AgentRegistryGrain(
             return validation;
         }
 
-        // Team shape: only for agents spawning agents (not roots, coordinators or residents).
+        // Team shape: only for agents spawning agents (not roots or coordinators).
         if (role is not null && entry.ParentAgentId is { } parentId && state.State.Agents.TryGetValue(parentId, out var parent))
         {
             var policies = new List<Safety.TeamPolicy> { _serverTeamPolicy };

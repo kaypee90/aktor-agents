@@ -5,8 +5,8 @@ public sealed class ScriptOptions
 {
     public const string SectionName = "Scripts";
 
-    /// <summary>Image for Python scripts. The study analysis image (aktor-analysis:1) also works
-    /// and adds pandas, numpy and friends.</summary>
+    /// <summary>Image for Python scripts. Any image with python3 works; build your own to add
+    /// libraries such as pandas.</summary>
     public string PythonImage { get; set; } = "python:3.12-slim";
     public string NodeImage { get; set; } = "node:22-slim";
     public int DefaultTimeoutSeconds { get; set; } = 30;

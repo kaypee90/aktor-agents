@@ -204,26 +204,6 @@ public sealed class ToolCallRecord
     public DateTimeOffset Timestamp { get; set; }
 }
 
-/// <summary>One simulated world. <see cref="SnapshotJson"/> is the latest full snapshot, so a world
-/// stays inspectable after the in-memory world grain is gone (e.g. after a restart).</summary>
-public sealed class WorldRecord
-{
-    /// <summary>Owning organization (docs/platform.md); rows from before tenancy belong to "default".</summary>
-    public string TenantId { get; set; } = "default";
-    public required string WorldId { get; set; }
-    public required string Name { get; set; }
-    public string Seed { get; set; } = string.Empty;
-    public string Status { get; set; } = "Created";
-    public int Tick { get; set; }
-    public int MaxTicks { get; set; }
-    public int Residents { get; set; }
-    public decimal CostUsd { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-    public DateTimeOffset? EndedAt { get; set; }
-    public string SnapshotJson { get; set; } = "{}";
-}
-
 /// <summary>One workspace, with its latest snapshot for listing and after-restart inspection.
 /// The live state (conversation, triggers, ledger) is the workspace grain's durable state.</summary>
 public sealed class WorkspaceRecord
@@ -241,7 +221,8 @@ public sealed class WorkspaceRecord
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string SnapshotJson { get; set; } = "{}";
-    /// <summary>"pipeline", or "study" for a study's workspace, which the Workspaces page doesn't list.</summary>
+    /// <summary>"pipeline". "study" marks a study's workspace (the Studies product, on the
+    /// product/studies branch); such rows can remain in a shared database and are never listed.</summary>
     public string Kind { get; set; } = "pipeline";
     /// <summary>Who owns it: a user id, or "key:&lt;id&gt;".</summary>
     public string OwnerId { get; set; } = string.Empty;

@@ -1,6 +1,5 @@
 using AgentRuntime.Agents;
 using AgentRuntime.Infrastructure.Persistence;
-using AgentRuntime.Simulation;
 using AgentRuntime.Tenancy;
 using AgentRuntime.Workspaces;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +11,7 @@ namespace AgentRuntime.Api.Platform;
 /// private workspace (<see cref="WorkspacePrivacy"/>). Controllers answer 404 when it doesn't, so
 /// such ids are indistinguishable from ids that don't exist.
 /// </summary>
-public sealed class TenantAccess(IHttpContextAccessor http, IGrainFactory grains, IAgentOrchestrator orchestrator, AgentDbContext db, WorkspacePrivacy privacy)
+public sealed class TenantAccess(IHttpContextAccessor http, IAgentOrchestrator orchestrator, AgentDbContext db, WorkspacePrivacy privacy)
 {
     public string TenantId => http.HttpContext!.Caller().TenantId;
 
@@ -38,15 +37,6 @@ public sealed class TenantAccess(IHttpContextAccessor http, IGrainFactory grains
     /// <summary>Whether the caller owns the workspace (only the owner may change its visibility).</summary>
     public Task<bool> OwnsWorkspaceAsync(string workspaceId) => privacy.IsOwnerAsync(Caller, workspaceId);
 
-    public async Task<bool> WorldAsync(string worldId)
-    {
-        if (!WorldIds.IsWorld(worldId)) return false;
-        var snapshot = await grains.GetGrain<IWorldGrain>(worldId).GetSnapshot();
-        if (snapshot is not null) return TenantIds.Same(snapshot.TenantId, TenantId);
-        // Not running (e.g. after a restart): the archived copy says whose it was.
-        return await db.Worlds.AsNoTracking().AnyAsync(w => w.WorldId == worldId && w.TenantId == TenantId);
-    }
-
     public async Task<bool> AgentAsync(string agentId)
     {
         var snapshot = await orchestrator.GetSnapshotAsync(agentId);
@@ -65,10 +55,9 @@ public sealed class TenantAccess(IHttpContextAccessor http, IGrainFactory grains
         return task is not null && !WorkspacePrivacy.Hides(await HiddenWorkspacesAsync(ct), task.TaskId, task.WorkspaceId);
     }
 
-    /// <summary>A task, workspace or world id (events and agents are grouped under all three).</summary>
+    /// <summary>A task or workspace id (events and agents are grouped under both).</summary>
     public async Task<bool> ScopeAsync(string id, CancellationToken ct = default) =>
         WorkspaceIds.IsWorkspace(id) ? await WorkspaceAsync(id)
-        : WorldIds.IsWorld(id) ? await WorldAsync(id)
         : await TaskAsync(id, ct);
 }
 

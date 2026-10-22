@@ -70,7 +70,6 @@ public sealed class CurrentStateSection : ISystemPromptSection
     public bool IsDynamic => true;
     public string Render(AgentPromptContext context)
     {
-        if (context.State.IsResident) return string.Empty;
         var s = context.State;
         return $"""
             Status: {s.Status}
@@ -87,7 +86,7 @@ public sealed class CurrentStateSection : ISystemPromptSection
 public sealed class CapabilitiesSection : ISystemPromptSection
 {
     public string Header => "AVAILABLE CAPABILITIES";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty :
+    public string Render(AgentPromptContext context) =>
         context.State.Capabilities.Count == 0 ? "General purpose." : string.Join(", ", context.State.Capabilities);
 }
 
@@ -104,7 +103,6 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
     public bool IsDynamic => true;
     public string Render(AgentPromptContext context)
     {
-        if (context.State.IsResident) return string.Empty;
         var b = context.State.Budget;
         var u = context.State.Usage;
         return $"""
@@ -123,7 +121,7 @@ public sealed class ResourceLimitsSection : ISystemPromptSection
 public sealed class MessagingRulesSection : ISystemPromptSection
 {
     public string Header => "MESSAGING RULES";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
+    public string Render(AgentPromptContext context) => """
         You may message any agent directly using send_message; you do not need to route through
         the root agent. Only agents that are still running can receive messages: one that has
         finished (Completed, Failed) never reads another message, so never wait for its reply. send_message is asynchronous: a successful result only means the message
@@ -141,7 +139,7 @@ public sealed class MessagingRulesSection : ISystemPromptSection
 public sealed class SpawningRulesSection : ISystemPromptSection
 {
     public string Header => "SPAWNING RULES";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
+    public string Render(AgentPromptContext context) => """
         Default to doing the work yourself. Every agent resends its whole prompt on every step, and
         briefing it and reading its result cost you steps too, so a new agent is only worth it when:
         - part of the work is substantial and independent enough to run in parallel with the rest, or
@@ -167,7 +165,7 @@ public sealed class SpawningRulesSection : ISystemPromptSection
 public sealed class CompletionCriteriaSection : ISystemPromptSection
 {
     public string Header => "COMPLETION CRITERIA";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
+    public string Render(AgentPromptContext context) => """
         If your goal produces a deliverable (code, a report, data), write it to your task workspace
         with filesystem_write and list the file in complete_task's artifacts — work that only exists
         in your messages is not a deliverable. A question, explanation or how-to needs no file:
@@ -191,7 +189,6 @@ public sealed class AnswerFormatSection : ISystemPromptSection
     public string Header => "WRITING YOUR ANSWER";
     public string Render(AgentPromptContext context)
     {
-        if (context.State.IsResident) return string.Empty;
         if (context.State.ParentAgentId is not null)
         {
             return """
@@ -222,7 +219,7 @@ public sealed class EnvironmentInfoSection : ISystemPromptSection
 public sealed class BehavioralRulesSection : ISystemPromptSection
 {
     public string Header => "BEHAVIORAL RULES";
-    public string Render(AgentPromptContext context) => context.State.IsResident ? string.Empty : """
+    public string Render(AgentPromptContext context) => """
         1. Work toward your assigned goal.
         2. Prefer completing trivial work yourself.
         3. Delegate when specialization or parallelism provides real value.
@@ -252,5 +249,5 @@ public sealed class OperatorInstructionsSection(Microsoft.Extensions.Options.IOp
 {
     public string Header => "OPERATOR INSTRUCTIONS";
     public string Render(AgentPromptContext context) =>
-        context.State.IsResident || string.IsNullOrWhiteSpace(options.Value.ExtraInstructions) ? string.Empty : options.Value.ExtraInstructions!;
+        string.IsNullOrWhiteSpace(options.Value.ExtraInstructions) ? string.Empty : options.Value.ExtraInstructions!;
 }

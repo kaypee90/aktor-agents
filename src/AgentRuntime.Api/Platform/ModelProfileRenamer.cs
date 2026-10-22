@@ -9,13 +9,13 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentRuntime.Api.Platform;
 
 /// <summary>What a rename touched.</summary>
-public sealed record ModelProfileRename(string OldId, string NewId, int Workspaces, int Templates, int Tasks, int Agents, int Studies);
+public sealed record ModelProfileRename(string OldId, string NewId, int Workspaces, int Templates, int Tasks, int Agents);
 
 /// <summary>
 /// Keeps a model profile's id in step with its name (docs/llm-settings.md). A profile's id is made
 /// from its name when it's created; when the name changes, the id is changed to match and every
 /// reference follows: the organization's workspace pipelines (with their saved versions and
-/// <c>@mentions</c>), its saved templates, and the recorded tasks, agents and studies. The old id
+/// <c>@mentions</c>), its saved templates, and the recorded tasks and agents. The old id
 /// stays as an alias in the settings, so a running agent or anything missed still finds the profile.
 /// </summary>
 public sealed class ModelProfileRenamer(
@@ -74,12 +74,10 @@ public sealed class ModelProfileRenamer(
             .ExecuteUpdateAsync(u => u.SetProperty(t => t.ModelProfileId, newId), ct);
         var agents = await db.Agents.Where(a => a.TenantId == tenant && a.ModelProfileId == oldId)
             .ExecuteUpdateAsync(u => u.SetProperty(a => a.ModelProfileId, newId), ct);
-        var studies = await db.Studies.Where(s => s.TenantId == tenant && s.ModelProfileId == oldId)
-            .ExecuteUpdateAsync(u => u.SetProperty(s => s.ModelProfileId, newId), ct);
 
-        logger.LogInformation("Model profile {OldId} is now {NewId}: {Workspaces} workspaces, {Templates} templates, {Tasks} tasks, {Agents} agents, {Studies} studies",
-            oldId, newId, workspaces, templates, tasks, agents, studies);
-        return new ModelProfileRename(oldId, newId, workspaces, templates, tasks, agents, studies);
+        logger.LogInformation("Model profile {OldId} is now {NewId}: {Workspaces} workspaces, {Templates} templates, {Tasks} tasks, {Agents} agents",
+            oldId, newId, workspaces, templates, tasks, agents);
+        return new ModelProfileRename(oldId, newId, workspaces, templates, tasks, agents);
     }
 
     /// <summary>A saved template's JSON with the profile renamed in its stages; null when it doesn't name it.</summary>

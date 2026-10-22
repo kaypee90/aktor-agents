@@ -286,7 +286,9 @@ public sealed class WorkspaceCopyService(
         var workspace = await OwnedAsync(tenantId, workspaceId);
         await using (var check = await dbFactory.CreateDbContextAsync(ct))
         {
-            if (await check.Studies.AnyAsync(s => s.WorkspaceId == workspaceId, ct))
+            // A study's workspace (the Studies product, on the product/studies branch) can remain in a
+            // shared database; it belongs to its study, not to the Workspaces page.
+            if (await check.Workspaces.AnyAsync(w => w.WorkspaceId == workspaceId && w.Kind == "study", ct))
             {
                 throw new WorkspaceCopyException("This workspace belongs to a study; delete the study instead.", StatusCodes.Status409Conflict);
             }

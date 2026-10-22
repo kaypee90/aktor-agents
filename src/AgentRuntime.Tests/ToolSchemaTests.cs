@@ -57,7 +57,7 @@ public class ToolSchemaTests
     {
         await using var sp = Services();
         var tools = sp.GetServices<ITool>().ToList();
-        Assert.True(tools.Count > 25, $"expected the full tool set, found {tools.Count}");
+        Assert.True(tools.Count >= 20, $"expected the full tool set, found {tools.Count}");
 
         foreach (var tool in tools)
         {

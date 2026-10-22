@@ -1,6 +1,5 @@
 using AgentRuntime.Contracts;
 using AgentRuntime.Messaging;
-using AgentRuntime.Simulation;
 
 namespace AgentRuntime.Agents;
 
@@ -47,19 +46,11 @@ public interface IAgentOrchestrator
 
     Task StopAsync(string agentId, CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a simulation resident: registered under the world (RootAgentId = world id)
-    /// with world tools only and a per-resident safety budget. Returns a rejection if the registry's
-    /// global limits (total/active agents, depth, children) refuse it.</summary>
-    Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
-        CancellationToken cancellationToken = default);
-
     /// <summary>Creates (idempotently) a pipeline stage's agent under its run and starts it. The
     /// stage's tools come from its capabilities; it may spawn only if it has helpers.</summary>
     Task<SpawnAgentResult> CreateStageAgentAsync(Pipelines.StageAgentLaunch launch, CancellationToken cancellationToken = default);
 
     Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default);
-
-    Task UnpauseAsync(string agentId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AgentDirectoryEntry>> GetAllAgentsAsync(CancellationToken cancellationToken = default);
 

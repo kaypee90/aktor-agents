@@ -37,10 +37,10 @@ product? If it's the latter, move P9 (flagship use case) ahead of P2.
 
 Change log:
 
-- 2026-10-08: **Studies** replace the Simulation page: research on a question with the study's own
-  datasets, documents and connections, statistics in a sandboxed Python container, reviewed models,
-  a sealed holdout, simulated experiments built from the data, and reports whose findings cite
-  evidence ([studies.md](studies.md)). Also: built-in model prices with a model dropdown,
+- 2026-10-22: **Focus on solutions.** Studies (research with your own data, simulated experiments,
+  idea evaluation) and the world simulation moved to their own product on the `product/studies`
+  branch. `main` is the platform for building solutions on workflows and tasks.
+- 2026-10-08: Built-in model prices with a model dropdown,
   token-kind and usage analytics, switching a finished task's model, `@knowledge` mentions,
   deleting knowledge, and cloning, templating and deleting workspaces.
 

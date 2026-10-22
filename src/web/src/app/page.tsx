@@ -262,7 +262,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
     if (confirm("Stop the team? What it has done so far is kept, and you can follow up later.")) cancelTask(taskId);
   };
 
-  // The task's model: switchable while it runs and, for a task (not a pipeline or study run),
+  // The task's model: switchable while it runs and, for a task (not a pipeline run),
   // after it finishes too, so its follow-ups run on the new one.
   const modelPicker = task?.model && models && (running || (task.kind ?? "task") === "task") ? (
     <ModelPicker view={models} value={switching ?? task.model.profile_id} allowDefault={false} disabled={switching !== null}
@@ -291,7 +291,7 @@ function TaskRun({ taskId, preview, onBack, view, onView }: {
           </Button>
         </header>
         <div className="min-h-0 flex-1">
-          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id} studyId={task?.study_id}
+          <TaskChat taskId={taskId} running={running} events={events} agents={agents} onStop={stop} workspaceId={task?.workspace_id}
             modelPicker={modelPicker}
             budget={task?.budget} ceiling={task?.budget_ceiling}
             onShowAgents={(id) => { if (id) setSelected(id); onView("agents"); }} />

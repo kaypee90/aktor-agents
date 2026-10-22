@@ -4,7 +4,6 @@ using AgentRuntime.Contracts;
 using AgentRuntime.Events;
 using AgentRuntime.Messaging;
 using AgentRuntime.Pipelines;
-using AgentRuntime.Simulation;
 using AgentRuntime.Tenancy;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
@@ -19,7 +18,6 @@ public sealed class AgentOrchestrator(
     IEventPublisher events,
     IOptions<RuntimeLimitsOptions> limitsOptions,
     IOptions<DefaultBudgetOptions> defaultBudgetOptions,
-    IOptions<SimulationOptions> simulationOptions,
     IOptions<WorkspaceOptions> workspaceOptions,
     IOptions<TaskBudgetCeilingOptions> ceilingOptions,
     LLM.LlmSettingsService modelSettings) : IAgentOrchestrator
@@ -28,7 +26,6 @@ public sealed class AgentOrchestrator(
     private readonly WorkspaceOptions _workspaces = workspaceOptions.Value;
     private readonly RuntimeLimitsOptions _limits = limitsOptions.Value;
     private readonly DefaultBudgetOptions _defaultBudget = defaultBudgetOptions.Value;
-    private readonly SimulationOptions _simulation = simulationOptions.Value;
 
     // In-process guard against runaway message storms within a single task (CLAUDE.md section 23).
     // A production deployment would back this with the registry grain / Postgres instead.
@@ -50,8 +47,7 @@ public sealed class AgentOrchestrator(
         var effectiveBudget = _ceiling.Clamp(options.Budget ?? _defaultBudget.ToBudget());
         // "filesystem" so the root can write a final consolidated report before completing
         // (CLAUDE.md section 26/52 — the task should produce an inspectable final artifact).
-        var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"])
-            .Union(options.ExtraTools, StringComparer.OrdinalIgnoreCase).ToList();
+        var allowedTools = AgentToolCatalog.ResolveToolsForCapabilities(["research", "web-search", "filesystem"]);
         // Integrations: the tools of connections the task's owner adds (MCP servers, APIs). None
         // exist until the owner adds one, and the agent can't add any itself.
         var permissions = ToolPermission.SpawnAgents | ToolPermission.SendMessages | ToolPermission.NetworkAccess
@@ -98,7 +94,6 @@ public sealed class AgentOrchestrator(
             JournalPath = "r",
             Replay = options.Replay,
             InitialContext = options.InitialContext,
-            WorkspaceId = options.WorkspaceId,
             AutoStart = true
         });
 
@@ -160,9 +155,7 @@ public sealed class AgentOrchestrator(
 
         ResourceBudget childBudget;
         WorkspacePolicy? policy = null;
-        // A study run works inside its study's workspace (connections, knowledge, safety, daily budget)
-        // but organizes itself like a task: its budget splits down the tree and helpers may spawn.
-        if (parentSnapshot.WorkspaceId is { } workspaceId && !Studies.StudyIds.IsRun(parentSnapshot.TaskId))
+        if (parentSnapshot.WorkspaceId is { } workspaceId)
         {
             // Inside a workspace the runtime funds agents from the workspace's policy (and caps
             // the whole workspace's daily spend), rather than splitting the parent's budget: a
@@ -227,8 +220,7 @@ public sealed class AgentOrchestrator(
         // A child can never see a tool the parent itself couldn't see, nor exercise a permission
         // the parent lacks — capability-based resolution is clamped by the parent's own grant
         // (CLAUDE.md section 44/51). Governance tools (spawn/message/etc.) are always available.
-        var inheritedWorkspaceTools = parentSnapshot.AllowedTools
-            .Intersect(AgentToolCatalog.WorkspaceTools.Concat(AgentToolCatalog.StudyTools), StringComparer.OrdinalIgnoreCase);
+        var inheritedWorkspaceTools = parentSnapshot.AllowedTools.Intersect(AgentToolCatalog.WorkspaceTools, StringComparer.OrdinalIgnoreCase);
         var childTools = FilterToolsByPermission(
             requestedTools.Intersect(parentSnapshot.AllowedTools.Concat(AgentToolCatalog.GovernanceTools), StringComparer.OrdinalIgnoreCase)
                 .Union(inheritedWorkspaceTools, StringComparer.OrdinalIgnoreCase)
@@ -390,10 +382,8 @@ public sealed class AgentOrchestrator(
             return new AgentMessageAck { MessageId = message.MessageId, Accepted = false, RejectionReason = "An agent cannot message itself." };
         }
 
-        // A living world talks far more than a task does, so it gets its own (still finite) cap; a
-        // workspace lives indefinitely, so its cap is per hour instead of per lifetime.
-        var maxMessages = WorldIds.IsWorld(message.TaskId) ? _simulation.MaxMessagesPerWorld
-            : WorkspaceIds.IsWorkspace(message.TaskId) ? _workspaces.MaxMessagesPerHour
+        // A workspace lives indefinitely, so its cap is per hour instead of per lifetime.
+        var maxMessages = WorkspaceIds.IsWorkspace(message.TaskId) ? _workspaces.MaxMessagesPerHour
             : _limits.MaxMessagesPerTask;
         var counterKey = WorkspaceIds.IsWorkspace(message.TaskId)
             ? $"{message.TaskId}:{DateTimeOffset.UtcNow:yyyyMMddHH}"
@@ -585,84 +575,8 @@ public sealed class AgentOrchestrator(
         return new SpawnAgentResult { AgentId = launch.AgentId, Status = "created", GrantedBudget = launch.Budget };
     }
 
-    public async Task<SpawnAgentResult> CreateResidentAsync(ResidentCreationRequest request, string? idempotencyKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        var agentId = DeterministicId.FromOrNew("res-", idempotencyKey);
-
-        // Residents act only through world tools: no filesystem, shell, network, or task tools.
-        // bring_new_agent is how a resident creates agents, so it needs SpawnAgents; talk_to routes
-        // through SendMessageAsync, so it needs SendMessages.
-        var permissions = ToolPermission.WorldActions | ToolPermission.SendMessages | ToolPermission.SpawnAgents;
-        var tools = FilterToolsByPermission(WorldToolCatalog.ToolNames, permissions);
-        var tenant = TenantIds.Normalize(request.TenantId);
-
-        var validation = await Registry.TryRegisterSpawnAsync(new AgentDirectoryEntry
-        {
-            AgentId = agentId,
-            Role = request.Role,
-            Goal = request.Drives,
-            Status = AgentStatus.Created,
-            Capabilities = ["resident"],
-            ParentAgentId = request.ParentAgentId,
-            Depth = 0,
-            RootAgentId = request.WorldId,
-            TenantId = tenant
-        }, tenantMaxActive: (await Tenant(tenant).GetPlan()).MaxActiveAgents);
-        if (!validation.Allowed)
-        {
-            return new SpawnAgentResult { AgentId = string.Empty, Status = "rejected", RejectionReason = validation.RejectionReason };
-        }
-
-        var metadata = new Dictionary<string, string>
-        {
-            ["persona"] = request.Persona,
-            ["world_name"] = request.WorldName,
-            ["world_description"] = request.WorldDescription
-        };
-        if (!string.IsNullOrWhiteSpace(request.Relationships)) metadata["relationships"] = request.Relationships;
-
-        await grainFactory.GetGrain<IAgentGrain>(agentId).Initialize(new AgentInitializationRequest
-        {
-            AgentId = agentId,
-            ParentAgentId = request.ParentAgentId,
-            RootAgentId = request.WorldId,
-            Name = request.Name,
-            Role = request.Role,
-            Goal = request.Drives,
-            Capabilities = ["resident"],
-            AllowedTools = tools,
-            GrantedPermissions = permissions,
-            Budget = _simulation.ResidentBudget(request.MaxDurationMinutes),
-            Depth = validation.AllowedDepth,
-            TaskId = request.WorldId,
-            WorldId = request.WorldId,
-            Metadata = metadata,
-            TenantId = tenant
-        });
-        await Tenant(tenant).RecordUsage(new UsageDelta { AgentsCreated = 1 });
-
-        if (request.ParentAgentId is not null)
-        {
-            await events.PublishAsync(new RuntimeEvent
-            {
-                Type = RuntimeEventType.AgentSpawned,
-                AgentId = request.ParentAgentId,
-                TargetAgentId = agentId,
-                TaskId = request.WorldId,
-                TenantId = tenant,
-                Summary = $"Resident {request.ParentAgentId} brought '{request.Name}' ({agentId}) into the world."
-            }, cancellationToken);
-        }
-
-        return new SpawnAgentResult { AgentId = agentId, Status = "created" };
-    }
-
     public Task RetireAsync(string agentId, string reason, CancellationToken cancellationToken = default) =>
         grainFactory.GetGrain<IAgentGrain>(agentId).Retire(reason);
-
-    public Task UnpauseAsync(string agentId, CancellationToken cancellationToken = default) =>
-        grainFactory.GetGrain<IAgentGrain>(agentId).ClearPause();
 
     public Task<IReadOnlyList<AgentDirectoryEntry>> GetAllAgentsAsync(CancellationToken cancellationToken = default) =>
         Registry.GetAllAsync();
