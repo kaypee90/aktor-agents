@@ -8,7 +8,6 @@ using AgentRuntime.Tenancy;
 using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Options;
-using Orleans;
 
 namespace AgentRuntime.Agents;
 

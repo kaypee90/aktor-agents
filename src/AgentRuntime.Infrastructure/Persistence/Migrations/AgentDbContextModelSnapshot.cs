@@ -902,6 +902,51 @@ namespace AgentRuntime.Infrastructure.Persistence.Migrations
                     b.ToTable("Skills");
                 });
 
+            modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionAppKeyRecord", b =>
+                {
+                    b.Property<string>("KeyId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("InstallId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SecretHash")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("KeyId");
+
+                    b.HasIndex("TenantId", "InstallId");
+
+                    b.ToTable("SolutionAppKeys");
+                });
+
             modelBuilder.Entity("AgentRuntime.Infrastructure.Persistence.SolutionConversationRecord", b =>
                 {
                     b.Property<string>("TaskId")

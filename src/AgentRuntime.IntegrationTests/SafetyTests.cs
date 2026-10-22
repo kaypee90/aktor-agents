@@ -8,7 +8,6 @@ using AgentRuntime.LLM;
 using AgentRuntime.Safety;
 using AgentRuntime.Workspaces;
 using Orleans.TestingHost;
-using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 

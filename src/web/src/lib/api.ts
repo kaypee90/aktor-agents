@@ -287,10 +287,6 @@ export function getAgent(agentId: string) {
   return apiFetch<AgentSnapshot>(`/api/agents/${agentId}`);
 }
 
-export function getAgentChildren(agentId: string) {
-  return apiFetch<string[]>(`/api/agents/${agentId}/children`);
-}
-
 export function getAgentMessages(agentId: string) {
   return apiFetch<MessageRecord[]>(`/api/agents/${agentId}/messages`);
 }
@@ -1339,7 +1335,16 @@ export interface SolutionView {
   workspaces: { key: string; workspace_id: string; name?: string | null }[];
   entities: { name: string; description?: string | null; records: number; title_field?: string | null; fields: Record<string, SolutionFieldDef> }[];
   connectors: { name: string; plugin: string; required: boolean; description?: string | null; global?: string | null }[];
-  assistant: { name: string; greeting?: string | null; data: Record<string, string> } | null;
+  assistant: {
+    name: string;
+    greeting?: string | null;
+    data: Record<string, string>;
+    allowed_origins?: string[];
+    monthly_cost_limit_usd_per_user?: number | null;
+    max_messages_per_minute?: number;
+  } | null;
+  /** End users sign in with the builder's own identity provider (JWTs), not tokens from an app key. */
+  own_sign_in?: boolean;
   evals: { name: string; workspace: string }[];
   webhooks: { url: string; events: string[] }[];
   webhook_secret?: string | null;
@@ -1378,8 +1383,9 @@ export interface EvalReport {
   results: { name: string; passed: boolean; failures: string[]; run_id?: string; status?: string; summary?: string; duration_ms?: number }[];
 }
 
-export function listSolutions() {
-  return apiFetch<SolutionSummary[]>("/api/v1/solutions");
+/** Installed solutions; with <c>all</c>, uninstalled ones too. */
+export function listSolutions(all = false) {
+  return apiFetch<SolutionSummary[]>(`/api/v1/solutions${all ? "?all=true" : ""}`);
 }
 
 export function getSolution(idOrName: string) {
@@ -1426,6 +1432,53 @@ export function createEndUserToken(installId: string, userId: string, name?: str
     method: "POST",
     body: JSON.stringify({ user_id: userId, name: name || undefined, ttl_minutes: ttlMinutes }),
   });
+}
+
+/** A solution's app key, as listed: never the key itself (docs/solutions.md#app-keys). */
+export interface AppKey {
+  key_id: string;
+  name: string;
+  prefix: string;
+  created_by: string;
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export function listAppKeys(installId: string) {
+  return apiFetch<AppKey[]>(`/api/v1/solutions/${encodeURIComponent(installId)}/app-keys`);
+}
+
+/** A new app key; the full key is in this answer only. */
+export function createAppKey(installId: string, name: string) {
+  return apiFetch<{ key: string; key_id: string; name: string; prefix: string; created_at: string }>(`/api/v1/solutions/${encodeURIComponent(installId)}/app-keys`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function revokeAppKey(installId: string, keyId: string) {
+  return apiFetch<void>(`/api/v1/solutions/${encodeURIComponent(installId)}/app-keys/${encodeURIComponent(keyId)}`, { method: "DELETE" });
+}
+
+/** A ready-made solution to start from in the builder. */
+export interface SolutionTemplate {
+  name: string;
+  title: string;
+  description?: string | null;
+  version: string;
+  entities: number;
+  workflows: number;
+  assistant: boolean;
+  evals: number;
+}
+
+export function listSolutionTemplates() {
+  return apiFetch<SolutionTemplate[]>("/api/v1/solutions/templates");
+}
+
+export function getSolutionTemplate(name: string) {
+  return apiFetch<SolutionBundle>(`/api/v1/solutions/templates/${encodeURIComponent(name)}`);
 }
 
 /** A folder picked in the browser (input webkitdirectory) as a package: its aktor.yaml and text files. */

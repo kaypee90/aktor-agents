@@ -8,7 +8,6 @@ using AgentRuntime.Integrations;
 using AgentRuntime.Plugins;
 using AgentRuntime.Tools;
 using ModelContextProtocol.Protocol;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

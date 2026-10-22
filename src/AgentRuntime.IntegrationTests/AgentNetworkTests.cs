@@ -4,7 +4,6 @@ using AgentRuntime.Contracts;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.LLM;
 using Orleans.TestingHost;
-using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 

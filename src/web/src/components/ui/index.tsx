@@ -154,7 +154,7 @@ export function Tabs<T extends string>({ tabs, value, onChange, className }: {
   tabs: { id: T; label: React.ReactNode; count?: number }[]; value: T; onChange: (t: T) => void; className?: string;
 }) {
   return (
-    <div className={cx("flex gap-1 border-b border-zinc-200 dark:border-zinc-800", className)}>
+    <div className={cx("flex gap-1 overflow-x-auto overflow-y-hidden border-b border-zinc-200 dark:border-zinc-800", className)}>
       {tabs.map((t) => (
         <button
           key={t.id}

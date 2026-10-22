@@ -88,3 +88,62 @@ class BundleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AktorServerTests(unittest.TestCase):
+    """The backend client against a fake apps API: the app key, idempotent run starts and waiting."""
+
+    def setUp(self):
+        import http.server
+
+        self.requests = []
+        runs = {"polls": 0}
+        test = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def _answer(self, status, body):
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                test.requests.append(("POST", self.path, dict(self.headers), json.loads(self.rfile.read(length) or b"null")))
+                if self.path.endswith("/runs"):
+                    self._answer(202, {"run_id": "run-1", "workflow": "triage", "number": 1, "status": "started"})
+                else:
+                    self._answer(200, {"token": "aeu_x"})
+
+            def do_GET(self):
+                test.requests.append(("GET", self.path, dict(self.headers), None))
+                runs["polls"] += 1
+                self._answer(200, {"run_id": "run-1", "done": runs["polls"] > 1, "status": "Completed" if runs["polls"] > 1 else "Running"})
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_issues_tokens_and_runs_workflows_with_the_app_key(self):
+        from aktor import AktorServer, AktorError
+
+        server = AktorServer("sol-1", "aks_0123456789ab_secretsecretsecret", base_url=self.base)
+        self.assertEqual(server.issue_token("u1", name="Ada")["token"], "aeu_x")
+        run = server.run("triage", {"subject": "Leak"})
+        self.assertEqual(run["status"], "Completed")
+
+        method, path, headers, body = self.requests[1]
+        self.assertEqual(path, "/api/v1/apps/sol-1/runs")
+        self.assertEqual(headers["Authorization"], "Bearer aks_0123456789ab_secretsecretsecret")
+        self.assertTrue(headers.get("Idempotency-Key"))
+        self.assertEqual(body, {"workflow": "triage", "data": {"subject": "Leak"}})
+        self.assertIn("wait=", self.requests[2][1])
+        with self.assertRaises(AktorError):
+            AktorServer("sol-1", "ak_org_key")

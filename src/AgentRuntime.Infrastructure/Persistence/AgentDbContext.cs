@@ -31,6 +31,7 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
     public DbSet<SolutionRecordEntity> SolutionRecords => Set<SolutionRecordEntity>();
     public DbSet<SolutionRecordChangeEntity> SolutionRecordChanges => Set<SolutionRecordChangeEntity>();
     public DbSet<SolutionConversationRecord> SolutionConversations => Set<SolutionConversationRecord>();
+    public DbSet<SolutionAppKeyRecord> SolutionAppKeys => Set<SolutionAppKeyRecord>();
     public DbSet<SolutionPackageRecord> SolutionPackages => Set<SolutionPackageRecord>();
     public DbSet<SolutionPackageNameRecord> SolutionPackageNames => Set<SolutionPackageNameRecord>();
     public DbSet<GlobalConnectorRecord> GlobalConnectors => Set<GlobalConnectorRecord>();
@@ -236,6 +237,11 @@ public sealed class AgentDbContext(DbContextOptions<AgentDbContext> options) : D
         {
             b.HasKey(x => x.TaskId);
             b.HasIndex(x => new { x.TenantId, x.InstallId, x.EndUserId, x.CreatedAt });
+        });
+        modelBuilder.Entity<SolutionAppKeyRecord>(b =>
+        {
+            b.HasKey(x => x.KeyId);
+            b.HasIndex(x => new { x.TenantId, x.InstallId });
         });
         modelBuilder.Entity<SolutionPackageRecord>(b =>
         {

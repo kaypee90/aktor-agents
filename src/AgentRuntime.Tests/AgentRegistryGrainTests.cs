@@ -3,7 +3,6 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

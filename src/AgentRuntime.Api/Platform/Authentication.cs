@@ -35,10 +35,11 @@ public sealed class AktorAuthenticationHandler(
         else if (Request.Headers.Authorization.ToString() is { Length: > 0 } header)
         {
             if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return AuthenticateResult.Fail("Unsupported authorization scheme.");
-            // End-user tokens (ours, or a solution's federated JWTs) are for the apps API only,
-            // which checks them itself; to everything else the request is anonymous.
+            // End-user tokens (ours, or a solution's federated JWTs) and solution app keys are for the
+            // apps API only, which checks them itself; to everything else the request is anonymous.
             var bearer = header["Bearer ".Length..].Trim();
             if (bearer.StartsWith(AgentRuntime.Infrastructure.Solutions.SolutionTokens.EndUserPrefix, StringComparison.Ordinal) ||
+                AgentRuntime.Infrastructure.Solutions.AppKeyFormat.LooksLike(bearer) ||
                 AgentRuntime.Infrastructure.Solutions.EndUserJwtVerifier.LooksLikeJwt(bearer))
             {
                 return AuthenticateResult.NoResult();

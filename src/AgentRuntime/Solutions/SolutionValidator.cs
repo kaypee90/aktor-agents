@@ -30,7 +30,7 @@ public static partial class SolutionValidator
 
     /// <summary>The solution platform's version: what a manifest's requires_platform is checked
     /// against. It follows the /api/v1 contract: minor versions only add.</summary>
-    public const string PlatformVersion = "1.3.0";
+    public const string PlatformVersion = "1.4.0";
 
     [GeneratedRegex("^[a-z][a-z0-9-]{1,49}$")]
     private static partial Regex NamePattern();
@@ -40,6 +40,10 @@ public static partial class SolutionValidator
 
     [GeneratedRegex("^[a-z0-9][a-z0-9-]{0,39}$")]
     private static partial Regex KeyPattern();
+
+    /// <summary>Names the solutions API uses as routes (<c>/api/v1/solutions/templates</c>), so a
+    /// solution with one of them couldn't be reached by name.</summary>
+    private static readonly HashSet<string> ReservedNames = ["templates", "validate", "parse", "design"];
 
     public static bool IsValidName(string? name) => name is not null && NamePattern().IsMatch(name);
 
@@ -77,6 +81,7 @@ public static partial class SolutionValidator
 
         if (m.Format != 1) errors.Add($"Unknown manifest format {m.Format} (this server reads format 1).");
         if (!IsValidName(m.Name)) errors.Add("'name' is required: lowercase letters, digits and dashes, starting with a letter (2 to 50).");
+        else if (ReservedNames.Contains(m.Name)) errors.Add($"'name' can't be '{m.Name}': the API uses that word itself. Pick another name.");
         if (!IsValidVersion(m.Version)) errors.Add("'version' is required, as a semantic version like 1.0.0.");
         if (m.Title?.Length > 100) errors.Add("'title' is at most 100 characters.");
         if (m.Description?.Length > 2000) errors.Add("'description' is at most 2,000 characters.");
@@ -223,6 +228,15 @@ public static partial class SolutionValidator
                 {
                     errors.Add($"assistant: allowed origin '{origin}' should be just a scheme and host, like https://app.example.com.");
                 }
+                else if (o.Scheme == "http" && !o.IsLoopback)
+                {
+                    warnings.Add($"assistant: allowed origin '{origin}' isn't https, so its pages and tokens can be read in transit. Use https outside local development.");
+                }
+            }
+
+            if (a.AllowedOrigins.Count == 0)
+            {
+                warnings.Add("assistant: allowed_origins is empty, so pages on any site can use the assistant with a valid end-user token. List the sites that embed it before you go live.");
             }
             foreach (var key in Placeholders([a.Instructions, a.Greeting ?? string.Empty]).Where(k => !inputKeys.Contains(k)))
             {

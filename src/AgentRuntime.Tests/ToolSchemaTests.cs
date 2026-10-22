@@ -6,7 +6,6 @@ using AgentRuntime.Plugins;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

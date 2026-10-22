@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using AgentRuntime.Infrastructure.Llm;
 using AgentRuntime.LLM;
 using AgentRuntime.Solutions;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

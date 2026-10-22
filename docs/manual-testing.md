@@ -657,7 +657,7 @@ save is refused because the record changed.
 
 ### SO5. End users see only their own data
 
-**Do:** the install's **End users** tab → issue a token for user id `demo-resident` (name Sam) →
+**Do:** the install's **Assistant** tab → issue a token for user id `demo-resident` (name Sam) →
 turn on **Open the widget here** → ask "When does my lease end?" and report "The kitchen tap is
 leaking". Then issue a token for `demo-resident-2` and ask the same.
 
@@ -699,7 +699,7 @@ trigger runs, and the ticket ends at status `awaiting_review`.
 
 ### SO9. The registry
 
-**Do:** an installed solution's page → **Publish to registry** (public). Then
+**Do:** an installed solution's **Settings** tab → **Publish to the registry** (Public). Then
 `aktor publish samples/solutions/helpdesk --public`, `aktor search`, and **Install** next to a
 package in the Solutions page's Registry list. Publish the same version twice.
 
@@ -765,6 +765,26 @@ Then type `@` in **Design with AI** and send "have @handle text the requester wi
   declared under connectors").
 - In the chat, the sent message shows its mentions highlighted. With a real model, the proposal's
   instructions use `@connector:sms`.
+
+### SO15. A template to a connected app
+
+**Do:** on **Solutions**, open the **Helpdesk** template under **Start from a template**, change
+its title, and **Deploy**. On the **Integrate** tab, create an app key named `test backend` and copy
+it. In a terminal (not the browser), run the tab's "check the connection" command with
+`AKTOR_APP_KEY` set to that key. Then run the HTTP tab's "Run a workflow" command for `intake`
+with `{"subject": "Printer on fire", "message": "It started smoking."}` as `data`.
+
+**Check:**
+- After the deploy, the page opens on **Integrate**. The checklist shows the key's step green and
+  "Your backend has connected" amber until the check command runs, then green on reload.
+- The check command lists the solution's workflows and entities. The same command with
+  `-H "Origin: https://example.com"` is refused (403, "App keys are for your server").
+- `GET /api/v1/solutions` with the app key is refused (401).
+- The run's `GET …?wait=30` answers `done: true`. A ticket appears on the **Data** tab.
+- Revoke the key: the check command now answers 401. The organization's audit log
+  (`GET /api/organization/policy/audit`) lists `solution.app_key.created` and `…revoked`.
+- With **Allowed sites** empty, **Review & deploy** in the builder warns that any site can use the
+  assistant.
 
 ---
 
@@ -854,6 +874,8 @@ Copy this per run to compare models or releases:
 | SO11 | | | | |
 | SO12 | | | | |
 | SO13 | | | | |
+| SO14 | | | | |
+| SO15 | | | | |
 
 For a repeatable measure of spawning decisions, run `SpawnEfficiencyEval` too (see
 [workspaces.md](workspaces.md)).

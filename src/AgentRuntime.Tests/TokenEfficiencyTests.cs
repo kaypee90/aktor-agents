@@ -3,7 +3,6 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Llm;
 using AgentRuntime.LLM;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

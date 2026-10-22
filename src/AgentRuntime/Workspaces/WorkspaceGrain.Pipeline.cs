@@ -101,6 +101,9 @@ public sealed partial class WorkspaceGrain
     public Task<RunStartResult> StartRunWithData(string input, string? inputData, string startedBy) =>
         StartRunCoreAsync(input, "manual", startedBy, trigger: null, eventId: null, inputData);
 
+    public Task<RunStartResult> StartRunFromApp(string input, string? inputData, string startedBy, string? requestId) =>
+        StartRunCoreAsync(input, "app", startedBy, trigger: null, eventId: requestId is null ? null : PipelineIds.AppRequestEvent(S.WorkspaceId, requestId), inputData);
+
     public async Task OnRunFinished(string runId, PipelineRunStatus status, string summary)
     {
         if (!Exists) return;
@@ -178,6 +181,13 @@ public sealed partial class WorkspaceGrain
         if (S.Runs.FirstOrDefault(r => r.RunId == runId) is { } existing)
         {
             return new RunStartResult { Success = true, RunId = runId, Number = existing.Number, Message = "already started" };
+        }
+
+        // An event id's run may have aged out of Runs (only the latest are kept): the run grain still
+        // knows it, and launching it again would leave a finished run in ActiveRunIds for good.
+        if (eventId is not null && await GrainFactory.GetGrain<IPipelineRunGrain>(runId).GetView() is { } prior)
+        {
+            return new RunStartResult { Success = true, RunId = runId, Number = prior.Number, Message = "already started" };
         }
 
         var request = new PipelineRunRequest

@@ -1,10 +1,8 @@
 using System.Net;
 using System.Text.Json;
-using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Tools;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Options;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

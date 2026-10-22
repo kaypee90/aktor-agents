@@ -2,7 +2,6 @@ using AgentRuntime.Agents;
 using AgentRuntime.Events;
 using AgentRuntime.LLM;
 using AgentRuntime.Tools;
-using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;

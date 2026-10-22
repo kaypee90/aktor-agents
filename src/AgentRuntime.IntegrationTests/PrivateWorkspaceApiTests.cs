@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.Tenancy;
-using Xunit;
 using Xunit.Abstractions;
 
 namespace AgentRuntime.IntegrationTests;

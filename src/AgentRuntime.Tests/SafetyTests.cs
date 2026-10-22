@@ -1,7 +1,6 @@
 using AgentRuntime.Contracts;
 using AgentRuntime.Safety;
 using AgentRuntime.Tools;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

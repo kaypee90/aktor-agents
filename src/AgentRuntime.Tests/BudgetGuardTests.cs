@@ -1,6 +1,5 @@
 using AgentRuntime.Contracts;
 using AgentRuntime.Resources;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

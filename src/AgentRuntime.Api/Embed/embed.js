@@ -53,7 +53,12 @@
     var token = options.token || null;
     var getToken = options.getToken || (options.tokenUrl ? function () {
       return fetch(options.tokenUrl, { credentials: "include", method: "POST" })
-        .then(function (r) { if (!r.ok) throw new Error("token " + r.status); return r.json(); })
+        .then(function (r) {
+          // The page's own token endpoint: 401/403 means the visitor isn't signed in to the site.
+          if (r.status === 401 || r.status === 403) throw new Error("Sign in to chat with us.");
+          if (!r.ok) throw new Error("The assistant isn't available right now. Please try again later.");
+          return r.json();
+        })
         .then(function (j) { return j.token; });
     } : null);
     var storeKey = "aktor-chat:" + install;

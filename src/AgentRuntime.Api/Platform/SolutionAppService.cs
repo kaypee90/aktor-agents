@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json.Nodes;
 using AgentRuntime.Contracts;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Solutions;
@@ -27,9 +26,31 @@ public sealed class SolutionAppService(
     PluginCatalog plugins,
     SolutionService solutions,
     SolutionUsageService usage,
+    SolutionTokens tokens,
+    Microsoft.Extensions.Options.IOptions<SolutionOptions> options,
     IDbContextFactory<AgentDbContext> dbFactory,
+    DashboardOrigins dashboard,
     TimeProvider clock)
 {
+
+    public sealed record TokenBody(string? UserId, string? Name, int? TtlMinutes);
+
+    /// <summary>
+    /// A token for one of the solution's end users, for the embed widget or the apps API. The user
+    /// id is the builder's own; everything the token reaches is that user's alone. Lifetime is
+    /// clamped to five minutes … <see cref="SolutionOptions.MaxEndUserTokenLifetime"/>.
+    /// </summary>
+    public object IssueToken(string tenantId, string installId, TokenBody body)
+    {
+        var user = body.UserId?.Trim() ?? string.Empty;
+        if (user.Length is 0 or > 200 || user.Contains(':')) throw new SolutionException("user_id is required: your own id for the user, up to 200 characters, without ':'.");
+        var max = options.Value.MaxEndUserTokenLifetime;
+        var ttl = TimeSpan.FromMinutes(Math.Clamp(body.TtlMinutes ?? 60, 5, (int)max.TotalMinutes));
+        var name = body.Name?.Trim() is { Length: > 0 } n ? n[..Math.Min(100, n.Length)] : null;
+        var token = tokens.IssueEndUserToken(tenantId, installId, user, name, ttl);
+        return new { token, install_id = installId, user_id = user, expires_at = clock.GetUtcNow().Add(ttl) };
+    }
+
     public sealed record EndUser(EndUserClaims Claims, InstalledSolution Solution)
     {
         public string TenantId => Claims.TenantId;
@@ -40,14 +61,15 @@ public sealed class SolutionAppService(
     }
 
     /// <summary>The end user a token names, for the app it was issued for. A request from a page
-    /// (it has an Origin) must come from one of the assistant's allowed origins, when it lists any.</summary>
+    /// (it has an Origin) must come from one of the assistant's allowed origins, when it lists any,
+    /// or from the dashboard itself.</summary>
     public async Task<EndUser> ResolveAsync(EndUserClaims claims, string installId, string? origin, CancellationToken ct)
     {
         if (claims.InstallId != installId) throw new SolutionException("This token is for another app.", StatusCodes.Status403Forbidden);
         var solution = await catalog.GetAsync(claims.TenantId, installId, ct);
         if (solution is not { Status: SolutionInstallStatus.Active }) throw new SolutionException("This app isn't available.", StatusCodes.Status404NotFound);
         if (origin is { Length: > 0 } && solution.Manifest.Assistant?.AllowedOrigins is { Count: > 0 } allowed &&
-            !allowed.Any(a => string.Equals(a.TrimEnd('/'), origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
+            !allowed.Concat(dashboard.Origins).Any(a => string.Equals(a.TrimEnd('/'), origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
         {
             throw new SolutionException("This app can't be used from this site.", StatusCodes.Status403Forbidden);
         }
@@ -321,3 +343,7 @@ public sealed class SolutionAppService(
 
     private static string Clip(string s, int max) => s.Length > max ? s[..max] : s;
 }
+
+/// <summary>The dashboard's own origins (<c>Cors:AllowedOrigins</c>, read once at startup): its
+/// assistant preview works whatever sites a solution allows, and still needs an end-user token.</summary>
+public sealed record DashboardOrigins(IReadOnlyList<string> Origins);

@@ -74,6 +74,10 @@ public interface IWorkspaceGrain : IGrainWithStringKey
     /// <paramref name="inputData"/> (a JSON value) as <c>input</c>.</summary>
     Task<RunStartResult> StartRunWithData(string input, string? inputData, string startedBy);
 
+    /// <summary>A run started by a solution's app through the apps API (source "app"). A repeated
+    /// <paramref name="requestId"/> returns the run the first request started instead of a second one.</summary>
+    Task<RunStartResult> StartRunFromApp(string input, string? inputData, string startedBy, string? requestId);
+
     /// <summary>A form trigger's form, for the page that shows it; null if there's no such form.</summary>
     [AlwaysInterleave]
     Task<FormView?> GetForm(string triggerId);

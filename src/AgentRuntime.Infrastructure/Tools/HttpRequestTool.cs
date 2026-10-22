@@ -2,7 +2,6 @@ using System.Text.Json;
 using AgentRuntime.Contracts;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Http;
 
 namespace AgentRuntime.Infrastructure.Tools;
 

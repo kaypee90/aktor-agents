@@ -3,7 +3,6 @@ using System.Text.Json;
 using AgentRuntime.Infrastructure.Plugins;
 using AgentRuntime.Plugins;
 using AgentRuntime.Tools;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

@@ -95,6 +95,31 @@ await aktor.registry.publish(bundle, "public");
 await aktor.solutions.installPackage("helpdesk@1.0.0");
 ```
 
+## Your backend: `AktorServer` and an app key
+
+Your server talks to one installed solution with its **app key** (`aks_…`, from the solution's
+**Integrate** tab or `aktor app-keys <name> --create`), never an organization API key. The key
+reaches that solution only, and is refused if a web page sends it.
+
+```ts
+import { AktorServer } from "@aktor/sdk";
+
+const aktor = new AktorServer({ installId: "sol-…", appKey: process.env.AKTOR_APP_KEY!, baseUrl: process.env.AKTOR_URL });
+
+// The embed widget's data-token-url (the widget POSTs to it after your own sign-in)
+const { token } = await aktor.issueToken(user.id, { name: user.name });
+
+// Run a workflow and wait for its result (idempotent and retried safely)
+const run = await aktor.run("triage", { subject: "Leak under the sink" });
+console.log(run.status, run.summary, run.stages.at(-1)?.output);
+
+// Its records
+const { items } = await aktor.records.list("Ticket", { where: { status: "open" }, filter: ["opened_at>=today-7d"] });
+await aktor.records.create("Ticket", { subject: "…" }, { idempotencyKey: "order-1234" });
+```
+
+## Your customers: `AktorApp`
+
 Your customers' side uses `AktorApp` with that token (or the `/embed.js` widget):
 
 ```ts

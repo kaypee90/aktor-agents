@@ -2,7 +2,6 @@ using AgentRuntime.Durability;
 using AgentRuntime.Messaging;
 using Microsoft.Extensions.Options;
 using Orleans.Concurrency;
-using Orleans.Runtime;
 
 namespace AgentRuntime.Agents;
 

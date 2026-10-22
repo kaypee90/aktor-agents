@@ -1,7 +1,6 @@
 using AgentRuntime.Contracts;
 using AgentRuntime.Tools;
 using Microsoft.Extensions.DependencyInjection;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

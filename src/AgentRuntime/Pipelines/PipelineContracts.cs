@@ -13,6 +13,9 @@ public static class PipelineIds
     /// <summary>The same run id for the same event (a trigger tick or a webhook delivery), so a
     /// repeated fire after a crash finds the run it already started.</summary>
     public static string RunFor(string eventId) => Contracts.DeterministicId.From(RunPrefix, eventId);
+
+    /// <summary>The event id of a run a solution's app started with an idempotency key.</summary>
+    public static string AppRequestEvent(string workspaceId, string requestId) => $"app:{workspaceId}:{requestId}";
 }
 
 /// <summary>What does a stage's work.</summary>

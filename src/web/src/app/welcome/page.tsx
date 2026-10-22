@@ -8,19 +8,19 @@ import type { Me } from "@/lib/platformTypes";
 
 const features = [
   {
-    icon: Icons.Graph,
-    title: "Teams that staff themselves",
-    body: "Give one goal. A root agent plans the work, spawns the specialists it needs, and those agents spawn their own when a subtask calls for it.",
-  },
-  {
-    icon: Icons.Chat,
-    title: "Agents talk to each other",
-    body: "Agents discover and message one another directly, so research reaches the architect without everything passing through the root.",
-  },
-  {
     icon: Icons.Shield,
     title: "Governed by the runtime",
-    body: "Budgets, depth and team-size limits, tool permissions and approvals are enforced by the actor runtime, never left to the model.",
+    body: "Budgets, tool permissions, safety rules and approvals are enforced by the runtime, never left to the model. A child agent's limits can only narrow.",
+  },
+  {
+    icon: Icons.Users,
+    title: "Each customer in their own lane",
+    body: "Records, conversations and runs are scoped to the organization and the end user in every query, so one customer never sees another's data.",
+  },
+  {
+    icon: Icons.Replay,
+    title: "Runs that survive a crash",
+    body: "Every step is journaled before the next one runs. After a restart, work resumes, and a cut-off action that can't safely repeat is flagged, never retried blindly.",
   },
   {
     icon: Icons.Bolt,
@@ -28,14 +28,14 @@ const features = [
     body: "Web search, files, git, shell and databases, each granted by capability. Anything that runs code runs in a locked-down container.",
   },
   {
-    icon: Icons.Replay,
+    icon: Icons.Check,
     title: "Every run is on the record",
-    body: "Messages, tool calls and decisions are persisted. Watch a run live, then inspect, audit or replay it afterwards.",
+    body: "Messages, tool calls, decisions, spend and approvals are persisted in a tamper-evident audit log. Inspect, replay or fork any run afterwards.",
   },
   {
-    icon: Icons.Connect,
-    title: "Works with your stack",
-    body: "Start runs from the dashboard, the REST API, or over MCP, A2A and ACP from Claude Code, n8n, CrewAI and more. Results arrive by Slack, SMS, email or Telegram.",
+    icon: Icons.Graph,
+    title: "Agent teams when a job needs one",
+    body: "For open-ended work, an agent can bring in specialists that message each other directly, inside the same limits. Watch them on the live graph.",
   },
 ];
 
@@ -84,27 +84,23 @@ const build = [
 ];
 
 const steps = [
-  { title: "Describe the outcome", body: "A report, an analysis, a code change. Attach files, @mention knowledge, and see the cost estimate first." },
-  { title: "Watch the team form", body: "The live graph shows agents spawning, working and messaging each other." },
-  { title: "Get the result", body: "The root agent checks the work, assembles the final artifacts and reports." },
+  { title: "Build the solution", body: "Start from a template or a blank page: the data model, the workflows that act on it, and the assistant your customers talk to." },
+  { title: "Deploy it to your customers", body: "Install it with one command or from the page, connect your own sign-in, and embed the assistant in your product." },
+  { title: "Operate it with confidence", body: "Set a spend cap per customer, require approval for risky actions, watch cost and outcomes, and upgrade without breaking work in progress." },
 ];
 
-// The team a feasibility study tends to form, drawn as the hero illustration.
-const tree = [
-  { label: "Root agent", depth: 0, status: "Thinking" },
-  { label: "Market research", depth: 1, status: "Executing" },
-  { label: "Data collection", depth: 2, status: "Executing" },
-  { label: "Competitor research", depth: 1, status: "Waiting" },
-  { label: "Technical architecture", depth: 1, status: "Executing" },
-  { label: "Database", depth: 2, status: "Completed" },
-  { label: "Business model", depth: 1, status: "Completed" },
+// A deployed solution serving its customers, drawn as the hero illustration.
+const requests = [
+  { who: "Unit 4B", issue: "Leak under the kitchen sink", status: "Resolved", cost: "$0.04" },
+  { who: "Unit 12A", issue: "No heat since this morning", status: "Approval", cost: "$0.06" },
+  { who: "Unit 7C", issue: "Dishwasher won't drain", status: "Working", cost: "$0.02" },
+  { who: "Unit 3F", issue: "Lost key fob", status: "Resolved", cost: "$0.01" },
 ];
 
 const statusTone: Record<string, string> = {
-  Thinking: "bg-amber-400/15 text-amber-300",
-  Executing: "bg-brand-500/15 text-brand-300",
-  Waiting: "bg-zinc-500/20 text-zinc-300",
-  Completed: "bg-emerald-400/15 text-emerald-300",
+  Working: "bg-brand-500/15 text-brand-300",
+  Approval: "bg-amber-400/15 text-amber-300",
+  Resolved: "bg-emerald-400/15 text-emerald-300",
 };
 
 /** The public front page: what Aktor is, and the way in. */
@@ -127,9 +123,9 @@ export default function WelcomePage() {
             <span className="text-base font-semibold tracking-tight">Aktor</span>
           </Link>
           <nav className="ml-6 hidden gap-5 text-sm text-zinc-600 md:flex dark:text-zinc-400">
-            <a href="#products" className="hover:text-zinc-900 dark:hover:text-zinc-100">Product</a>
-            <a href="#features" className="hover:text-zinc-900 dark:hover:text-zinc-100">Features</a>
-            <a href="#build" className="hover:text-zinc-900 dark:hover:text-zinc-100">Build on it</a>
+            <a href="#build" className="hover:text-zinc-900 dark:hover:text-zinc-100">Solutions</a>
+            <a href="#features" className="hover:text-zinc-900 dark:hover:text-zinc-100">Governance</a>
+            <a href="#products" className="hover:text-zinc-900 dark:hover:text-zinc-100">Building blocks</a>
             <a href="#how" className="hover:text-zinc-900 dark:hover:text-zinc-100">How it works</a>
             <Link href="/docs" className="hover:text-zinc-900 dark:hover:text-zinc-100">Docs</Link>
           </nav>
@@ -157,22 +153,23 @@ export default function WelcomePage() {
       <section className="relative overflow-hidden bg-zinc-950 text-zinc-100">
         <div className="pointer-events-none absolute -left-40 -top-40 h-[28rem] w-[28rem] rounded-full bg-brand-500/25 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-48 right-0 h-[28rem] w-[28rem] rounded-full bg-brand-700/20 blur-3xl" />
-        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
+        <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/70 px-3 py-1 text-xs text-zinc-400">
-              <Icons.Sparkles className="h-3.5 w-3.5 text-brand-400" /> Autonomous agent teams on an actor runtime
+              <Icons.Sparkles className="h-3.5 w-3.5 text-brand-400" /> The governed platform for agentic products
             </span>
             <h1 className="mt-6 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
-              Give a goal. <span className="text-brand-400">A team of agents</span> does the rest.
+              Ship agents to your customers. <span className="text-brand-400">The runtime keeps them in bounds.</span>
             </h1>
             <p className="mt-5 max-w-lg text-base leading-relaxed text-zinc-400">
-              Aktor turns one request into a self-organizing team of AI agents that plan, delegate, collaborate and deliver, inside budgets
-              and permissions the runtime enforces. Use it as it is, or build your own agentic product on it.
+              Build a solution from workflows, your own data model and a customer-facing assistant. Aktor runs it with each customer
+              isolated, spend capped per customer, approvals on risky actions and every step on the record, so you build the product,
+              not the agent platform.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href={signedIn ? "/" : canSignUp ? "/login?mode=signup" : "/login"}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-brand-600">
-                {signedIn ? "Open dashboard" : "Start a run"} <Icons.ChevronRight className="h-4 w-4" />
+                {signedIn ? "Open dashboard" : "Start building"} <Icons.ChevronRight className="h-4 w-4" />
               </Link>
               <Link href="/docs" className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-900">
                 Read the docs
@@ -182,71 +179,33 @@ export default function WelcomePage() {
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5 shadow-2xl">
             <div className="mb-4 flex items-center justify-between text-xs text-zinc-500">
-              <span className="font-mono">feasibility-study</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> 7 agents live</span>
+              <span className="font-mono">property-mgmt · maintenance-desk</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> live</span>
             </div>
             <ul className="space-y-1.5">
-              {tree.map((node) => (
-                <li key={node.label} className="flex items-center gap-2" style={{ paddingLeft: `${node.depth * 1.5}rem` }}>
-                  {node.depth > 0 && <span className="h-px w-3 bg-zinc-700" />}
-                  <span className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-                    <span className="truncate text-sm text-zinc-200">{node.label}</span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone[node.status]}`}>{node.status}</span>
-                  </span>
+              {requests.map((r) => (
+                <li key={r.who} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+                  <span className="w-16 shrink-0 font-mono text-[11px] text-zinc-500">{r.who}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-zinc-200">{r.issue}</span>
+                  <span className="shrink-0 font-mono text-[11px] text-zinc-500">{r.cost}</span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone[r.status]}`}>{r.status}</span>
                 </li>
               ))}
             </ul>
             <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 font-mono text-[11px] text-zinc-500">
-              competitor-research → market-research · InformationRequest
+              Unit 12A · dispatch_vendor waits for approval · cap $5.00/resident/month
             </div>
           </div>
         </div>
       </section>
 
-      <section id="products" className="mx-auto max-w-6xl scroll-mt-16 px-4 pt-20 sm:px-6">
-        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">One workspace for work done by agent teams.</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
-          Ask once, run it every day, research it properly, or ship it to your own customers: the same governed teams behind each.
-        </p>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((f) => (
-            <div key={f.title} className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
-                <f.icon className="h-4 w-4" />
-              </span>
-              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{f.title}</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{f.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section id="features" className="mx-auto max-w-6xl scroll-mt-16 px-4 py-20 sm:px-6">
-        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">The model reasons. The runtime governs.</h2>
-        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
-          Every agent is an actor with its own state, mailbox, goal and capabilities. Spawning, messaging, tools and limits all go through
-          the runtime, which validates each request before anything happens.
-        </p>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map((f) => (
-            <div key={f.title} className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
-                <f.icon className="h-4 w-4" />
-              </span>
-              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{f.title}</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{f.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section id="build" className="scroll-mt-16 bg-zinc-950 text-zinc-100">
-        <div className="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.1fr]">
+      <section id="build" className="scroll-mt-16 border-t border-zinc-800 bg-zinc-950 text-zinc-100">
+        <div className="mx-auto grid max-w-6xl grid-cols-1 gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.1fr]">
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/70 px-3 py-1 text-xs text-zinc-400">
               <Icons.Solutions className="h-3.5 w-3.5 text-brand-400" /> For builders
             </span>
-            <h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">Build your own agentic product on Aktor.</h2>
+            <h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">A business app in a folder.</h2>
             <p className="mt-3 max-w-lg text-sm leading-relaxed text-zinc-400">
               A <span className="text-zinc-200">solution</span> is a business app in a folder: its workflows, data model, the assistant your
               customers talk to, and evals. Aktor runs it with the same budgets, approvals and audit as everything else, so you ship the
@@ -302,6 +261,43 @@ $ aktor publish --public
         </div>
       </section>
 
+      <section id="features" className="mx-auto max-w-6xl scroll-mt-16 px-4 py-20 sm:px-6">
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">The model reasons. The runtime governs.</h2>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
+          The model proposes; the runtime checks every action against your limits before it happens. That is what lets you put agents in
+          front of customers.
+        </p>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {features.map((f) => (
+            <div key={f.title} className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
+                <f.icon className="h-4 w-4" />
+              </span>
+              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{f.title}</h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="products" className="mx-auto max-w-6xl scroll-mt-16 px-4 pb-20 sm:px-6">
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Built from workflows and tasks.</h2>
+        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-500">
+          Every solution is made of the same pieces, and each one is useful on its own: run a workflow every day, or hand a one-off job to a task.
+        </p>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {products.map((f) => (
+            <div key={f.title} className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
+                <f.icon className="h-4 w-4" />
+              </span>
+              <h3 className="mt-4 text-sm font-semibold text-zinc-900 dark:text-zinc-100">{f.title}</h3>
+              <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section id="how" className="scroll-mt-16 border-y border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/40">
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">How it works</h2>
@@ -320,8 +316,8 @@ $ aktor publish --public
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6">
-        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Put a team on your next question.</h2>
-        <p className="mx-auto mt-3 max-w-xl text-sm text-zinc-500">You provide the goal and watch. The agents work out the rest.</p>
+        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Ship your first solution.</h2>
+        <p className="mx-auto mt-3 max-w-xl text-sm text-zinc-500">Describe it in the builder, or start from the property-maintenance or helpdesk sample, and put an assistant in front of your customers.</p>
         <Link href={signedIn ? "/" : "/login"}
           className="mt-8 inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-brand-600">
           {signedIn ? "Open dashboard" : "Sign in to start"} <Icons.ChevronRight className="h-4 w-4" />
@@ -330,7 +326,7 @@ $ aktor publish --public
 
       <footer className="border-t border-zinc-200 dark:border-zinc-800">
         <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-6 text-xs text-zinc-500 sm:px-6">
-          <Icons.Logo className="h-5 w-5" /> Aktor · Governed, autonomous agent teams
+          <Icons.Logo className="h-5 w-5" /> Aktor · The governed platform for agentic products
           <Link href="/docs" className="ml-auto hover:text-zinc-800 dark:hover:text-zinc-200">Documentation</Link>
         </div>
       </footer>

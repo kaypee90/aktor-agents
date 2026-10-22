@@ -6,7 +6,6 @@ using AgentRuntime.LLM;
 using AgentRuntime.Tenancy;
 using AgentRuntime.Workspaces;
 using Orleans.TestingHost;
-using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 

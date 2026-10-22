@@ -11,24 +11,25 @@ export const DOCS: DocSection[] = [
     id: "overview",
     group: "Start here",
     title: "What Aktor is",
-    summary: "Autonomous agent teams on a governed actor runtime, and a platform to build your own agentic products on.",
+    summary: "The governed platform for building agentic products and shipping them to your own customers.",
     body: `
-Aktor runs **teams of AI agents**. You give a goal, such as a market analysis, a code change, or
-triage for every new support ticket. A root agent plans the work, spawns the specialists it needs,
-and those agents can spawn their own. They message each other directly, use tools, and report back
-with a checked result.
+Aktor is for shipping agents to **your own customers**. You build a **solution**: a business
+application with its own data model, the workflows that act on it, the assistant your customers talk
+to, and evals. Aktor runs it with each customer isolated from the others, spend capped per customer,
+approvals on risky actions, and every step on the record. You build the product; you don't build
+the agent platform underneath it.
 
-The rule underneath everything: **the model reasons; the runtime governs.** Every agent is an
-*actor* (an Orleans grain) with its own state, mailbox, goal and capabilities. Spawning, messaging,
-tools, budgets, permissions and approvals all go through the runtime, which checks each request
-before anything happens. The model is never trusted to enforce a limit.
+Solutions are made of two building blocks, each useful on its own:
 
-You can use Aktor in two ways:
-
-| As… | You… |
+| Building block | What it is |
 |---|---|
-| **A platform** | Package a business application as a **solution**, with its own data model, the workflows that run it, the assistant your customers talk to, and evals. Deploy it with the \`aktor\` CLI and put it in front of your own customers. |
-| **A product** | Chat with a team in **Tasks**, and run reusable workflows in **Workspaces**: the building blocks every solution is made of. |
+| **Workflows** (Workspaces) | Reusable agent pipelines you edit in plain language or on a canvas. Run them on schedules, webhooks, record changes, watches and forms, and mix agent stages with actions and scripts that need no model. |
+| **Tasks** | A goal handed to an agent, used like a chat, with follow-ups, files in and documents out. |
+
+The rule underneath everything: **the model reasons; the runtime governs.** Tools, budgets,
+permissions and approvals all go through the runtime, which checks each request before anything
+happens. The model is never trusted to enforce a limit. For open-ended work an agent can bring in
+specialists inside the same limits; see Core concepts.
 
 Everything is on the record: messages, tool calls, decisions, spend and approvals. You can watch a
 run live, then audit, replay or fork it afterwards.
@@ -52,7 +53,9 @@ run live, then audit, replay or fork it afterwards.
 | **Global connectors** | Set an integration up once on the **Connectors** page and link it from any workspace, workflow, solution or (if allowed) task. Rotate a key once; every link uses it. |
 | **Design with AI** | Describe a solution, or a change to it, in the builder's chat. Each answer lists validated changes you apply (or undo). |
 | **Mentions in the builder** | Type \`@\` in the builder's chat or its instruction boxes to name a stage, workspace, skill, knowledge or connector. Agents are told exactly what each one is, and mentioning a connector connects it. |
-| **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.3.0. |
+| **Connect your app** | Each solution has an **Integrate** tab: a go-live checklist, an **app key** for your backend (it reaches that one solution only and is refused from web pages), and copy-ready code for Next.js, Express, Python or HTTP. Your backend runs workflows with \`aktor.run("triage", {...})\`. |
+| **Templates** | Start from a working solution (property management, helpdesk) on the Solutions page or with \`aktor init --template\`. |
+| **API** | \`/api/v1\` is the stable contract; the solution platform is at version 1.4.0. |
 
 Upgrading a server: rebuild and restart, and a database migration is applied automatically. Back
 up \`SECRETS_MASTER_KEY\`: it now also signs end-user tokens, records bindings and registry
@@ -226,6 +229,100 @@ webhooks, and the REST API.
 
   // ---------------------------------------------------------------- Build on Aktor
   {
+    id: "solutions-guide",
+    group: "Build on Aktor",
+    title: "Step by step: your first solution",
+    summary: "From a template to an assistant and workflows running inside your own app, with the code.",
+    body: `
+This is the whole path, in the order the dashboard takes you. The full version, with Express,
+FastAPI and webhook examples, is \`docs/solutions-guide.md\`.
+
+**1. Start from a template.** **Solutions → Templates → Helpdesk → Use this template**. The builder
+opens a copy as a draft. (Or **New solution** and describe your app to **Design with AI**.)
+
+**2. Make it yours.** In the builder:
+- **Basics:** a title.
+- **Assistant → Allowed sites:** the sites that will embed it, e.g. \`https://app.acme.com\`.
+- **Assistant → Monthly cost cap per customer:** e.g. \`2\`.
+
+**Review & deploy** says **✓ Valid** when it's ready.
+
+**3. Deploy.** Give the inputs it asks for. You land on the solution's **Integrate** tab.
+
+**4. Try it without code.**
+- **Data:** create a Ticket and watch the triage workflow classify it.
+- **Assistant:** chat as a customer.
+- **Evals:** **Run all**.
+
+**5. Create an app key.** **Integrate → App keys → Create key**, then store it as server secrets:
+
+\`\`\`bash
+AKTOR_URL=https://your-aktor.example.com
+AKTOR_INSTALL_ID=sol-…
+AKTOR_APP_KEY=aks_…        # shown once; never put it in front-end code
+\`\`\`
+
+Check it from your server; the checklist's "has connected" step turns green:
+
+\`\`\`bash
+curl -s $AKTOR_URL/api/v1/apps/$AKTOR_INSTALL_ID -H "Authorization: Bearer $AKTOR_APP_KEY"
+\`\`\`
+
+**6. One client, on your server** (\`npm install @aktor/sdk\`):
+
+\`\`\`ts
+// lib/aktor.ts
+import { AktorServer } from "@aktor/sdk";
+export const aktor = new AktorServer({ installId: process.env.AKTOR_INSTALL_ID!, appKey: process.env.AKTOR_APP_KEY!, baseUrl: process.env.AKTOR_URL });
+\`\`\`
+
+**7. Put the assistant on your site.** A token endpoint the widget POSTs to, after your own sign-in:
+
+\`\`\`ts
+// app/api/aktor-token/route.ts (Next.js)
+import { aktor } from "@/lib/aktor";
+import { getCurrentUser } from "@/lib/auth";
+
+export async function POST() {
+  const user = await getCurrentUser();
+  if (!user) return new Response("Sign in first", { status: 401 });
+  const { token } = await aktor.issueToken(user.id, { name: user.name });
+  return Response.json({ token });
+}
+\`\`\`
+
+\`\`\`html
+<script src="https://your-aktor.example.com/embed.js" data-install="sol-…" data-token-url="/api/aktor-token" async></script>
+\`\`\`
+
+**8. Run a workflow from your code** and get its result:
+
+\`\`\`ts
+const run = await aktor.run("intake", { subject: "Charged twice", message: "Please refund one." },
+  { idempotencyKey: "contact-8841" });   // a retried submit returns the same run
+console.log(run.status, run.summary);
+\`\`\`
+
+**9. Read and write its records:**
+
+\`\`\`ts
+const { items } = await aktor.records.list("Ticket", { where: { status: "awaiting_review" } });
+await aktor.records.update("Ticket", items[0].id, { status: "answered" }, { ifMatch: items[0].version });
+\`\`\`
+
+**10. Go live** when the Integrate tab's checklist is all green:
+- the key is created and has connected;
+- allowed sites are set;
+- a cap per customer is set;
+- evals pass.
+
+After that:
+- **Change it:** in the builder, raise the version and deploy. Only what changed is applied.
+- **Bill for it:** the Usage tab.
+- **Rotate keys:** create a new one, then revoke the old.
+`,
+  },
+  {
     id: "solutions",
     group: "Build on Aktor",
     title: "Solutions",
@@ -258,6 +355,10 @@ workspaces: [ { file: workspaces/maintenance-desk.yaml } ]
 assistant: { … }                                         # what your customers talk to
 evals: [ { file: evals/urgent-leak.yaml } ]
 \`\`\`
+
+**The shortest path:** on **Solutions**, open a template (or **New solution** and describe yours to
+**Design with AI**), change it, **Deploy**, then follow the **Integrate** tab: create an app key,
+copy the code for your stack, and tick off the go-live checklist. See *Connect your app*.
 
 **Build it in the dashboard:** **Solutions → New solution** opens the builder. It has forms for the
 data model, workspaces, triggers, the assistant, connectors, knowledge, skills and evals, checked
@@ -372,8 +473,8 @@ Your customers aren't members of your organization. They sign in to *your* app, 
 one of two credentials for them on the **apps API**:
 
 1. **An Aktor end-user token.** Your backend calls
-   \`POST /api/v1/solutions/{name}/end-user-tokens\` with \`{ user_id, name }\` and gets a
-   short-lived \`aeu_…\` token.
+   \`POST /api/v1/apps/{installId}/end-user-tokens\` with the solution's **app key** and
+   \`{ user_id, name }\`, and gets a short-lived \`aeu_…\` token (see *Connect your app*).
 2. **Your own sign-in token (JWT).** Declare your identity provider, and Aktor checks your JWTs
    against its published keys (RS/PS/ES algorithms):
 
@@ -418,6 +519,51 @@ URL, and keeps the conversation across page loads. You can also call
 `,
   },
   {
+    id: "connect",
+    group: "Build on Aktor",
+    title: "Connect your app",
+    summary: "App keys, the Integrate tab, and running workflows from your own backend.",
+    body: `
+Open an installed solution's **Integrate** tab (a new install opens on it). It has three parts:
+
+- **A go-live checklist:** your backend has a key and has connected, only your sites can embed the
+  assistant, each customer's spend is capped, and evals cover its behaviour.
+- **App keys:** create, see when each was last used, revoke.
+- **Copy-ready code** for Next.js, Node/Express, Python and plain HTTP, with this solution's id,
+  workflows and entities filled in.
+
+**App keys** (\`aks_…\`) are what your backend holds, never an organization API key. A key
+reaches one solution through the apps API and can only:
+- issue its end-user tokens;
+- read and write its records;
+- run its workflows.
+
+It's anonymous everywhere else, and refused if a web page sends it. A leaked key exposes one app,
+and revoking it stops it at once. Creating and revoking keys is audited.
+
+\`\`\`ts
+import { AktorServer } from "@aktor/sdk";
+const aktor = new AktorServer({ installId: "sol-…", appKey: process.env.AKTOR_APP_KEY!, baseUrl: process.env.AKTOR_URL });
+
+// The widget's data-token-url (it POSTs here after your own sign-in)
+const { token } = await aktor.issueToken(user.id, { name: user.name });
+
+// Run a workflow and wait for its result
+const run = await aktor.run("triage", { subject: "Leak under the sink" });
+\`\`\`
+
+| From your server, with the app key | |
+|---|---|
+| \`POST /api/v1/apps/{id}/end-user-tokens\` | a token for one of your users |
+| \`GET/POST/PATCH/DELETE /api/v1/apps/{id}/records/{Entity}[/{recordId}]\` | the records API (Idempotency-Key, If-Match) |
+| \`POST /api/v1/apps/{id}/runs\` | \`{ workflow, input?, data? }\` → \`run_id\`; an Idempotency-Key makes retries safe |
+| \`GET /api/v1/apps/{id}/runs/{runId}?wait=30\` | waits for the result: status, summary, each stage's output |
+
+Runs keep the workflow's budgets, safety rules and approvals, and each key can start 60 a minute.
+Python has the same client: \`AktorServer(install_id, app_key).run("triage", {...})\`.
+`,
+  },
+  {
     id: "registry",
     group: "Build on Aktor",
     title: "The registry",
@@ -439,7 +585,7 @@ aktor yank property-mgmt 1.2.1 --reason "broken migration"
   package altered after publishing is refused.
 
 In the dashboard, **Solutions** lists the registry with an *Install* button, and an installed
-solution's page has *Publish to registry*.
+solution's **Settings** tab has *Publish to the registry*.
 `,
   },
   {
@@ -494,21 +640,23 @@ The CLI is for people who prefer the terminal or want packages in git. Everythin
 
 \`\`\`bash
 export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...    # an Admin key: Settings → API keys
-npx aktor init my-app          # a working package to start from
+npx aktor init my-app          # a working package to start from (--template helpdesk: a full one)
+npx aktor templates            # the templates this server offers
 npx aktor validate             # every problem, before anything is installed
 npx aktor deploy               # install, or upgrade (--dry-run, --force, --input k=v, --secret conn.key=v)
 npx aktor dev                  # redeploy on every save
 npx aktor test                 # run the evals
 npx aktor records my-app Request --filter "status==new"
 npx aktor token my-app customer-42
+npx aktor app-keys my-app --create "Production backend"   # the key your backend uses
 npx aktor publish | search | install | yank | usage | status | uninstall
 \`\`\`
 
 **TypeScript** (\`@aktor/sdk\`): \`new Aktor({ apiKey })\` gives you \`tasks\`, \`workspaces\`,
-\`solutions\` (deploy, records, usage, end-user tokens) and \`registry\`. \`AktorApp\` is the
-end-user side.
+\`solutions\` (deploy, records, usage, end-user tokens) and \`registry\`. \`AktorServer\` is your
+backend's client with an app key (tokens, records, \`run\`), and \`AktorApp\` is the end-user side.
 
-**Python** (\`aktor\`, no dependencies): \`Aktor\`, \`AktorApp\`, \`bundle_directory\`, and
+**Python** (\`aktor\`, no dependencies): \`Aktor\`, \`AktorServer\`, \`AktorApp\`, \`bundle_directory\`, and
 \`Plugin\` for remote plugins.
 `,
   },
@@ -562,15 +710,17 @@ description is at \`/openapi/v1.json\`.
 | Credential | Header | Reaches |
 |---|---|---|
 | API key | \`Authorization: Bearer ak_…\` | your organization, by the key's role |
-| End-user token or your JWT | \`Authorization: Bearer aeu_…\` / your JWT | \`/api/v1/apps/{installId}/…\` only |
+| App key | \`Authorization: Bearer aks_…\` | \`/api/v1/apps/{installId}/…\` only, from your server: tokens, records, runs |
+| End-user token or your JWT | \`Authorization: Bearer aeu_…\` / your JWT | \`/api/v1/apps/{installId}/…\` only, as that user |
 
 | Area | Endpoints |
 |---|---|
 | Tasks | \`POST /tasks\`, \`POST /tasks/preview\`, \`GET /tasks/{id}\`, \`/wait\`, \`/result\`, \`/chat\`, \`POST /tasks/{id}/messages\` (a follow-up), \`/continue\`, \`/replay\`, \`/cancel\` |
 | Workspaces | \`/workspaces\`, \`/workspaces/{id}/runs\`, \`/triggers\`, \`/connections\`, \`/policy\`, \`/approvals\`, \`/audit\` |
-| Solutions | \`POST /solutions/validate\`, \`POST /solutions/parse\`, \`GET /solutions/{id}/package\`, \`POST /solutions\` (bundle or \`package\`), \`PUT /solutions/{id}\`, \`DELETE …?purge=true\`, \`/evals\`, \`/usage\`, \`/publish\`, \`/end-user-tokens\`, \`/records/{Entity}\` |
+| Solutions | \`POST /solutions/validate\`, \`POST /solutions/parse\`, \`GET /solutions/{id}/package\`, \`POST /solutions\` (bundle or \`package\`), \`PUT /solutions/{id}\`, \`DELETE …?purge=true\`, \`/evals\`, \`/usage\`, \`/publish\`, \`/end-user-tokens\`, \`/app-keys\`, \`/records/{Entity}\`, \`GET /solutions/templates[/{name}]\` |
 | Registry | \`GET/POST /registry/packages\`, \`GET /registry/packages/{name}[/{version}]\`, \`POST …/{version}/yank\` |
 | Apps (end users) | \`GET /apps/{id}\`, \`/conversations\`, \`/conversations/{id}\`, \`/conversations/{id}/messages\`, \`/records/{Entity}\` |
+| Apps (your backend, app key) | \`GET /apps/{id}\`, \`POST /apps/{id}/end-user-tokens\`, \`/records/{Entity}[/{recordId}]\`, \`POST /apps/{id}/runs\`, \`GET /apps/{id}/runs/{runId}?wait=\` |
 | Live events | \`GET /ws/events\` (Server-Sent Events) |
 
 Errors are \`{ "error": "…" }\`, with \`"errors": [...]\` listing every problem on validation.
@@ -612,14 +762,14 @@ the judgement.
    seed records, and Workspaces shows its two workspaces.
 3. **A record change starts a run:** create a Ticket on the Data tab, then watch the Maintenance
    desk start a run.
-4. **End users:** on the End users tab, issue a token for \`demo-resident\`, open the widget and
+4. **End users:** on the Assistant tab, issue a token for \`demo-resident\`, open the widget and
    chat. A second user, \`demo-resident-2\`, never sees the first one's data.
 5. **Usage:** the Usage tab shows cost per end user, with a CSV export.
 6. **Evals and upgrades:** run the evals, then Edit in builder, change a stage, +patch, Upgrade.
    History shows it.
 7. **Webhooks:** install the helpdesk, take the contact-form URL from the deploy dialog (or the
    Intake workspace's chat), POST a ticket, and see it reach \`awaiting_review\`.
-8. **Registry:** Publish to registry, then install a package from the Registry list.
+8. **Registry:** Settings → Publish to the registry, then install it from Solutions → Registry.
 9. **Clean up:** \`aktor uninstall <name> --purge\`.
 `,
   },

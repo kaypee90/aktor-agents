@@ -3,7 +3,6 @@ using AgentRuntime.Infrastructure.Secrets;
 using AgentRuntime.Infrastructure.Solutions;
 using AgentRuntime.Solutions;
 using AgentRuntime.Workspaces;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 
@@ -83,12 +82,13 @@ public class SolutionTests
     [InlineData(">=1.1.0", true)]
     [InlineData(">=1.2.0", true)]
     [InlineData(">=1.3.0", true)]
-    [InlineData(">=1.4.0", false)]
+    [InlineData(">=1.4.0", true)]
+    [InlineData(">=1.5.0", false)]
     [InlineData("^1.0.0", true)]
     [InlineData("1.0.0", true)]
     [InlineData("^2.0.0", false)]
     [InlineData("=1.0.0", false)]
-    [InlineData(">1.3.0", false)]
+    [InlineData(">1.4.0", false)]
     public void RequiresPlatform_IsCheckedAgainstThisServer(string requirement, bool ok) =>
         Assert.Equal(ok, SolutionValidator.PlatformMismatch(requirement) is null);
 
@@ -104,6 +104,44 @@ public class SolutionTests
             """);
         var errors = Validate(m).Errors.Where(e => e.Contains("allowed origin")).ToList();
         Assert.Equal(2, errors.Count);
+    }
+
+    [Fact]
+    public void AssistantOrigins_WarnWhenEmptyOrNotHttps()
+    {
+        var (open, _) = Read("""
+            name: shop
+            version: 1.0.0
+            assistant:
+              instructions: Help.
+            """);
+        Assert.Contains(Validate(open).Warnings, w => w.Contains("allowed_origins is empty"));
+
+        var (plain, _) = Read("""
+            name: shop
+            version: 1.0.0
+            assistant:
+              instructions: Help.
+              allowed_origins: ["http://app.example.com", "http://localhost:3001", "https://app.example.com"]
+            """);
+        var warnings = Validate(plain).Warnings;
+        Assert.Contains(warnings, w => w.Contains("'http://app.example.com' isn't https"));
+        Assert.DoesNotContain(warnings, w => w.Contains("localhost") || w.Contains("allowed_origins is empty"));
+    }
+
+    [Theory]
+    [InlineData("templates", false)]
+    [InlineData("validate", false)]
+    [InlineData("templates-app", true)]
+    public void Names_the_api_uses_as_routes_are_reserved(string name, bool ok)
+    {
+        var (m, _) = Read($"""
+            name: {name}
+            version: 1.0.0
+            assistant:
+              instructions: Help.
+            """);
+        Assert.Equal(ok, !Validate(m).Errors.Any(e => e.Contains("the API uses that word")));
     }
 
     [Fact]

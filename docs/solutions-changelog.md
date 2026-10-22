@@ -4,12 +4,12 @@ Everything added or changed to make Aktor a platform others build their own agen
 How to use it is in [solutions.md](solutions.md); where it's going is in [platform-builders.md](platform-builders.md).
 This page is the record of what was built, in the order it was built.
 
-Solution platform version: **1.3.0** (see [api-versioning.md](api-versioning.md)).
+Solution platform version: **1.4.0** (see [api-versioning.md](api-versioning.md)).
 
 ## Upgrading a server
 
-- **Rebuild and restart** (`docker compose up --build`). The database migrations `AddSolutions`
-  and `AddGlobalConnectors` are applied automatically when the API starts. They only add tables, so
+- **Rebuild and restart** (`docker compose up --build`). The database migrations `AddSolutions`,
+  `AddGlobalConnectors` and `AddSolutionAppKeys` are applied automatically when the API starts. They only add tables, so
   existing data is untouched.
 - **Back up `SECRETS_MASTER_KEY`** (or `keys/secrets-master.key`). Besides encrypting the vault, it
   now signs records bindings, end-user tokens and registry packages. A new key invalidates all three.
@@ -159,6 +159,54 @@ Solution platform version: **1.3.0** (see [api-versioning.md](api-versioning.md)
   have, or that the workspace doesn't use.
 - **Tests:** `SolutionMentionTests` (unit).
 
+## 7. Connecting solutions to apps, and templates (platform 1.4.0)
+
+The aim: anyone can package a solution and put it into their own application quickly, without
+handing their backend a powerful credential.
+
+- **App keys** (`aks_…`) replace the organization API key a backend used to need. A key reaches
+  one installed solution, through the apps API only:
+  - **What it can do:** issue end-user tokens, read and write records, and start and follow
+    workflow runs.
+  - **What it can't do:** reach the organization's API (there it's anonymous) or another solution,
+    or be sent from a web page.
+  - **Handling:** it's stored as a hash, rate-limited to 60 runs a minute, revocable at once, and
+    its creation and revocation are audited.
+- **Runs from your app:** `POST /api/v1/apps/{installId}/runs` and `GET …/runs/{runId}?wait=30`.
+  - Retries with an `Idempotency-Key` return the first run.
+  - The result carries each stage's output.
+  - Runs keep the workflow's budgets, policy and approvals.
+- **The records API through the app key**, with the same filters, idempotency and concurrency
+  checks as the organization's records API. Both now share one implementation (`SolutionRecordsApi`).
+- **SDKs:** `AktorServer` in TypeScript and Python, with `issueToken`, `records` and
+  `run(workflow, input)`. It waits for the result and retries safely. The TypeScript client refuses
+  to run in a browser.
+- **The Integrate tab:**
+  - a go-live checklist: key created, backend connected, allowed sites, a spend cap per customer,
+    evals;
+  - app-key management;
+  - copy-ready code for Next.js, Express, Python and HTTP, filled in with the solution's details.
+  - A first install opens on it.
+- **Templates:**
+  - The sample solutions are built into the server.
+  - They're shown on the Solutions page and at the top of a new builder draft.
+  - From the CLI: `aktor templates` lists them and `aktor init my-app --template helpdesk` writes
+    one out.
+  - `aktor app-keys` manages keys from the terminal.
+- **Safer defaults:**
+  - Validation warns while `assistant.allowed_origins` is empty, and for an origin that isn't https.
+  - The dashboard's own origin is always allowed, so the assistant preview keeps working once
+    sites are restricted.
+- **Docs:** [solutions-guide.md](solutions-guide.md), a step-by-step walkthrough from a template to
+  an integrated app, also in the dashboard's docs as "Step by step: your first solution".
+- **The Solutions page, redesigned:**
+  - **List:** Installed (search, a status filter, paging), Templates and Registry views. A
+    getting-started path for a new organization.
+  - **One solution:** tabs kept in the URL. The Overview shows its workflows, data model, assistant
+    and setup. Publishing, upgrading from a folder and uninstalling moved to a Settings tab.
+- **The embed widget:** when the page's token endpoint refuses, the widget asks the visitor to sign
+  in, instead of showing a status code.
+
 ## 7. Fixes along the way
 
 - **Safety rules from the designer:** its prompt listed `applies: Reads|Writes|All`, but the values
@@ -194,10 +242,10 @@ Solution platform version: **1.3.0** (see [api-versioning.md](api-versioning.md)
 
 The solutions work added these tests:
 - **Unit:** `SolutionTests`, `EndUserJwtTests` and `RemotePluginTests`.
-- **Integration**, against the real API and Postgres: `SolutionsApiTests` and
-  `SolutionPlatformApiTests`.
-- **SDKs:** Python SDK tests and Node plugin tests.
+- **Integration**, against the real API and Postgres: `SolutionsApiTests`,
+  `SolutionPlatformApiTests` and `AppIntegrationApiTests`.
+- **SDKs:** Python SDK tests, and Node client (including `AktorServer`) and plugin tests.
 - **CI:** an `sdks` job.
 
-At the time of writing, all 475 unit tests and 159 integration tests pass. Every automated run uses
+At the time of writing, all 468 unit tests and 162 integration tests pass. Every automated run uses
 the Mock model; testing on a real model is still to do ([platform-builders.md](platform-builders.md#next)).

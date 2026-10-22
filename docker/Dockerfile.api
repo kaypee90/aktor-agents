@@ -11,6 +11,8 @@ COPY src/AgentRuntime.Plugins.Sdk/ src/AgentRuntime.Plugins.Sdk/
 COPY src/AgentRuntime/ src/AgentRuntime/
 COPY src/AgentRuntime.Infrastructure/ src/AgentRuntime.Infrastructure/
 COPY src/AgentRuntime.Api/ src/AgentRuntime.Api/
+# The sample solutions are built into the API as the builder's templates.
+COPY samples/solutions/ samples/solutions/
 
 RUN dotnet publish src/AgentRuntime.Api/AgentRuntime.Api.csproj -c Release -o /app --no-restore
 

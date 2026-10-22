@@ -68,6 +68,9 @@ builder.Services.AddSingleton<SolutionService>();
 builder.Services.AddSingleton<GlobalConnectorService>();
 builder.Services.AddSingleton<SolutionDesignService>();
 builder.Services.AddSingleton<SolutionAppService>();
+builder.Services.AddSingleton<SolutionAppKeyService>();
+builder.Services.AddSingleton<SolutionRecordsApi>();
+builder.Services.AddSingleton<SolutionTemplates>();
 builder.Services.AddSingleton<SolutionUsageService>();
 builder.Services.AddSingleton<SolutionRegistryService>();
 builder.Services.Configure<AgentRuntime.Api.Interop.A2aSettings>(builder.Configuration.GetSection(AgentRuntime.Api.Interop.A2aSettings.SectionName));
@@ -92,6 +95,7 @@ builder.Services.Configure<Microsoft.Extensions.Hosting.HostOptions>(o =>
     o.BackgroundServiceExceptionBehavior = Microsoft.Extensions.Hosting.BackgroundServiceExceptionBehavior.Ignore);
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:3000"];
+builder.Services.AddSingleton(new DashboardOrigins(allowedOrigins));
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy => policy

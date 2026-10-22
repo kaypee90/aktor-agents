@@ -34,7 +34,7 @@ public sealed record PipelineRunRequest
     [Id(3)] public required PipelineDefinition Pipeline { get; init; }
     /// <summary>What to do this time: a task typed by a person, a webhook's payload, a watch's matches.</summary>
     [Id(4)] public required string Input { get; init; }
-    /// <summary>"manual", "schedule", "webhook" or "watch".</summary>
+    /// <summary>"manual", "schedule", "webhook", "watch" or "app" (a solution's app, through the apps API).</summary>
     [Id(5)] public string Source { get; init; } = "manual";
     [Id(6)] public string? TriggerId { get; init; }
     [Id(7)] public string? TriggerName { get; init; }

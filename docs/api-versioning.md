@@ -48,6 +48,7 @@ features, and only a major version would remove or change one.
 | 1.1.0 | `requires_platform`, `assistant.allowed_origins`, webhook triggers updated in place on upgrade |
 | 1.2.0 | `indexed` fields, `end_users.jwt` (your own sign-in), `assistant.monthly_cost_limit_usd_per_user`, installing from the registry |
 | 1.3.0 | A connector's `global:` (an organization's global connector), `globals` on deploy, `POST /api/v1/solutions/design` |
+| 1.4.0 | App keys and the apps API for backends (end-user tokens, records, workflow runs), `/api/v1/solutions/templates` |
 
 Every package under `samples/solutions` is validated on
 each build, so a change that would break a published package fails CI.
@@ -58,5 +59,6 @@ each build, so a change that would break a published package fails CI.
 |---|---|---|
 | API key | `Authorization: Bearer ak_…` | the organization's API, by the key's role |
 | Session | cookie (the dashboard) | the same, for a signed-in person |
+| App key | `Authorization: Bearer aks_…` | `/api/v1/apps/{installId}/…` only, for one solution's backend: its end-user tokens, records and workflow runs; refused from web pages ([solutions.md](solutions.md#app-keys)) |
 | End-user token | `Authorization: Bearer aeu_…` | `/api/v1/apps/{installId}/…` only, for one end user of one solution ([solutions.md](solutions.md#end-users)) |
 | Your own JWT | `Authorization: Bearer <JWT>` | the same, for a solution that declares `end_users.jwt` ([solutions.md](solutions.md#your-own-sign-in)) |

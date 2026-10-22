@@ -5,7 +5,6 @@ using AgentRuntime.Contracts;
 using AgentRuntime.IntegrationTests.TestSupport;
 using AgentRuntime.LLM;
 using Orleans.TestingHost;
-using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 
@@ -44,7 +43,7 @@ public sealed class TokenEfficiencyTests : IAsyncLifetime
         new() { Content = content, ToolCalls = calls, FinishReason = LlmFinishReason.ToolCalls, InputTokens = 100 };
 
     private static bool IsSummary(LlmCompletionRequest r) => r.Messages[0].Content?.StartsWith(ContextCompactor.SystemMarker) == true;
-    private LlmCompletionResponse SummaryReply(LlmCompletionRequest r) =>
+    private LlmCompletionResponse SummaryReply() =>
         new() { Content = $"SUMMARY-{_requests.Count(IsSummary)}: checks so far were fine.", FinishReason = LlmFinishReason.Stop, InputTokens = 200, OutputTokens = 30 };
 
     [Fact]
@@ -54,7 +53,7 @@ public sealed class TokenEfficiencyTests : IAsyncLifetime
         ScriptedLlmProviderRegistry.Current = r =>
         {
             _requests.Enqueue(r);
-            if (IsSummary(r)) return SummaryReply(r);
+            if (IsSummary(r)) return SummaryReply();
             var steps = r.Messages.Count(m => m.Role == ChatRole.Tool);
             var summarized = r.Messages[0].Content!.Contains("SUMMARY-");
             return summarized && steps >= 1

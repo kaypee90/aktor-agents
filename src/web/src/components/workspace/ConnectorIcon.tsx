@@ -114,9 +114,6 @@ const MARKS: Record<string, ReactNode> = {
 
 const FALLBACK_COLORS = ["#0EA5E9", "#8B5CF6", "#14B8A6", "#F43F5E", "#F59E0B", "#64748B"];
 
-/** Whether a plugin has its own mark (others get a lettered tile). */
-export const hasConnectorMark = (pluginId: string) => pluginId in MARKS;
-
 export function ConnectorIcon({ pluginId, name, className }: { pluginId: string; name?: string; className?: string }) {
   const mark = MARKS[pluginId];
   if (mark) {

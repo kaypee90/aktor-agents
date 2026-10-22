@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // aktor: build, deploy and test solutions on an Aktor server (docs/solutions.md).
 //
-//   aktor init my-app                 scaffold a solution package
+//   aktor init my-app                 scaffold a solution package (--template helpdesk: start from a template)
+//   aktor templates                   the templates this server offers
 //   aktor validate [dir]              check it against the server (nothing is installed)
 //   aktor deploy [dir]                install it, or upgrade the installed version
 //   aktor dev [dir]                   redeploy on every change (forces same-version upgrades)
@@ -9,6 +10,7 @@
 //   aktor status [name]               installed solutions, or one in detail
 //   aktor records <name> <Entity>     list records (--where k=v, --filter "ends_on<=today+30d")
 //   aktor token <name> <user-id>      an end-user token (for the embed widget / apps API)
+//   aktor app-keys <name>             its app keys (--create label, --revoke key-id): what your backend uses
 //   aktor uninstall <name> [--purge]  archive its workspaces (and delete its records with --purge)
 //   aktor publish [dir] [--public]    publish this version to the registry
 //   aktor search [query]              packages in the registry
@@ -390,10 +392,65 @@ async function usage(name) {
   for (const l of data.lines) console.log(`  ${l.key.padEnd(28)} $${l.cost_usd.toFixed(4).padStart(10)}  ${dim(`${l.tokens} tokens · ${l.conversations} conv · ${l.runs} runs`)}`);
 }
 
-function init(dir) {
-  if (!dir) fail("Usage: aktor init <directory> [--name my-app]");
+async function templates() {
+  const { ok, data } = await api("GET", "/api/v1/solutions/templates");
+  if (!ok) fail(problems(data));
+  if (json) return console.log(JSON.stringify(data, null, 2));
+  for (const t of data) {
+    console.log(`${bold(t.name)} ${dim(`· ${t.title} · ${t.workflows} workflow(s), ${t.entities} entities${t.assistant ? ", an assistant" : ""}`)}`);
+    if (t.description) console.log(dim("  " + t.description.slice(0, 160)));
+  }
+  console.log(dim("\nStart from one with: aktor init my-app --template <name>"));
+}
+
+/** A template from the server, written out as a package folder (renamed with --name). */
+async function initFromTemplate(root, template) {
+  const { ok, data } = await api("GET", `/api/v1/solutions/templates/${encodeURIComponent(template)}`);
+  if (!ok) fail(`${problems(data)}\nSee the templates with: aktor templates`);
+  let manifest = data.manifest;
+  if (args.one("name")) manifest = manifest.replace(/^name:.*$/m, `name: ${String(args.one("name")).toLowerCase().replace(/[^a-z0-9-]+/g, "-")}`);
+  const files = { "aktor.yaml": manifest, ...data.files };
+  for (const [path, content] of Object.entries(files)) {
+    const full = join(root, path);
+    mkdirSync(join(full, ".."), { recursive: true });
+    writeFileSync(full, content);
+  }
+  console.log(`${green("✓")} created ${bold(template)} in ${root}`);
+  for (const path of Object.keys(files)) console.log(dim("  " + path));
+  console.log(`\nNext: ${cyan(`cd ${relative(process.cwd(), root) || "."} && aktor deploy`)}`);
+}
+
+async function appKeys(name) {
+  if (!name) fail("Usage: aktor app-keys <solution> [--create 'Production backend'] [--revoke <key-id>]");
+  const base = `/api/v1/solutions/${encodeURIComponent(name)}/app-keys`;
+  if (args.has("create")) {
+    const label = args.one("create") === true ? "Backend" : String(args.one("create"));
+    const { ok, data } = await api("POST", base, { name: label });
+    if (!ok) fail(problems(data));
+    if (json) return console.log(JSON.stringify(data, null, 2));
+    console.log(`${green("✓")} app key ${bold(data.name)} for ${data.install_id}:\n\n  ${data.key}\n`);
+    console.log(yellow("! ") + "Shown once. Store it as a server secret (AKTOR_APP_KEY); never put it in front-end code.");
+    return;
+  }
+  if (args.has("revoke")) {
+    const { ok, data } = await api("DELETE", `${base}/${encodeURIComponent(String(args.one("revoke")))}`);
+    if (!ok) fail(problems(data));
+    return console.log(`${green("✓")} revoked ${args.one("revoke")}`);
+  }
+  const { ok, data } = await api("GET", base);
+  if (!ok) fail(problems(data));
+  if (json) return console.log(JSON.stringify(data, null, 2));
+  if (!data.length) return console.log(dim(`No app keys. Create one with: aktor app-keys ${name} --create 'Production backend'`));
+  for (const k of data) {
+    console.log(`${k.revoked_at ? dim(k.key_id) : bold(k.key_id)} ${k.name} ${dim(`${k.prefix} · ${k.last_used_at ? `used ${k.last_used_at.slice(0, 16)}` : "never used"}`)}${k.revoked_at ? red(" revoked") : ""}`);
+  }
+}
+
+async function init(dir) {
+  if (!dir) fail("Usage: aktor init <directory> [--name my-app] [--template helpdesk]");
   const root = resolve(dir);
   if (existsSync(join(root, "aktor.yaml"))) fail(`${root} already has an aktor.yaml.`);
+  if (args.one("template")) return initFromTemplate(root, String(args.one("template")));
   const name = String(args.one("name") ?? basename(root)).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "my-app";
   const title = name.split("-").map((w) => w[0]?.toUpperCase() + w.slice(1)).join(" ");
   const files = {
@@ -530,6 +587,8 @@ function help() {
   console.log(`${bold("aktor")} — build, deploy and test solutions on Aktor
 
   aktor init <dir> [--name n]          scaffold a solution package
+        --template <name>              start from one of the server's templates
+  aktor templates                      the templates this server offers
   aktor validate [dir]                 check it against the server
   aktor deploy [dir]                   install, or upgrade the installed version
         --input key=value              an input value (repeatable)
@@ -541,6 +600,7 @@ function help() {
   aktor status [name]                  installed solutions, or one in detail
   aktor records <name> <Entity>        --where k=v  --filter 'ends_on<=today+30d'  --limit n
   aktor token <name> <user-id>         an end-user token (--name, --ttl minutes)
+  aktor app-keys <name>                its app keys, for your backend (--create label, --revoke key-id)
   aktor uninstall <name> [--purge]     archive its workspaces (--purge deletes its records)
   aktor publish [dir] [--public]       publish this version to the registry
   aktor search [query]                 packages in the registry
@@ -561,6 +621,8 @@ const commands = {
   status: () => status(args.positional[0]),
   records: () => records(args.positional[0], args.positional[1]),
   token: () => token(args.positional[0], args.positional[1]),
+  "app-keys": () => appKeys(args.positional[0]),
+  templates,
   uninstall: () => uninstall(args.positional[0]),
   publish: () => publish(args.positional[0]),
   search: () => search(args.positional[0]),

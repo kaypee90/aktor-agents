@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using AgentRuntime.Api.Platform;
 using AgentRuntime.Configuration;
-using AgentRuntime.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace AgentRuntime.Api.Interop;

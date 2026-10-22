@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using AgentRuntime.Infrastructure.Solutions;
 using AgentRuntime.Solutions;
 using Microsoft.Extensions.Logging.Abstractions;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

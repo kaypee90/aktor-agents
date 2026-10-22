@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Aktor",
-  description: "Governed, autonomous agent teams",
+  description: "The governed platform for agentic products",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

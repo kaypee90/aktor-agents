@@ -4,7 +4,6 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Infrastructure.Llm;
 using AgentRuntime.LLM;
 using Microsoft.Extensions.Options;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

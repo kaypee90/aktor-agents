@@ -2,7 +2,6 @@ using AgentRuntime.Configuration;
 using AgentRuntime.Contracts;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Orleans.Runtime;
 
 namespace AgentRuntime.Agents;
 

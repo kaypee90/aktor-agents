@@ -13,7 +13,6 @@ using AgentRuntime.Tools;
 using AgentRuntime.Workspaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Orleans.Runtime;
 
 namespace AgentRuntime.Agents;
 
@@ -1156,19 +1155,6 @@ public sealed class AgentGrain(
         }
     }
 
-    private static string? ExtractSummary(string argumentsJson)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(argumentsJson);
-            return doc.RootElement.TryGetProperty("summary", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
     /// <summary>Applied here, not via a grain call back to ourselves: this agent IS the parent, and
     /// a self-call would queue behind this very turn and deadlock. Saved in the same write as the
     /// spawn's tool result, so a replayed spawn (same child id) is never counted twice.</summary>
@@ -1480,22 +1466,6 @@ public sealed class AgentGrain(
         await FlushOutboxAsync();
         await ReleaseTurnReminderAsync();
         await ReleaseDeadlineReminderAsync();
-    }
-
-    private async Task TimeOutAsync()
-    {
-        var s = S;
-        s.FailureReason ??= "Time budget exceeded.";
-        s.TurnInProgress = false;
-        if (s.CanTransitionTo(AgentStatus.TimedOut)) s.TransitionTo(AgentStatus.TimedOut);
-        else s.ForceStatus(AgentStatus.TimedOut);
-        QueueParentNotification(MessageType.FailureNotification, "timedout", $"timed out ({s.FailureReason})");
-
-        await state.WriteStateAsync();
-        await UpdateRegistryStatusAsync(AgentStatus.TimedOut);
-        await PublishAsync(RuntimeEventType.AgentFailed, $"Agent '{s.Name}' timed out.");
-        await FlushOutboxAsync();
-        await ReleaseTurnReminderAsync();
     }
 
     /// <summary>

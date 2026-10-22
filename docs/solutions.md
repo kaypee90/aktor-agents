@@ -35,11 +35,38 @@ flowchart LR
     U((Your customer)) -- "embed.js / apps API" --> A
 ```
 
+**New here? Follow [the step-by-step guide](solutions-guide.md)**: from a template to an assistant and
+workflows running in your own app, with code for Next.js, Express, Python and plain HTTP.
+
 What changed to build all this, release by release, is in [solutions-changelog.md](solutions-changelog.md).
 
 The complete example is [samples/solutions/property-mgmt](../samples/solutions/property-mgmt). It
 triages maintenance requests as they arrive, starts lease renewals with a compiled watch, and gives
 residents an assistant that logs requests and answers lease questions.
+
+## The shortest path
+
+1. **Start.** On **Solutions**, pick a template (property management or helpdesk), or **New
+   solution** and describe yours to **Design with AI**.
+2. **Change it** in the builder's forms. It's checked against the server as you type.
+3. **Deploy.** Then the solution opens on its **Integrate** tab.
+4. **Connect your app.** Create an **app key**, copy the code for your stack (Next.js, Express,
+   Python or plain HTTP), and work through the go-live checklist: allowed sites, a spend cap per
+   customer, evals.
+
+Nothing in that path needs the CLI or YAML, and your backend never holds an organization API key.
+
+### Templates
+
+The packages under [samples/solutions](../samples/solutions) are built into the server as
+**templates**. They appear on the Solutions page and at the top of a new builder draft, and
+`aktor templates` lists them. Opening one starts a draft from a copy: change anything, then deploy.
+`aktor init my-app --template helpdesk` writes one out as a package folder.
+
+```http
+GET /api/v1/solutions/templates            name, title, description, and how many workflows, entities and evals
+GET /api/v1/solutions/templates/{name}     the package: { manifest, files }
+```
 
 ## The builder: no CLI or YAML needed
 
@@ -134,13 +161,14 @@ eval inputs. Each box suggests only what its agents can actually use:
 cd sdk/typescript && npm link        # or: npx aktor …   (Node 18+)
 export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...   # an Admin key: Settings → API keys
 
-aktor init my-app && cd my-app       # scaffold a working package
+aktor init my-app && cd my-app       # scaffold a working package (or --template helpdesk)
 aktor validate                       # check it against the server; nothing is installed
 aktor deploy                         # install it (or upgrade the installed version)
 aktor dev                            # redeploy on every change while you work
 aktor test                           # run its evals for real; exit code 1 if any fail
 aktor records my-app Request         # look at its data
 aktor token my-app customer-42       # a token for one of your end users
+aktor app-keys my-app --create "Production backend"   # the key your backend uses (shown once)
 aktor usage my-app --csv             # what it cost, per end user
 aktor publish --public               # share this version through the registry
 aktor install other-app@1.0.0        # install someone's published package
@@ -434,13 +462,17 @@ An upgrade keeps the same URL. URLs on private networks need
 ## End users
 
 Your customers aren't members of your organization. Your backend signs them in however it already
-does, then asks Aktor for a short-lived **end-user token**:
+does, then asks Aktor for a short-lived **end-user token** with the solution's
+[app key](#app-keys):
 
 ```http
-POST /api/v1/solutions/{id|name}/end-user-tokens        (Admin API key)
+POST /api/v1/apps/{installId}/end-user-tokens           Authorization: Bearer aks_…  (the app key)
 { "user_id": "resident-4b", "name": "Sam", "ttl_minutes": 60 }
 → { "token": "aeu_…", "expires_at": "…" }
 ```
+
+An Admin can also issue one with an organization API key or from the dashboard, at
+`POST /api/v1/solutions/{id|name}/end-user-tokens`, for example to try the assistant.
 
 The token names the install and the user, is signed by the server, and expires (7 days at most,
 `Solutions:MaxEndUserTokenLifetime`). It works on the **apps API** only. To everything else it's
@@ -511,7 +543,8 @@ an ordinary task of your organization.
         async></script>
 ```
 
-`data-token-url` points at your backend, which returns `{ "token": "aeu_…" }` for the signed-in user.
+`data-token-url` points at your backend. The widget POSTs to it, and it returns
+`{ "token": "aeu_…" }` for the signed-in user (a `401` makes the widget ask the visitor to sign in).
 The widget calls it again when a token expires. The widget runs in a shadow DOM, so your page's CSS
 can't break it. It follows the visitor's light or dark preference and keeps the current
 conversation across page loads. For more control, call it yourself:
@@ -524,7 +557,13 @@ Use `data-token="aeu_…"` instead of a token URL for demos.
 
 ### The apps API
 
-What the widget uses, for building your own UI (CORS is open to any origin; the token is the credential):
+How an application reaches one installed solution. It takes two credentials and nothing else:
+- an **end-user token** from the widget or your front end;
+- the solution's **app key** from your backend.
+
+CORS is open to any origin, since the credential is the token and there are no cookies.
+
+With an end-user token (what the widget uses, for building your own UI):
 
 ```http
 GET  /api/v1/apps/{installId}                                 the app, the assistant, the user
@@ -535,7 +574,90 @@ POST /api/v1/apps/{installId}/conversations/{id}/messages     { "message": "…"
 GET  /api/v1/apps/{installId}/records/{Entity}                the user's own records (entities with an end_user field)
 ```
 
-The SDKs wrap it: `AktorApp` in [TypeScript](../sdk/typescript) and [Python](../sdk/python).
+With the app key, from your server:
+
+```http
+GET    /api/v1/apps/{installId}                               what the key can use: workflows, entities, assistant
+POST   /api/v1/apps/{installId}/end-user-tokens               { user_id, name?, ttl_minutes? } → { token, expires_at }
+GET    /api/v1/apps/{installId}/records/{Entity}              any record, with the records API's filters (?where.…, ?filter=…)
+GET    /api/v1/apps/{installId}/records/{Entity}/{recordId}
+POST   /api/v1/apps/{installId}/records/{Entity}              (Idempotency-Key makes retries safe)
+PATCH  /api/v1/apps/{installId}/records/{Entity}/{recordId}   (If-Match: "<version>")
+DELETE /api/v1/apps/{installId}/records/{Entity}/{recordId}
+POST   /api/v1/apps/{installId}/runs                          { workflow, input?, data? } → 202 { run_id }
+GET    /api/v1/apps/{installId}/runs/{runId}?wait=30          status, done, summary, each stage's output
+```
+
+The SDKs wrap both: `AktorApp` (end-user token) and `AktorServer` (app key) in
+[TypeScript](../sdk/typescript) and [Python](../sdk/python).
+
+### App keys
+
+An **app key** (`aks_…`) is what your backend holds. It doesn't hold an organization API key. It
+reaches **one installed solution**, through the apps API only, and can do four things there:
+- issue its end-user tokens;
+- read and write its records;
+- start its workflows;
+- follow those runs.
+
+It can't do anything else:
+- **Organization API:** to the organization's API (tasks, workspaces, settings, other solutions,
+  deploys) it's no credential at all, and the request is anonymous.
+- **Web pages:** it's refused when a browser sends it (any request with an `Origin` header), so a
+  key pasted into front-end code fails at once instead of leaking quietly.
+- **Rate limit:** each key can start 60 runs a minute across the cluster.
+
+If a key leaks, the exposure is one app's data, not the organization. **Revoke** it and the next
+request with it is refused.
+
+Admins manage keys on the solution's **Integrate** tab, with `aktor app-keys <name> --create
+"Production backend"`, or with the API:
+
+```http
+GET    /api/v1/solutions/{id|name}/app-keys              (Admin) name, prefix, created, last used; never the key
+POST   /api/v1/solutions/{id|name}/app-keys              (Admin) { name } → { key: "aks_…", key_id }   the key is shown once
+DELETE /api/v1/solutions/{id|name}/app-keys/{keyId}      (Admin) revoke
+```
+
+Only the key's SHA-256 is stored, and it's checked in constant time. Creating and revoking keys is
+in the organization's audit log. A solution can have 20 active keys, so you can rotate: create the
+new key, deploy it, then revoke the old one.
+
+### Running workflows from your app
+
+Any workflow (workspace) of the solution can be run from your backend:
+
+```ts
+import { AktorServer } from "@aktor/sdk";
+const aktor = new AktorServer({ installId: "sol-…", appKey: process.env.AKTOR_APP_KEY!, baseUrl: process.env.AKTOR_URL });
+
+const run = await aktor.run("triage", { subject: "Leak under the sink" });   // waits for the result
+console.log(run.status, run.summary, run.stages.at(-1)?.output);
+```
+
+`input` is text, `data` is JSON, and the stages read it as `input` (`{{ input.subject }}`); send
+either or both. A run started this way:
+- **Is like any other run.** It uses the workflow's budgets, safety policy, approvals and audit,
+  and shows in the workspace as source `app`.
+- **Can be retried safely.** An `Idempotency-Key` header returns the first request's run instead
+  of starting a second. The SDKs always send one, and retry network errors with the same key.
+- **Can be waited on.** `GET …/runs/{runId}?wait=30` holds the request until the run finishes or
+  the time passes (60 seconds at most), so your backend needn't poll fast.
+- **Ends with a result:** `done`, `status` (Completed, Failed, Cancelled, TimedOut), the run's
+  `summary`, and each stage's `summary`, `output` (an action or script stage's JSON) and `error`.
+
+### The Integrate tab
+
+Each installed solution has an **Integrate** tab. A new install opens on it. It has three parts:
+- **A go-live checklist:**
+  - your backend has an app key and has connected (it turns green on the key's first call);
+  - only your sites can embed the assistant;
+  - each customer's spend is capped;
+  - its behaviour is covered by evals.
+- **App keys:** create, see when each was last used, and revoke.
+- **Copy-ready code:** for Next.js, Node/Express, Python and plain HTTP, with the server URL,
+  install id, workflow and entity names filled in. It covers the client, the token endpoint, the
+  embed snippet, running a workflow, and reading and writing records.
 
 ## Usage and billing
 
@@ -581,7 +703,7 @@ aktor yank helpdesk 1.0.1 --reason "broken migration"   # --undo to restore
   the install.
 
 In the dashboard, **Solutions** lists the registry with *Install* (or *Upgrade*) buttons, and an
-installed solution's page has *Publish to registry*.
+installed solution's **Settings** tab has *Publish to the registry*.
 
 | Method | Path | Role |
 |---|---|---|
@@ -650,10 +772,13 @@ behaviour.
 | `DELETE` | `/api/v1/solutions/{id\|name}?purge=true` | Admin: uninstall (workspaces archived; `purge` deletes records) |
 | `POST` | `/api/v1/solutions/{id\|name}/evals` | Member: `{ names? }` → results |
 | `POST` | `/api/v1/solutions/{id\|name}/end-user-tokens` | Admin: `{ user_id, name?, ttl_minutes? }` |
+| `GET` `POST` | `/api/v1/solutions/{id\|name}/app-keys` | Admin: list, or create `{ name }` (the key is returned once) |
+| `DELETE` | `/api/v1/solutions/{id\|name}/app-keys/{keyId}` | Admin: revoke |
+| `GET` | `/api/v1/solutions/templates`, `/templates/{name}` | Viewer: the built-in templates, and one as a package |
 | `GET` | `/api/v1/solutions/{id\|name}/usage` | Viewer: cost by end user, workspace or day (`?format=csv`) |
 | `POST` | `/api/v1/solutions` with `{ "package": "name@version" }` | Admin: install from the registry (also `PUT` to upgrade) |
 | | `/api/v1/solutions/{id\|name}/records/...` | the records API (above) |
-| | `/api/v1/apps/{installId}/...` | the apps API, with an end-user token (above) |
+| | `/api/v1/apps/{installId}/...` | the apps API, with an end-user token or the app key (above) |
 
 `/api/v1/...` is the versioned contract ([api-versioning.md](api-versioning.md)).
 
@@ -670,6 +795,12 @@ behaviour.
 - **Federated sign-in** only accepts asymmetric signatures checked against the provider's published
   keys, for the declared issuer and audience.
 - **Registry packages** are verified against their digest and the registry's signature at every install.
+- **App keys** reach one solution through the apps API and nothing else, are refused from web
+  pages, are stored as hashes, rate-limited, revocable at once, and audited when created or revoked.
+  Your backend never needs an organization API key.
+- **Allowed sites.** With `allowed_origins`, pages on other sites are refused. Validation warns
+  while the list is empty, and when an origin isn't https. The dashboard's own origin is always
+  allowed, for its preview, and still needs an end-user token.
 - **End users** hold signed, expiring tokens that work on the apps API only. Their conversations'
   tools are bound to them, so a prompt can't reach another user's data: the runtime filters it
   before the model sees anything. Rate limits and per-message budgets bound what one user can spend.
@@ -680,7 +811,9 @@ behaviour.
 ## Limits
 
 20 workspaces, 40 entities, 60 fields per entity, 50 inputs and 1,000 seed records per solution; a
-200 KB record; a 5 MB package; 200 records per page. Exact matches are indexed. Comparison filters
+200 KB record; a 5 MB package; 200 records per page. A solution can't be named `templates`, `validate`, `parse` or
+`design`: those are routes of the solutions API. A run's `?wait=` holds the request for up to 60
+seconds, checking about once a second; for many long runs, prefer a webhook to waiting. Exact matches are indexed. Comparison filters
 and sorting on a field run in SQL but aren't indexed per field, so for very large tables, narrow
 with `where` first, or keep the data in your own database and reach it through a connector.
 
@@ -698,6 +831,13 @@ with `where` first, or keep the data in your own database and reach it through a
   - both samples open in it and validate;
   - a new solution deploys from the page;
   - its downloaded `.zip` passes `aktor validate`.
+- `AppIntegrationApiTests` (integration):
+  - an app key reaches its one solution and nothing else: not the organization's API, not another
+    solution, not from a web page, not after it's revoked;
+  - members can't manage keys, and creating and revoking keys is audited;
+  - a backend writes records idempotently and runs a workflow to its result with the key;
+  - allowed origins still let the dashboard preview the assistant;
+  - every template opens as a valid package.
 - `SolutionPlatformApiTests` (integration):
   - publishing, visibility, immutability and name ownership;
   - installing and upgrading by name, yanking, and refusing a tampered package;

@@ -1,7 +1,6 @@
 using AgentRuntime.Agents;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Orleans.Runtime;
 
 namespace AgentRuntime.Tenancy;
 

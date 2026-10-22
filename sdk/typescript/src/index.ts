@@ -680,6 +680,157 @@ export class AktorApp {
   }
 }
 
+export interface AppRun {
+  run_id: string;
+  workflow: string;
+  number: number;
+  status: "Queued" | "Running" | "Completed" | "Failed" | "Cancelled" | "TimedOut";
+  done: boolean;
+  paused: boolean;
+  summary: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  stages: { id: string; name: string; kind: string; status: string; summary: string | null; output: unknown; error: string | null; artifacts: string[] }[];
+}
+
+export interface RecordQueryOptions {
+  /** Exact matches, e.g. { status: "open" }. */
+  where?: Record<string, string | number | boolean>;
+  /** Comparisons, e.g. ["ends_on<=today+30d", "rent>=1000", "name~smith"]. */
+  filter?: string[];
+  orderBy?: string;
+  desc?: boolean;
+  limit?: number;
+  offset?: number;
+  /** Only this end user's records. */
+  endUser?: string;
+}
+
+/**
+ * For your backend: one installed solution, reached with its app key ("aks_…", from the solution's
+ * Integrate tab). It issues tokens for your signed-in users (what the embed widget's
+ * data-token-url returns), reads and writes the solution's records, and runs its workflows. An app
+ * key reaches nothing else, and is refused from web pages: keep it in a server-side secret.
+ */
+export class AktorServer {
+  readonly baseUrl: string;
+  readonly installId: string;
+  private readonly appKey: string;
+  private readonly fetchImpl: typeof fetch;
+  private readonly maxRetries: number;
+
+  constructor(options: { installId: string; appKey: string; baseUrl?: string; fetch?: typeof fetch; maxRetries?: number }) {
+    if (typeof window !== "undefined" && typeof document !== "undefined") {
+      throw new AktorError("AktorServer holds an app key and must run on your server, never in a browser. Use AktorApp with an end-user token there.", 0);
+    }
+    if (!options.appKey?.startsWith("aks_")) throw new AktorError("appKey should be a solution app key (aks_…), from the solution's Integrate tab.", 0);
+    this.installId = options.installId;
+    this.appKey = options.appKey;
+    this.baseUrl = (options.baseUrl ?? "http://localhost:5080").replace(/\/+$/, "");
+    this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.maxRetries = options.maxRetries ?? 2;
+  }
+
+  /** Retries network errors, 5xx and 429 for reads and for writes that carry an idempotency key. */
+  private async call<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+    const retryable = method === "GET" || "Idempotency-Key" in headers;
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/api/v1/apps/${enc(this.installId)}${path}`, {
+          method,
+          headers: { Accept: "application/json", Authorization: `Bearer ${this.appKey}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+      } catch (err) {
+        if (retryable && attempt < this.maxRetries) {
+          await sleep(backoff(attempt));
+          continue;
+        }
+        throw err;
+      }
+      if (retryable && attempt < this.maxRetries && (response.status >= 500 || response.status === 429)) {
+        await sleep(retryAfter(response) ?? backoff(attempt));
+        continue;
+      }
+      const text = await response.text();
+      const parsed = text ? safeJson(text) : undefined;
+      if (!response.ok) throw new AktorError((parsed as { error?: string } | undefined)?.error ?? `HTTP ${response.status}`, response.status, parsed ?? text);
+      return parsed as T;
+    }
+  }
+
+  /** What the key can use: the solution's workflows, entities and assistant. A quick integration check. */
+  describe() {
+    return this.call<{ app: string; install_id: string; version: string; key: { id: string; name: string }; workflows: string[]; entities: string[]; assistant: { name: string; allowed_origins: string[] } | null }>("GET", "");
+  }
+
+  /** A short-lived token for one of your signed-in users. Return `{ token }` from your token endpoint. */
+  issueToken(userId: string, options: { name?: string; ttlMinutes?: number } = {}) {
+    return this.call<{ token: string; install_id: string; user_id: string; expires_at: string }>("POST", "/end-user-tokens", {
+      user_id: userId,
+      name: options.name,
+      ttl_minutes: options.ttlMinutes,
+    });
+  }
+
+  records = {
+    list: (entity: string, options: RecordQueryOptions = {}) => {
+      const q = new URLSearchParams();
+      for (const [k, v] of Object.entries(options.where ?? {})) q.set(`where.${k}`, String(v));
+      for (const f of options.filter ?? []) q.append("filter", f);
+      if (options.orderBy) q.set("order_by", options.orderBy);
+      if (options.desc !== undefined) q.set("desc", String(options.desc));
+      if (options.limit !== undefined) q.set("limit", String(options.limit));
+      if (options.offset !== undefined) q.set("offset", String(options.offset));
+      if (options.endUser) q.set("end_user", options.endUser);
+      return this.call<RecordList>("GET", `/records/${enc(entity)}${q.toString() ? "?" + q : ""}`);
+    },
+    get: (entity: string, id: string) => this.call<SolutionRecord>("GET", `/records/${enc(entity)}/${enc(id)}`),
+    /** Creates a record. Pass an idempotencyKey to make retries safe (the same key returns the same record). */
+    create: (entity: string, fields: Record<string, unknown>, options: { idempotencyKey?: string } = {}) =>
+      this.call<SolutionRecord>("POST", `/records/${enc(entity)}`, fields, options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
+    /** Changes fields (null clears one). ifMatch (a version) refuses the change if the record changed since. */
+    update: (entity: string, id: string, fields: Record<string, unknown>, options: { ifMatch?: number } = {}) =>
+      this.call<SolutionRecord>("PATCH", `/records/${enc(entity)}/${enc(id)}`, fields, options.ifMatch !== undefined ? { "If-Match": String(options.ifMatch) } : {}),
+    delete: (entity: string, id: string) => this.call<void>("DELETE", `/records/${enc(entity)}/${enc(id)}`),
+  };
+
+  runs = {
+    /** Starts a workflow run. Retries are safe: they reuse one idempotency key. */
+    start: async (workflow: string, input: string | Record<string, unknown>, options: { data?: unknown; idempotencyKey?: string } = {}) => {
+      if (typeof input !== "string" && options.data !== undefined) {
+        throw new AktorError("Pass the run's data either as the input object or as options.data with a text input, not both.", 0);
+      }
+      return this.call<{ run_id: string; workflow: string; number: number; status: string }>(
+        "POST",
+        "/runs",
+        typeof input === "string" ? { workflow, input, data: options.data } : { workflow, data: input },
+        { "Idempotency-Key": options.idempotencyKey ?? randomId() },
+      );
+    },
+    /** A run; waitSeconds (up to 60) holds the request until it finishes. */
+    get: (runId: string, options: { waitSeconds?: number } = {}) =>
+      this.call<AppRun>("GET", `/runs/${enc(runId)}${options.waitSeconds ? `?wait=${options.waitSeconds}` : ""}`),
+  };
+
+  /**
+   * Runs a workflow and waits for its result. `input` is text, or an object the workflow's stages
+   * read as `input` (e.g. `{{ input.subject }}`). Throws if it doesn't finish within timeoutMs.
+   */
+  async run(workflow: string, input: string | Record<string, unknown>, options: { data?: unknown; idempotencyKey?: string; timeoutMs?: number } = {}): Promise<AppRun> {
+    const { run_id } = await this.runs.start(workflow, input, options);
+    const deadline = Date.now() + (options.timeoutMs ?? 300_000);
+    for (;;) {
+      const left = Math.ceil((deadline - Date.now()) / 1000);
+      const run = await this.runs.get(run_id, { waitSeconds: Math.max(1, Math.min(30, left)) });
+      if (run.done) return run;
+      if (Date.now() >= deadline) throw new AktorError(`Run ${run_id} didn't finish in time (it's ${run.status}).`, 408, run);
+    }
+  }
+}
+
 async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();

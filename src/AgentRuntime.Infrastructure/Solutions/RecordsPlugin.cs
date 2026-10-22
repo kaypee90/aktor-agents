@@ -72,7 +72,7 @@ public sealed class RecordsPlugin(SolutionTokens tokens, ISolutionCatalog catalo
                 Name = $"list_{slug}",
                 Description = $"Find {about} records.{ownOnly} 'where' matches fields exactly; 'filters' compare (<, <=, >, >=, ==, !=, contains, exists), " +
                               $"and dates can be compared with today, today+30d or today-7d. Fields: {fieldNames}.",
-                JsonSchema = ListSchema(def).ToJsonString(),
+                JsonSchema = ListSchema().ToJsonString(),
                 SideEffects = ToolSideEffects.ReadOnly
             });
             tools.Add(new ToolDefinition
@@ -126,7 +126,7 @@ public sealed class RecordsPlugin(SolutionTokens tokens, ISolutionCatalog catalo
         return tools;
     }
 
-    private static JsonObject ListSchema(EntityDefinition def) => new()
+    private static JsonObject ListSchema() => new()
     {
         ["type"] = "object",
         ["properties"] = new JsonObject

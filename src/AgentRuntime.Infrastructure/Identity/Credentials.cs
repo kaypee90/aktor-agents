@@ -73,23 +73,30 @@ public static class ApiKeyFormat
 {
     public const string Prefix = "ak_";
 
-    public static (string KeyId, string FullKey) New()
+    public static (string KeyId, string FullKey) New() => New(Prefix);
+
+    public static bool TryParse(string? value, out string keyId) => TryParse(Prefix, value, out keyId);
+
+    /// <summary>What lists show: enough to recognise a key, never enough to use it.</summary>
+    public static string Display(string fullKey) => Display(Prefix, fullKey);
+
+    /// <summary>The <c>{prefix}{keyId}_{secret}</c> format, shared with other key kinds (solution app keys).</summary>
+    internal static (string KeyId, string FullKey) New(string prefix)
     {
         var keyId = Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
-        return (keyId, $"{Prefix}{keyId}_{SecretTokens.New()}");
+        return (keyId, $"{prefix}{keyId}_{SecretTokens.New()}");
     }
 
-    public static bool TryParse(string? value, out string keyId)
+    internal static bool TryParse(string prefix, string? value, out string keyId)
     {
         keyId = string.Empty;
-        if (value is null || !value.StartsWith(Prefix, StringComparison.Ordinal)) return false;
-        var rest = value[Prefix.Length..];
+        if (value is null || !value.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var rest = value[prefix.Length..];
         var sep = rest.IndexOf('_');
         if (sep != 12 || rest.Length < sep + 20) return false;
         keyId = rest[..sep];
         return keyId.All(char.IsAsciiHexDigitLower);
     }
 
-    /// <summary>What lists show: enough to recognise a key, never enough to use it.</summary>
-    public static string Display(string fullKey) => fullKey[..Math.Min(fullKey.Length, Prefix.Length + 12 + 5)] + "…";
+    internal static string Display(string prefix, string fullKey) => fullKey[..Math.Min(fullKey.Length, prefix.Length + 12 + 5)] + "…";
 }

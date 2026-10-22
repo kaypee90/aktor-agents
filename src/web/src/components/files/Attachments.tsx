@@ -56,21 +56,6 @@ export function AttachButton({ onFiles, className }: { onFiles: (files: File[]) 
   );
 }
 
-/** A labelled button that opens the file picker: the whole button is clickable, not just its icon. */
-export function ChooseFilesButton({ onFiles, children, accept, disabled, className }: {
-  onFiles: (files: File[]) => void; children: React.ReactNode; accept?: string; disabled?: boolean; className?: string;
-}) {
-  return (
-    <label className={cx("inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 shadow-sm transition dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
-      disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800", className)}>
-      <Icons.Paperclip className="h-4 w-4 text-zinc-500" />
-      {children}
-      <input type="file" multiple accept={accept} disabled={disabled} className="sr-only"
-        onChange={(e) => { onFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-    </label>
-  );
-}
-
 /** A dashed area that takes files both ways: dropped on it, or picked after a click anywhere on it. */
 export function FilePickArea({ onFiles, title, hint, accept, disabled, label = "Drop files to add them" }: {
   onFiles: (files: File[]) => void; title: React.ReactNode; hint?: React.ReactNode; accept?: string; disabled?: boolean; label?: string;

@@ -13,12 +13,15 @@ import {
   bundleFromFolder,
   getRegistryPackage,
   getSolutionPackage,
+  getSolutionTemplate,
   listGlobalConnectors,
+  listSolutionTemplates,
   listPlugins,
   listSolutions,
   parseSolution,
   validateSolution,
   type GlobalConnector,
+  type SolutionTemplate,
   type SolutionBundle,
   type SolutionSummary,
   type SolutionValidation,
@@ -165,7 +168,8 @@ function Builder() {
   const role = (me?.role ?? "Viewer") as Role;
   const from = params.get("from");
   const packageRef = params.get("package");
-  const draftKey = `aktor:solution-builder:${from ?? packageRef ?? "new"}`;
+  const template = params.get("template");
+  const draftKey = `aktor:solution-builder:${from ?? packageRef ?? (template ? `template:${template}` : "new")}`;
 
   const [manifest, setManifest] = useState<Obj | null>(null);
   const [skills, setSkills] = useState<BuilderSkill[]>([]);
@@ -178,6 +182,7 @@ function Builder() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [globals, setGlobals] = useState<GlobalConnector[]>([]);
   const [deploying, setDeploying] = useState<SolutionBundle | null>(null);
+  const [templates, setTemplates] = useState<SolutionTemplate[]>([]);
   const folderInput = useRef<HTMLInputElement>(null);
   const orgSkills = useSkillMentionables();
   const orgKnowledge = useKnowledgeMentionables();
@@ -219,6 +224,8 @@ function Builder() {
       } else if (packageRef) {
         const [name, version] = packageRef.split("@");
         await open((await getRegistryPackage(name, version ?? "latest")).bundle, packageRef);
+      } else if (template) {
+        await open(await getSolutionTemplate(template), "the template");
       } else {
         setManifest(structuredClone(STARTER));
         setSkills([{ name: "handling-requests", description: "How to prioritise a customer request.", instructions: "- urgent: they can't use the service at all.\n- normal: something doesn't work, but there's a way around it.\n- low: a question or a suggestion.", workspace: null }]);
@@ -228,6 +235,7 @@ function Builder() {
     listSolutions().then(setInstalls).catch(() => {});
     listPlugins().then(setPlugins).catch(() => {});
     listGlobalConnectors().then(setGlobals).catch(() => {});
+    if (!from && !packageRef && !template) listSolutionTemplates().then(setTemplates).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
@@ -318,6 +326,25 @@ function Builder() {
         </div>
       </PageHeader>
 
+      {templates.length > 0 && (
+        <div className="mx-auto max-w-7xl px-6 pt-6">
+          <Card>
+            <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+              <div className="mr-auto min-w-0">
+                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Start faster</div>
+                <div className="text-xs text-zinc-500">Open a working solution and change it, or describe yours to <b>Design with AI</b> (bottom right). Your current draft is kept.</div>
+              </div>
+              {templates.map((t) => (
+                <Link key={t.name} href={`/solutions/build?template=${encodeURIComponent(t.name)}`} title={t.description ?? undefined}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-700 hover:border-brand-300 hover:text-brand-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-brand-700 dark:hover:text-brand-300">
+                  <Icons.Solutions className="h-3.5 w-3.5" /> {t.title}
+                </Link>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
       <div className="mx-auto grid max-w-7xl gap-6 px-6 pb-24 pt-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
         <nav className="space-y-1 lg:sticky lg:top-4 lg:self-start" aria-label="Builder sections">
           {SECTIONS.map((s) => {
@@ -387,7 +414,8 @@ function Builder() {
           onDone={(installId) => {
             setDeploying(null);
             try { localStorage.removeItem(draftKey); } catch { /* ignore */ }
-            router.push(`/solutions?id=${encodeURIComponent(installId)}`);
+            // A first install goes straight to connecting it to an app.
+            router.push(`/solutions?id=${encodeURIComponent(installId)}${installed ? "" : "&tab=integrate"}`);
           }}
         />
       )}
@@ -1040,7 +1068,7 @@ function Assistant({ manifest, set, entities, mentionsFor }: { manifest: Obj; se
                   <NumberInput value={num(a.monthly_cost_limit_usd_per_user)} onChange={(v) => set(["assistant", "monthly_cost_limit_usd_per_user"], v)} />
                 </Field>
                 <Field label="Messages per minute per customer"><NumberInput value={num(a.max_messages_per_minute)} placeholder="10" onChange={(v) => set(["assistant", "max_messages_per_minute"], v)} /></Field>
-                <Field label="Allowed sites" hint="Comma-separated origins that may embed it, e.g. https://app.example.com. Empty: any.">
+                <Field label="Allowed sites" hint="Comma-separated origins that may embed it, e.g. https://app.example.com. Empty means any site: set this before you go live.">
                   <TextInput value={strs(a.allowed_origins).join(", ")} onChange={(v) => set(["assistant", "allowed_origins"], v.split(",").map((x) => x.trim()).filter(Boolean))} />
                 </Field>
                 {connectors.length > 0 && (

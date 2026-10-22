@@ -37,6 +37,9 @@ product? If it's the latter, move P9 (flagship use case) ahead of P2.
 
 Change log:
 
+- 2026-10-22: **Easy, safe integration.** Templates to start from, app keys so a backend never holds an
+  organization key, workflow runs and records from your app (`AktorServer` in both SDKs), and an
+  Integrate tab with a go-live checklist and copy-ready code ([solutions.md](solutions.md#app-keys)).
 - 2026-10-22: **Focus on solutions.** Studies (research with your own data, simulated experiments,
   idea evaluation) and the world simulation moved to their own product on the `product/studies`
   branch. `main` is the platform for building solutions on workflows and tasks.

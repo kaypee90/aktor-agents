@@ -2,7 +2,6 @@ using System.IO.Compression;
 using AgentRuntime.Api.Platform;
 using AgentRuntime.Infrastructure.Persistence;
 using AgentRuntime.Infrastructure.Tools;
-using Xunit;
 
 namespace AgentRuntime.IntegrationTests;
 

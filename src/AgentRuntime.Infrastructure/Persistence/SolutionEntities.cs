@@ -82,6 +82,26 @@ public sealed class SolutionConversationRecord
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
+/// <summary>
+/// A server-side key for one installed solution (docs/solutions.md#app-keys): the builder's backend
+/// uses it to issue end-user tokens, read and write the solution's records and start its workflows,
+/// and for nothing else. Only the SHA-256 of the key is stored.
+/// </summary>
+public sealed class SolutionAppKeyRecord
+{
+    public required string KeyId { get; set; }
+    public string TenantId { get; set; } = "default";
+    public required string InstallId { get; set; }
+    public required string Name { get; set; }
+    /// <summary>The first characters of the key, for recognising it in lists.</summary>
+    public required string Prefix { get; set; }
+    public required string SecretHash { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
+}
+
 /// <summary>A published version of a solution package in the registry (docs/solutions.md#the-registry).</summary>
 public sealed class SolutionPackageRecord
 {

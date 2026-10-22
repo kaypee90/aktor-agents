@@ -6,7 +6,6 @@ using System.Text.Json.Nodes;
 using AgentRuntime.Infrastructure.Plugins;
 using AgentRuntime.Plugins;
 using AgentRuntime.Tools;
-using Xunit;
 
 namespace AgentRuntime.Tests;
 

@@ -964,7 +964,16 @@ public sealed class SolutionService(
                 ["fields"] = JsonSerializer.SerializeToNode(e.Value.Fields, SolutionManifestReader.Json)
             })]),
             ["connectors"] = JsonSerializer.SerializeToNode(m.Connectors.Select(c => new { c.Name, c.Plugin, c.Required, c.Description, c.Global }), SolutionManifestReader.Json),
-            ["assistant"] = m.Assistant is { } a ? new JsonObject { ["name"] = a.Name, ["greeting"] = a.Greeting, ["data"] = JsonSerializer.SerializeToNode(a.Data) } : null,
+            ["assistant"] = m.Assistant is { } a ? new JsonObject
+            {
+                ["name"] = a.Name,
+                ["greeting"] = a.Greeting,
+                ["data"] = JsonSerializer.SerializeToNode(a.Data),
+                ["allowed_origins"] = JsonSerializer.SerializeToNode(a.AllowedOrigins),
+                ["monthly_cost_limit_usd_per_user"] = a.MonthlyCostLimitUsdPerUser,
+                ["max_messages_per_minute"] = a.MaxMessagesPerMinute
+            } : null,
+            ["own_sign_in"] = m.EndUsers?.Jwt is not null,
             ["evals"] = new JsonArray([.. m.Evals.Select(e => (JsonNode)new JsonObject { ["name"] = e.Name, ["workspace"] = e.Workspace })]),
             ["webhooks"] = new JsonArray([.. m.Webhooks.Select(h => (JsonNode)new JsonObject { ["url"] = h.Url, ["events"] = JsonSerializer.SerializeToNode(h.Events) })]),
             ["webhook_secret"] = admin && m.Webhooks.Count > 0 ? RecordChangeDispatcher.WebhookSecret(protector, row.InstallId) : null,

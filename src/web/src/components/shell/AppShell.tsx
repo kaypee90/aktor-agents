@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {!collapsed && (
           <div className="min-w-0">
             <div className="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">Aktor</div>
-            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Governed agent teams</div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Governed agent platform</div>
           </div>
         )}
       </div>

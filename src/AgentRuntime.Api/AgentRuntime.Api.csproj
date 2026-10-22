@@ -23,6 +23,8 @@
   <ItemGroup>
     <!-- The end-user widget, served at /embed.js (docs/solutions.md#embed). -->
     <EmbeddedResource Include="Embed\embed.js" LogicalName="embed.js" />
+    <!-- The sample solutions, offered as templates in the builder (docs/solutions.md#templates). -->
+    <EmbeddedResource Include="..\..\samples\solutions\**\*" LogicalName="solution-templates/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

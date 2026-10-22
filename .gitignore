@@ -40,3 +40,7 @@ sdk/typescript/dist/
 
 # Eval runs (aktor-eval --out); the committed baseline lives in evals/baseline.
 /evals/reports/
+
+# Python bytecode
+__pycache__/
+*.pyc

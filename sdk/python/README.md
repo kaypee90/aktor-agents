@@ -49,7 +49,13 @@ Your backend issues a short-lived token for a signed-in user, and their app (or 
 `/embed.js` widget) uses it. The token only reaches that user's conversations and records.
 
 ```python
-token = aktor.solutions.end_user_token("property-mgmt", user_id="resident-4b", name="Sam")["token"]
+# Your backend uses the solution's app key (aks_…, from its Integrate tab), not an organization key.
+import os
+from aktor import AktorServer
+server = AktorServer(install_id, os.environ["AKTOR_APP_KEY"], base_url="http://localhost:5080")
+token = server.issue_token("resident-4b", name="Sam")["token"]
+run = server.run("maintenance-desk", "The kitchen tap is leaking")   # waits for the result
+print(run["status"], run["summary"])
 
 from aktor import AktorApp
 app = AktorApp(install_id, token, base_url="http://localhost:5080")

@@ -32,6 +32,9 @@ refuses a package it can't run.
 | Build a solution without code: forms for every part, checked as you go, deployed from the page | [solutions.md#the-builder-no-cli-or-yaml-needed](solutions.md#the-builder-no-cli-or-yaml-needed) |
 | Package a solution, install, upgrade, uninstall, version history | [solutions.md](solutions.md) |
 | A data model the agents work on: checked writes, per-field indexes, record triggers and webhooks to your backend | [solutions.md#data-entities-and-records](solutions.md#data-entities-and-records) |
+| A step-by-step walkthrough, template to integrated app, with code | [solutions-guide.md](solutions-guide.md) |
+| Start from a working solution: templates in the dashboard and `aktor init --template` | [solutions.md#templates](solutions.md#templates) |
+| Connect your app without an organization key: app keys, workflow runs and records from your backend, the Integrate tab's checklist and code | [solutions.md#app-keys](solutions.md#app-keys) |
 | Put agents in front of your own customers: tokens or your own sign-in (JWT), the embed widget, the apps API, allowed origins and rate limits | [solutions.md#end-users](solutions.md#end-users) |
 | Share and reuse: a registry of signed, versioned packages | [solutions.md#the-registry](solutions.md#the-registry) |
 | Charge your customers: cost per end user, workspace or day, and monthly caps | [solutions.md#usage-and-billing](solutions.md#usage-and-billing) |

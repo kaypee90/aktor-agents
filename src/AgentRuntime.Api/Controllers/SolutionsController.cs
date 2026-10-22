@@ -2,10 +2,8 @@ using System.Text.Json.Nodes;
 using AgentRuntime.Api.Platform;
 using AgentRuntime.Infrastructure.Solutions;
 using AgentRuntime.Solutions;
-using AgentRuntime.Workspaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace AgentRuntime.Api.Controllers;
 
@@ -16,9 +14,18 @@ namespace AgentRuntime.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/solutions")]
-public sealed class SolutionsController(SolutionService solutions, IRecordStore records, ISolutionCatalog catalog, SolutionTokens tokens,
-    IOptions<SolutionOptions> options, SolutionUsageService usage, SolutionRegistryService registry, SolutionDesignService designer) : ControllerBase
+public sealed class SolutionsController(SolutionService solutions, ISolutionCatalog catalog, SolutionAppService apps, SolutionUsageService usage, SolutionRegistryService registry, SolutionDesignService designer,
+    SolutionAppKeyService appKeys, SolutionRecordsApi recordsApi, SolutionTemplates templates) : ControllerBase
 {
+    /// <summary>Ready-made solutions to start from in the builder.</summary>
+    [HttpGet("templates")]
+    public IActionResult Templates() => Ok(templates.List());
+
+    /// <summary>A template's package (manifest and files), to open in the builder as a new draft.</summary>
+    [HttpGet("templates/{name}")]
+    public IActionResult Template(string name) =>
+        templates.Get(name) is { } bundle ? Ok(bundle) : NotFound(new { error = $"No template '{name}'." });
+
     public sealed record DesignBody(JsonObject? Manifest, List<DraftSkill>? Skills, List<DesignTurn>? History, string? Request);
     private IActionResult Problem(SolutionException ex) => StatusCode(ex.Status, new { error = ex.Message, errors = ex.Errors });
 
@@ -238,8 +245,6 @@ public sealed class SolutionsController(SolutionService solutions, IRecordStore 
         }
     }
 
-    public sealed record TokenBody(string UserId, string? Name, int? TtlMinutes);
-
     /// <summary>
     /// A token for one of the solution's end users, for the embed widget or the apps API. Call it
     /// from your backend (with an API key) after your own sign-in: the user id is yours, and
@@ -247,18 +252,68 @@ public sealed class SolutionsController(SolutionService solutions, IRecordStore 
     /// </summary>
     [HttpPost("{id}/end-user-tokens")]
     [Authorize(Policies.Admin)]
-    public async Task<IActionResult> EndUserToken(string id, [FromBody] TokenBody body, CancellationToken ct)
+    public async Task<IActionResult> EndUserToken(string id, [FromBody] SolutionAppService.TokenBody body, CancellationToken ct)
     {
         try
         {
             var row = await solutions.FindAsync(HttpContext.Caller().TenantId, id, ct);
             if (row.Status != nameof(SolutionInstallStatus.Active)) return Conflict(new { error = "The solution isn't active." });
-            var user = body.UserId?.Trim() ?? string.Empty;
-            if (user.Length is 0 or > 200 || user.Contains(':')) return BadRequest(new { error = "user_id is required: your own id for the user, up to 200 characters, without ':'." });
-            var max = options.Value.MaxEndUserTokenLifetime;
-            var ttl = TimeSpan.FromMinutes(Math.Clamp(body.TtlMinutes ?? 60, 5, (int)max.TotalMinutes));
-            var token = tokens.IssueEndUserToken(row.TenantId, row.InstallId, user, string.IsNullOrWhiteSpace(body.Name) ? null : body.Name.Trim()[..Math.Min(100, body.Name.Trim().Length)], ttl);
-            return Ok(new { token, install_id = row.InstallId, user_id = user, expires_at = DateTimeOffset.UtcNow.Add(ttl) });
+            return Ok(apps.IssueToken(row.TenantId, row.InstallId, body));
+        }
+        catch (SolutionException ex)
+        {
+            return Problem(ex);
+        }
+    }
+
+    // ---------------------------------------------------------------- app keys
+
+    public sealed record AppKeyBody(string? Name);
+
+    /// <summary>The solution's app keys (never the keys themselves): what a builder's backend uses on
+    /// the apps API instead of an organization API key.</summary>
+    [HttpGet("{id}/app-keys")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> AppKeys(string id, CancellationToken ct)
+    {
+        try
+        {
+            var row = await solutions.FindAsync(HttpContext.Caller().TenantId, id, ct);
+            return Ok(await appKeys.ListAsync(row.TenantId, row.InstallId, ct));
+        }
+        catch (SolutionException ex)
+        {
+            return Problem(ex);
+        }
+    }
+
+    /// <summary>A new app key for the solution. The key is in this response only.</summary>
+    [HttpPost("{id}/app-keys")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> CreateAppKey(string id, [FromBody] AppKeyBody? body, CancellationToken ct)
+    {
+        try
+        {
+            var row = await solutions.FindAsync(HttpContext.Caller().TenantId, id, ct);
+            if (row.Status != nameof(SolutionInstallStatus.Active)) return Conflict(new { error = "The solution isn't active." });
+            var (key, secret) = await appKeys.CreateAsync(row.TenantId, row.InstallId, body?.Name, HttpContext.Caller().ActorId, ct);
+            return StatusCode(201, new { key = secret, key_id = key.KeyId, name = key.Name, prefix = key.Prefix, install_id = row.InstallId, created_at = key.CreatedAt });
+        }
+        catch (SolutionException ex)
+        {
+            return Problem(ex);
+        }
+    }
+
+    /// <summary>Revokes an app key: requests with it are refused from now on.</summary>
+    [HttpDelete("{id}/app-keys/{keyId}")]
+    [Authorize(Policies.Admin)]
+    public async Task<IActionResult> RevokeAppKey(string id, string keyId, CancellationToken ct)
+    {
+        try
+        {
+            var row = await solutions.FindAsync(HttpContext.Caller().TenantId, id, ct);
+            return await appKeys.RevokeAsync(row.TenantId, row.InstallId, keyId, HttpContext.Caller().ActorId, ct) ? NoContent() : NotFound(new { error = $"No app key '{keyId}'." });
         }
         catch (SolutionException ex)
         {
@@ -268,53 +323,20 @@ public sealed class SolutionsController(SolutionService solutions, IRecordStore 
 
     // ---------------------------------------------------------------- records (the builder's backend)
 
-    private async Task<(InstalledSolution Solution, EntityDefinition Definition)?> EntityAsync(string id, string entity, CancellationToken ct, bool write = false)
+    /// <summary>The solution, by id or name, in the caller's organization (uninstalled ones too, for reading).</summary>
+    private async Task<InstalledSolution> SolutionAsync(string id, CancellationToken ct)
     {
         var row = await solutions.FindAsync(HttpContext.Caller().TenantId, id, ct);
-        var solution = await catalog.GetAsync(row.TenantId, row.InstallId, ct);
-        if (solution is null || !solution.Manifest.Entities.TryGetValue(entity, out var definition)) return null;
-        // An uninstalled solution's records can still be read (and exported), not changed: nothing
-        // would react to the change.
-        if (write && solution.Status != SolutionInstallStatus.Active) throw new SolutionException("The solution isn't installed any more; its records are read-only.", StatusCodes.Status409Conflict);
-        return (solution, definition);
+        return await catalog.GetAsync(row.TenantId, row.InstallId, ct) ?? throw new SolutionException($"No solution '{id}'.", StatusCodes.Status404NotFound);
     }
 
     private string Writer => "api:" + HttpContext.Caller().ActorId;
 
-    /// <summary>
-    /// Lists records. Exact matches as <c>?where.status=open</c>, comparisons as
-    /// <c>?filter=ends_on&lt;=today+30d</c> (repeatable; ops &lt; &lt;= &gt; &gt;= == != ~ for contains),
-    /// plus order_by, desc, limit and offset. <c>?end_user=</c> narrows to one end user's records.
-    /// </summary>
-    [HttpGet("{id}/records/{entity}")]
-    public async Task<IActionResult> ListRecords(string id, string entity, [FromQuery(Name = "order_by")] string? orderBy, [FromQuery] bool? desc,
-        [FromQuery] int? limit, [FromQuery] int? offset, [FromQuery(Name = "end_user")] string? endUser, CancellationToken ct)
+    private async Task<IActionResult> Records(string id, Func<InstalledSolution, Task<IActionResult>> action, CancellationToken ct)
     {
         try
         {
-            if (await EntityAsync(id, entity, ct) is not { } e) return NotFound(new { error = $"No entity '{entity}'." });
-            var where = Request.Query.Where(q => q.Key.StartsWith("where.", StringComparison.Ordinal)).ToDictionary(q => q.Key[6..], q => q.Value.ToString());
-            var filters = new List<WatchCondition>();
-            foreach (var f in Request.Query["filter"])
-            {
-                if (ParseFilter(f) is not { } condition) return BadRequest(new { error = $"Can't read the filter '{f}' (e.g. rent>=1000, ends_on<=today+30d, name~smith)." });
-                filters.Add(condition);
-            }
-
-            var (items, total) = await records.ListAsync(new RecordScope(e.Solution.TenantId, e.Solution.InstallId, endUser), entity, e.Definition, new RecordQuery
-            {
-                Where = where,
-                Filters = filters,
-                OrderBy = orderBy,
-                Descending = desc ?? true,
-                Limit = limit ?? 50,
-                Offset = offset ?? 0
-            }, ct);
-            return Ok(new { entity, total, items = items.Select(r => r.ToJson()) });
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { error = ex.Message });
+            return await action(await SolutionAsync(id, ct));
         }
         catch (SolutionException ex)
         {
@@ -322,95 +344,31 @@ public sealed class SolutionsController(SolutionService solutions, IRecordStore 
         }
     }
 
-    private static WatchCondition? ParseFilter(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        foreach (var op in new[] { "<=", ">=", "!=", "==", "<", ">", "~", "=" })
-        {
-            var at = text.IndexOf(op, StringComparison.Ordinal);
-            if (at <= 0) continue;
-            var field = text[..at].Trim();
-            var value = text[(at + op.Length)..].Trim();
-            return new WatchCondition { Field = field, Op = op switch { "~" => "contains", "=" => "==", _ => op }, Value = value };
-        }
-
-        return text.EndsWith('?') ? new WatchCondition { Field = text.TrimEnd('?').Trim(), Op = "exists" } : null;
-    }
+    /// <summary>Lists records; see <see cref="SolutionRecordsApi.ListAsync"/> for the query.</summary>
+    [HttpGet("{id}/records/{entity}")]
+    public Task<IActionResult> ListRecords(string id, string entity, CancellationToken ct) =>
+        Records(id, s => recordsApi.ListAsync(s, entity, Request.Query, ct), ct);
 
     [HttpGet("{id}/records/{entity}/{recordId}")]
-    public async Task<IActionResult> GetRecord(string id, string entity, string recordId, CancellationToken ct)
-    {
-        try
-        {
-            if (await EntityAsync(id, entity, ct) is not { } e) return NotFound(new { error = $"No entity '{entity}'." });
-            return await records.GetAsync(new RecordScope(e.Solution.TenantId, e.Solution.InstallId), entity, e.Definition, recordId, ct) is { } record
-                ? Ok(record.ToJson())
-                : NotFound(new { error = $"No {entity} '{recordId}'." });
-        }
-        catch (SolutionException ex)
-        {
-            return Problem(ex);
-        }
-    }
-
-    private IActionResult Written(RecordWriteResult result, bool created = false) =>
-        result.Success ? created && !result.Replayed ? StatusCode(201, result.Record!.ToJson()) : Ok(result.Record!.ToJson())
-        : result.NotFound ? NotFound(new { error = result.Errors.FirstOrDefault(), errors = result.Errors })
-        : result.Conflict ? Conflict(new { error = result.Errors.FirstOrDefault(), errors = result.Errors })
-        : UnprocessableEntity(new { error = string.Join(" ", result.Errors), errors = result.Errors });
+    public Task<IActionResult> GetRecord(string id, string entity, string recordId, CancellationToken ct) =>
+        Records(id, s => recordsApi.GetAsync(s, entity, recordId, ct), ct);
 
     /// <summary>Creates a record (the body is its fields). An Idempotency-Key header makes a retried
     /// create return the record the first one made.</summary>
     [HttpPost("{id}/records/{entity}")]
     [Authorize(Policies.Member)]
-    public async Task<IActionResult> CreateRecord(string id, string entity, [FromBody] JsonObject fields, CancellationToken ct)
-    {
-        try
-        {
-            if (await EntityAsync(id, entity, ct, write: true) is not { } e) return NotFound(new { error = $"No entity '{entity}'." });
-            var key = Request.Headers["Idempotency-Key"].ToString();
-            var recordId = string.IsNullOrWhiteSpace(key) ? null : SolutionIds.RecordFor($"{e.Solution.InstallId}:api:{HttpContext.Caller().TenantId}:{key.Trim()}");
-            return Written(await records.CreateAsync(new RecordScope(e.Solution.TenantId, e.Solution.InstallId), e.Solution.Manifest, entity, fields,
-                new RecordWriter(Writer), recordId, ct), created: true);
-        }
-        catch (SolutionException ex)
-        {
-            return Problem(ex);
-        }
-    }
+    public Task<IActionResult> CreateRecord(string id, string entity, [FromBody] JsonObject fields, CancellationToken ct) =>
+        Records(id, s => recordsApi.CreateAsync(s, entity, fields, Request.Headers["Idempotency-Key"].ToString(), $"api:{HttpContext.Caller().TenantId}", Writer, ct), ct);
 
     /// <summary>Changes fields (null clears one). <c>If-Match: &lt;version&gt;</c> refuses the change
     /// if the record changed since that version.</summary>
     [HttpPatch("{id}/records/{entity}/{recordId}")]
     [Authorize(Policies.Member)]
-    public async Task<IActionResult> UpdateRecord(string id, string entity, string recordId, [FromBody] JsonObject fields, CancellationToken ct)
-    {
-        try
-        {
-            if (await EntityAsync(id, entity, ct, write: true) is not { } e) return NotFound(new { error = $"No entity '{entity}'." });
-            int? expected = int.TryParse(Request.Headers.IfMatch.ToString().Trim('"', ' ', 'W', '/'), out var v) ? v : null;
-            return Written(await records.UpdateAsync(new RecordScope(e.Solution.TenantId, e.Solution.InstallId), e.Solution.Manifest, entity, recordId, fields,
-                new RecordWriter(Writer), expected, ct));
-        }
-        catch (SolutionException ex)
-        {
-            return Problem(ex);
-        }
-    }
+    public Task<IActionResult> UpdateRecord(string id, string entity, string recordId, [FromBody] JsonObject fields, CancellationToken ct) =>
+        Records(id, s => recordsApi.UpdateAsync(s, entity, recordId, fields, Request.Headers.IfMatch.ToString(), Writer, ct), ct);
 
     [HttpDelete("{id}/records/{entity}/{recordId}")]
     [Authorize(Policies.Member)]
-    public async Task<IActionResult> DeleteRecord(string id, string entity, string recordId, CancellationToken ct)
-    {
-        try
-        {
-            if (await EntityAsync(id, entity, ct, write: true) is not { } e) return NotFound(new { error = $"No entity '{entity}'." });
-            var result = await records.DeleteAsync(new RecordScope(e.Solution.TenantId, e.Solution.InstallId), e.Solution.Manifest, entity, recordId, new RecordWriter(Writer), ct);
-            return result.Success ? NoContent() : Written(result);
-        }
-        catch (SolutionException ex)
-        {
-            return Problem(ex);
-        }
-    }
+    public Task<IActionResult> DeleteRecord(string id, string entity, string recordId, CancellationToken ct) =>
+        Records(id, s => recordsApi.DeleteAsync(s, entity, recordId, Writer, ct), ct);
 }

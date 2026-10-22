@@ -94,6 +94,22 @@ public sealed class SolutionTokens(SecretProtector protector, TimeProvider clock
     }
 }
 
+/// <summary>App keys look like <c>aks_{keyId}_{secret}</c>, like API keys (<c>ak_…</c>) but for one
+/// solution's apps API only: the id finds the row, the secret is checked against its hash.</summary>
+public static class AppKeyFormat
+{
+    public const string Prefix = "aks_";
+
+    public static (string KeyId, string FullKey) New() => Identity.ApiKeyFormat.New(Prefix);
+
+    public static bool LooksLike(string? value) => value?.StartsWith(Prefix, StringComparison.Ordinal) == true;
+
+    public static bool TryParse(string? value, out string keyId) => Identity.ApiKeyFormat.TryParse(Prefix, value, out keyId);
+
+    /// <summary>What lists show: enough to recognise a key, never enough to use it.</summary>
+    public static string Display(string fullKey) => Identity.ApiKeyFormat.Display(Prefix, fullKey);
+}
+
 /// <summary>Base64url without padding (RFC 4648 §5).</summary>
 internal static class Base64Url
 {

@@ -1,9 +1,13 @@
 # Aktor Agents
 
-**A governed platform for building agentic applications.** A *solution* is a business application
-packaged as plain files: the **workflows** that run it, its own data model, the assistant its
-customers talk to, and its evals. `aktor deploy` installs it, and upgrades apply only what changed.
-See [section 10a](#10a-build-on-aktor-solutions) and [docs/solutions.md](docs/solutions.md).
+**The governed platform for agentic products.** Ship agents to your own customers, with each
+customer isolated, spend capped per customer, approvals on risky actions and every step on the
+record, without building the agent platform yourself.
+
+A *solution* is a business application packaged as plain files: the **workflows** that run it, its
+own data model, the assistant its customers talk to, and its evals. `aktor deploy` installs it, and
+upgrades apply only what changed. See [section 10a](#10a-build-on-aktor-solutions) and
+[docs/solutions.md](docs/solutions.md).
 
 Solutions are built from two building blocks:
 
@@ -13,28 +17,13 @@ Solutions are built from two building blocks:
 - **Tasks**: a goal handed to an agent team, used like a chat, with follow-ups, files in and
   documents out ([docs/tasks.md](docs/tasks.md)).
 
-Underneath both is a production-oriented **autonomous multi-agent runtime based on the Actor
-Model**.
-
 > Research with your own data, simulated experiments, idea evaluation and the world simulation are
 > a separate product, developed on the `product/studies` branch.
 
-You give it a high-level goal — *"Research the feasibility of an AI-powered property management
-SaaS"* or *"Add user authentication to this application"* — and it creates a Root Agent that
-autonomously decides what work is needed, spawns specialized sub-agents (which can themselves
-spawn further sub-agents), lets those agents communicate directly with each other, uses tools,
-and eventually aggregates a final result. You watch the whole thing unfold live in a dashboard.
-You do not orchestrate the agents by hand.
-
-```
-Human Goal → Root Agent → Autonomous Planning → Agent Spawn → Parallel Work
-    → Agent-to-Agent Communication → Recursive Agent Spawn → Tool Usage
-    → Results → Validation → Final Result
-```
-
-The core principle: **the LLM provides reasoning; the actor runtime provides execution,
+The core principle: **the LLM provides reasoning; the runtime provides execution,
 isolation, messaging, lifecycle, resource management, and governance.** The LLM is never trusted
-to enforce a system-level constraint — the runtime always is.
+to enforce a system-level constraint — the runtime always is. Underneath is an autonomous
+multi-agent runtime based on the Actor Model, described from [section 2](#2-actor-model-architecture) on.
 
 **What the runtime guarantees**, each with the code that enforces it and the test that proves it:
 [docs/guarantees.md](docs/guarantees.md).
@@ -65,6 +54,19 @@ docker-compose.yml
 ```
 
 ## 2. Actor Model architecture
+
+You give the runtime a high-level goal — *"Research the feasibility of an AI-powered property
+management SaaS"* or *"Add user authentication to this application"* — and it creates a Root Agent
+that decides what work is needed, spawns specialized sub-agents (which can themselves spawn further
+sub-agents), lets those agents communicate directly with each other, uses tools, and eventually
+aggregates a final result. You can watch it unfold on the live agent graph; you do not orchestrate
+the agents by hand.
+
+```
+Human Goal → Root Agent → Autonomous Planning → Agent Spawn → Parallel Work
+    → Agent-to-Agent Communication → Recursive Agent Spawn → Tool Usage
+    → Results → Validation → Final Result
+```
 
 Every agent is an **Orleans grain** (`AgentGrain`, behind `IAgentGrain`) — an isolated actor with
 its own state, message queue, and single-threaded execution. Agents never touch each other's
@@ -403,12 +405,28 @@ Aktor is meant to be the infrastructure people build their own agentic products 
 **solution** packages one business application as a folder: `aktor.yaml` plus workspaces, skills,
 knowledge and evals ([docs/solutions.md](docs/solutions.md)).
 
+**Start with [the step-by-step guide](docs/solutions-guide.md):** template → deploy → app key →
+the assistant on your site and workflows run from your backend, with code for each step.
+
 ```bash
 export AKTOR_URL=http://localhost:5080 AKTOR_API_KEY=ak_...     # an Admin key
 node sdk/typescript/bin/aktor.mjs deploy samples/solutions/property-mgmt
 node sdk/typescript/bin/aktor.mjs test property-mgmt
 ```
 
+- **Start from a template.** The property-management and helpdesk solutions are built in: open
+  one from the Solutions page, change it and deploy. `aktor init my-app --template helpdesk` does
+  the same from a terminal.
+- **Connect it to your app safely.** After deploying, the solution's **Integrate** tab has three
+  parts:
+  - a go-live checklist;
+  - an **app key** for your backend, which reaches that one solution only and is refused from web
+    pages;
+  - copy-ready code for Next.js, Express, Python or plain HTTP.
+
+  Your backend issues tokens for your users, reads and writes records, and runs workflows with
+  `aktor.run("triage", {...})`. It never holds an organization API key
+  ([docs/solutions.md](docs/solutions.md#app-keys)).
 - **No CLI or YAML needed.** **Solutions → New solution** opens a builder with forms for every
   part, checked as you go, and deploys straight from the page. The YAML and a `.zip` of the package
   can be downloaded for git or the CLI, which stays an alternative. **Design with AI** in the builder
@@ -418,7 +436,7 @@ node sdk/typescript/bin/aktor.mjs test property-mgmt
   Agents get `data__list_/get_/create_/update_/delete_<entity>` tools, and the runtime checks every
   write. A record change can start a run (a `Record` trigger), and your backend reads and writes
   records over `/api/v1/solutions/{id}/records` and gets signed webhooks.
-- **Its own customers.** Your backend issues short-lived end-user tokens. Customers talk to the
+- **Its own customers.** Your backend issues short-lived end-user tokens with the app key. Customers talk to the
   solution's assistant through `/embed.js` or the apps API, and each reaches only their own
   conversations and records. The runtime enforces this in the assistant's tools too, so a prompt
   can't get around it.
@@ -437,11 +455,12 @@ node sdk/typescript/bin/aktor.mjs test property-mgmt
   secret ([docs/plugins.md](docs/plugins.md#remote-plugins)). Both SDKs include the server:
   `aktor.Plugin` in Python, `@aktor/sdk/plugin` in Node.
 
-The dashboard's **Solutions** page shows the registry and each install's workspaces, records (which
-you can edit), assistant (with a live widget to try), usage, evals and history. Where this is going: [docs/platform-builders.md](docs/platform-builders.md).
+The dashboard's **Solutions** page shows the templates, the registry and each install's workspaces,
+the Integrate tab, records (which you can edit), the assistant (with a live widget to try), usage,
+evals and history. Where this is going: [docs/platform-builders.md](docs/platform-builders.md).
 The stable API contract is `/api/v1` ([docs/api-versioning.md](docs/api-versioning.md)).
 Everything that changed for solutions is listed in [docs/solutions-changelog.md](docs/solutions-changelog.md),
-and [docs/manual-testing.md](docs/manual-testing.md#solutions) has a hands-on test plan (SO1–SO14).
+and [docs/manual-testing.md](docs/manual-testing.md#solutions) has a hands-on test plan (SO1–SO15).
 Two complete examples: [samples/solutions/property-mgmt](samples/solutions/property-mgmt) and
 [samples/solutions/helpdesk](samples/solutions/helpdesk).
 

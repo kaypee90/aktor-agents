@@ -1,7 +1,7 @@
 // Unit tests with a fake fetch: auth, retries, errors, idempotent sends, SSE parsing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Aktor, AktorError } from "../dist/index.js";
+import { Aktor, AktorError, AktorServer } from "../dist/index.js";
 
 function fakeFetch(responses) {
   const calls = [];
@@ -68,4 +68,49 @@ test("events.stream parses server-sent events across chunk boundaries", async ()
   const seen = [];
   for await (const evt of aktor.events.stream({ reconnect: false })) seen.push(evt.summary);
   assert.deepEqual(seen, ["one", "two"]);
+});
+
+test("AktorServer sends the app key to the apps API and refuses other keys", async () => {
+  const { impl, calls } = fakeFetch([json(200, { token: "aeu_x", user_id: "u1" })]);
+  const server = new AktorServer({ installId: "sol-1", appKey: "aks_0123456789ab_secretsecretsecret", baseUrl: "http://api.test", fetch: impl });
+  const issued = await server.issueToken("u1", { name: "Ada" });
+  assert.equal(issued.token, "aeu_x");
+  assert.equal(calls[0].url, "http://api.test/api/v1/apps/sol-1/end-user-tokens");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer aks_0123456789ab_secretsecretsecret");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { user_id: "u1", name: "Ada" });
+  assert.throws(() => new AktorServer({ installId: "sol-1", appKey: "ak_org_key" }), AktorError);
+});
+
+test("AktorServer.run starts once with an idempotency key, retries safely, and waits for the result", async () => {
+  const { impl, calls } = fakeFetch([
+    new TypeError("network down"),
+    json(202, { run_id: "run-1", workflow: "triage", number: 1, status: "started" }),
+    json(200, { run_id: "run-1", done: false, status: "Running", stages: [] }),
+    json(200, { run_id: "run-1", done: true, status: "Completed", summary: "ok", stages: [] }),
+  ]);
+  const server = new AktorServer({ installId: "sol-1", appKey: "aks_0123456789ab_secretsecretsecret", fetch: impl });
+  const run = await server.run("triage", { subject: "Leak" });
+  assert.equal(run.status, "Completed");
+  const [first, retry] = calls;
+  assert.equal(first.init.headers["Idempotency-Key"], retry.init.headers["Idempotency-Key"]);
+  assert.deepEqual(JSON.parse(retry.init.body), { workflow: "triage", data: { subject: "Leak" } });
+  assert.match(calls[2].url, /\/runs\/run-1\?wait=\d+$/);
+});
+
+test("AktorServer.records.list encodes where, filters and paging", async () => {
+  const { impl, calls } = fakeFetch([json(200, { entity: "Ticket", total: 0, items: [] })]);
+  const server = new AktorServer({ installId: "sol-1", appKey: "aks_0123456789ab_secretsecretsecret", fetch: impl });
+  await server.records.list("Ticket", { where: { status: "open" }, filter: ["rent>=1000"], orderBy: "created_at", limit: 5 });
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/api/v1/apps/sol-1/records/Ticket");
+  assert.equal(url.searchParams.get("where.status"), "open");
+  assert.equal(url.searchParams.get("filter"), "rent>=1000");
+  assert.equal(url.searchParams.get("limit"), "5");
+});
+
+test("AktorServer refuses data given twice instead of dropping it", async () => {
+  const { impl, calls } = fakeFetch([]);
+  const server = new AktorServer({ installId: "sol-1", appKey: "aks_0123456789ab_secretsecretsecret", fetch: impl });
+  await assert.rejects(server.run("triage", { subject: "x" }, { data: { extra: 1 } }), AktorError);
+  assert.equal(calls.length, 0);
 });

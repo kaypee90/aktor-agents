@@ -2,7 +2,6 @@ using AgentRuntime.Durability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans.Configuration;
-using Orleans.Hosting;
 using Orleans.Serialization;
 using Orleans.Storage;
 
