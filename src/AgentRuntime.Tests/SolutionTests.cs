@@ -107,6 +107,44 @@ public class SolutionTests
     }
 
     [Fact]
+    public void BrokenYaml_IsAnErrorWithItsLine_NotACrash()
+    {
+        var (m, errors) = Read("""
+            name: shop
+            version: 1.0.0
+            inputs:
+              broken: [unclosed
+            """);
+        Assert.Null(m);
+        Assert.StartsWith("aktor.yaml: The YAML couldn't be read: (Line: ", Assert.Single(errors));
+
+        // YamlDotNet gives up on this one with InvalidOperationException, which was a 500.
+        var (_, unclosed) = Read("""
+            name: shop
+            inputs:
+              broken: [unclosed
+              more: value
+            version: 1.0.0
+            """);
+        Assert.Contains("(Line: ", Assert.Single(unclosed));
+    }
+
+    [Fact]
+    public void AssistantOrigins_AcceptAnyOriginForTesting()
+    {
+        var (m, _) = Read("""
+            name: shop
+            version: 1.0.0
+            assistant:
+              instructions: Help.
+              allowed_origins: ["*"]
+            """);
+        var validation = Validate(m);
+        Assert.DoesNotContain(validation.Errors, e => e.Contains("allowed origin"));
+        Assert.Contains(validation.Warnings, w => w.Contains("'*'") && w.Contains("testing"));
+    }
+
+    [Fact]
     public void AssistantOrigins_WarnWhenEmptyOrNotHttps()
     {
         var (open, _) = Read("""

@@ -145,7 +145,7 @@ public static partial class SolutionValidator
         foreach (var w in m.Workspaces)
         {
             var at = $"Workspace '{(string.IsNullOrWhiteSpace(w.Key) ? w.Name : w.Key)}'";
-            if (!KeyPattern().IsMatch(w.Key ?? string.Empty)) errors.Add($"{at}: 'key' is required (lowercase letters, digits and dashes); upgrades match workspaces by it.");
+            if (!KeyPattern().IsMatch(w.Key ?? string.Empty)) errors.Add($"{at}: 'key' is required: lowercase letters, digits and dashes only, no underscores (40 at most); upgrades match workspaces by it.");
             else if (!workspaceKeys.Add(w.Key)) errors.Add($"{at}: the key is used twice.");
             if (string.IsNullOrWhiteSpace(w.Name) || w.Name.Length > 100) errors.Add($"{at}: 'name' is required (100 characters at most).");
             if (string.IsNullOrWhiteSpace(w.Goal)) errors.Add($"{at}: 'goal' is required.");
@@ -224,7 +224,12 @@ public static partial class SolutionValidator
             CheckConnectors("assistant", a.Connectors);
             foreach (var origin in a.AllowedOrigins)
             {
-                if (!Uri.TryCreate(origin, UriKind.Absolute, out var o) || o.Scheme is not ("https" or "http") || o.AbsolutePath != "/" || origin.TrimEnd('/') != o.GetLeftPart(UriPartial.Authority))
+                if (origin == "*")
+                {
+                    warnings.Add("assistant: allowed_origins has '*', so pages on any site can use the assistant with a valid end-user token. Use it for testing only, and list the sites that embed it before you go live.");
+                    if (a.AllowedOrigins.Count > 1) warnings.Add("assistant: allowed_origins has '*' with other sites; '*' already allows every site.");
+                }
+                else if (!Uri.TryCreate(origin, UriKind.Absolute, out var o) || o.Scheme is not ("https" or "http") || o.AbsolutePath != "/" || origin.TrimEnd('/') != o.GetLeftPart(UriPartial.Authority))
                 {
                     errors.Add($"assistant: allowed origin '{origin}' should be just a scheme and host, like https://app.example.com.");
                 }

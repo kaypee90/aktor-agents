@@ -24,15 +24,24 @@ public static class YamlJson
             }
         }
 
+        var parser = new YamlDotNet.Core.Parser(new StringReader(text));
         try
         {
             var yaml = new YamlStream();
-            yaml.Load(new StringReader(text));
+            yaml.Load(parser);
             return yaml.Documents.Count == 0 ? null : FromYaml(yaml.Documents[0].RootNode, 0);
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            throw new FormatException($"The YAML couldn't be read: {ex.Message}");
+            // The message doesn't say where; the dashboard highlights the line it names.
+            throw new FormatException($"The YAML couldn't be read: (Line: {ex.Start.Line}, Col: {ex.Start.Column}): {ex.Message}");
+        }
+        catch (InvalidOperationException)
+        {
+            // YamlDotNet's scanner gives up this way on some broken input (an unclosed [ or {),
+            // without saying where; the last thing it read is near the problem.
+            var at = parser.Current is { } current ? $"(Line: {current.Start.Line}, Col: {current.Start.Column}): " : string.Empty;
+            throw new FormatException($"The YAML couldn't be read: {at}a value there couldn't be read. Look for an unclosed [ or {{, or a stray quote.");
         }
     }
 

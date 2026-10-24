@@ -26,6 +26,18 @@ public class PipelineEditorTests
     }
 
     [Fact]
+    public void A_stage_id_with_an_underscore_says_underscores_are_not_allowed()
+    {
+        var p = new PipelineDefinition { Stages = [Stage("triage_step")] };
+        var error = Assert.Single(PipelineValidator.Validate(p, Options), e => e.StartsWith("Stage id"));
+        Assert.Contains("underscores (_) aren't allowed", error);
+        Assert.Contains("Try 'triage-step'", error);
+
+        Assert.Contains("capital letters aren't allowed", PipelineValidator.StageIdError("Triage"));
+        Assert.Contains("no underscores", PipelineValidator.StageIdError("-triage"));
+    }
+
+    [Fact]
     public void Loops_unknown_inputs_and_duplicate_ids_are_refused()
     {
         var loop = new PipelineDefinition { Stages = [Stage("a", "b"), Stage("b", "a")] };

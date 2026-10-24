@@ -15,6 +15,22 @@ public static partial class PipelineValidator
 
     public static bool IsValidStageId(string? id) => id is not null && StageIdPattern().IsMatch(id);
 
+    /// <summary>Why <paramref name="id"/> isn't a valid stage id, naming the usual slip (an
+    /// underscore, a capital, a space) and the id it could be instead.</summary>
+    public static string StageIdError(string? id)
+    {
+        id ??= string.Empty;
+        var slip = id.Contains('_') ? "underscores (_) aren't allowed"
+            : id.Any(char.IsUpper) ? "capital letters aren't allowed"
+            : id.Any(char.IsWhiteSpace) ? "spaces aren't allowed"
+            : id.Length == 0 ? "it's empty"
+            : "it has a character that isn't allowed, or is too long";
+        var suggestion = string.Join('-', id.Trim().ToLowerInvariant().Split(['_', ' '], StringSplitOptions.RemoveEmptyEntries));
+        var hint = suggestion != id && IsValidStageId(suggestion) ? $" Try '{suggestion}'." : string.Empty;
+        return $"Stage id '{id}' isn't valid: {slip}. Stage ids use only lowercase letters, digits and dashes (-), " +
+               $"with no underscores, start with a letter or digit, and are 40 characters at most.{hint}";
+    }
+
     /// <summary>Every problem with <paramref name="pipeline"/>; empty when it can be saved. A pipeline
     /// with no stages (a blank canvas) can be saved, but not run.</summary>
     public static List<string> Validate(PipelineDefinition pipeline, PipelineOptions options)
@@ -37,7 +53,7 @@ public static partial class PipelineValidator
         foreach (var stage in pipeline.Stages)
         {
             var label = string.IsNullOrWhiteSpace(stage.Name) ? stage.StageId : stage.Name;
-            if (!IsValidStageId(stage.StageId)) errors.Add($"Stage id '{stage.StageId}' must be lowercase letters, digits and dashes (40 at most).");
+            if (!IsValidStageId(stage.StageId)) errors.Add(StageIdError(stage.StageId));
             if (!ids.Add(stage.StageId)) errors.Add($"Two stages have the id '{stage.StageId}'.");
             if (string.IsNullOrWhiteSpace(stage.Name)) errors.Add($"Stage '{stage.StageId}' needs a name.");
             if (stage.Kind == StageKind.Action) ValidateAction(stage, label, options, errors);

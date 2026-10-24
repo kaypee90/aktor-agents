@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{SITE_NAME}}</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --fg: #1d2433; --muted: #6b7385; --line: #e3e6ec; --accent: #3b5bdb; --ok: #2f9e44; --warn: #e67700; --bad: #e03131; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0f1115; --card: #171a21; --fg: #e7e9ee; --muted: #9aa2b1; --line: #2a2f3a; --accent: #7c95ff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 24px; background: var(--card); border-bottom: 1px solid var(--line); }
+    header .logo { font-weight: 700; font-size: 18px; flex: 1; }
+    header .logo span { color: var(--accent); }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; grid-template-columns: 1fr 380px; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+    .card h2 { margin: 0 0 10px; font-size: 16px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    button, input { font: inherit; }
+    button { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    input { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 8px; padding: 6px 10px; }
+    .hero h1 { margin: 0 0 6px; font-size: 26px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .stack > * + * { margin-top: 20px; }
+    .checks { list-style: none; padding: 0; margin: 0; font-size: 14px; }
+    .checks li { padding: 3px 0; }
+    .checks .ok::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+    .checks .warn::before { content: "! "; color: var(--warn); font-weight: 700; }
+    .checks .bad::before { content: "✗ "; color: var(--bad); font-weight: 700; }
+    #inline-chat { height: 560px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; }
+    code { font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+    .tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">{{SITE_NAME}} <span>resident portal</span></div>
+    <div id="account" class="row"></div>
+  </header>
+
+  <main>
+    <div class="stack">
+      <section class="card hero">
+        <h1 id="hello">Welcome</h1>
+        <p class="muted">A pretend customer site for testing an Aktor solution's assistant. Sign in as anyone: each name is a
+          separate end user, with their own conversations and records.</p>
+        <form id="login" class="row">
+          <input id="name" placeholder="Your name, e.g. Sam" autocomplete="off" required />
+          <button class="primary">Sign in</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="row" style="justify-content: space-between">
+          <h2>Your records</h2>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <p class="muted">What the assistant can see and change for you: entities with an end-user field that the assistant has access to.</p>
+        <div id="records" class="muted">Sign in to see them.</div>
+      </section>
+
+      <section class="card">
+        <h2>Integration check</h2>
+        <ul id="checks" class="checks"><li class="muted">Checking…</li></ul>
+      </section>
+    </div>
+
+    <aside class="stack">
+      <section class="card">
+        <div class="row" style="justify-content: space-between">
+          <h2>Assistant</h2>
+          <div class="tabs row">
+            <button type="button" data-mode="inline">In page</button>
+            <button type="button" data-mode="bubble">Chat bubble</button>
+          </div>
+        </div>
+        <div id="inline-chat"><p class="muted" style="padding: 16px">Sign in to chat.</p></div>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    const AKTOR_URL = "{{AKTOR_URL}}";
+    const INSTALL = "{{INSTALL_ID}}";
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    const json = (r) => r.json().then((j) => (r.ok ? j : Promise.reject(new Error(j.error || r.statusText))));
+
+    let me = null;
+    let token = null;
+    async function getToken() {
+      const t = await fetch("/api/aktor-token", { method: "POST" }).then(json);
+      token = t.token;
+      return token;
+    }
+
+    // ------------------------------------------------------------ sign in / out
+
+    function renderAccount() {
+      $("#login").style.display = me ? "none" : "";
+      $("#hello").textContent = me ? `Welcome back, ${me.name}` : "Welcome";
+      $("#account").innerHTML = me
+        ? `<span class="muted">${esc(me.name)} · <code>${esc(me.userId)}</code></span> <button id="logout">Sign out</button>`
+        : `<span class="muted">Not signed in</span>`;
+      if (me) $("#logout").onclick = async () => {
+        await fetch("/api/logout", { method: "POST" });
+        forgetConversation();
+        location.reload();
+      };
+    }
+
+    // The widget keeps the current conversation in this browser; another user shouldn't see it.
+    function forgetConversation() {
+      try { localStorage.removeItem("aktor-chat:" + INSTALL); } catch { /* blocked */ }
+    }
+
+    $("#login").onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: $("#name").value }) }).then(json);
+        forgetConversation();
+        location.reload();
+      } catch (err) { alert(err.message); }
+    };
+
+    // ------------------------------------------------------------ the assistant
+
+    let mode = "inline";
+    try { mode = localStorage.getItem("test-app:mode") || "inline"; } catch { /* blocked */ }
+
+    function loadWidget() {
+      return new Promise((resolve, reject) => {
+        if (window.AktorChat) return resolve();
+        const s = document.createElement("script");
+        s.src = `${AKTOR_URL}/embed.js`;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(`Couldn't load ${AKTOR_URL}/embed.js. Is Aktor running there?`));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function mountChat() {
+      document.querySelectorAll(".tabs button").forEach((b) => {
+        b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+        b.onclick = () => { try { localStorage.setItem("test-app:mode", b.dataset.mode); } catch {} location.reload(); };
+      });
+      if (!me) return;
+      try {
+        await loadWidget();
+      } catch (e) {
+        $("#inline-chat").innerHTML = `<p style="padding:16px;color:var(--bad)">${esc(e.message)}</p>`;
+        return;
+      }
+      const inline = mode === "inline";
+      if (inline) $("#inline-chat").innerHTML = "";
+      else $("#inline-chat").innerHTML = `<p class="muted" style="padding:16px">The chat bubble is at the bottom right.</p>`;
+      AktorChat.mount({ install: INSTALL, apiBase: AKTOR_URL, getToken, container: inline ? $("#inline-chat") : undefined, open: !inline ? false : undefined });
+    }
+
+    // ------------------------------------------------------------ records
+
+    let entities = [];
+    async function loadRecords() {
+      if (!me) return;
+      const box = $("#records");
+      box.textContent = "Loading…";
+      try {
+        const t = token || (await getToken());
+        const results = await Promise.all(entities.map(async (entity) => {
+          const get = (bearer) => fetch(`${AKTOR_URL}/api/v1/apps/${INSTALL}/records/${entity}?limit=20`, { headers: { Authorization: `Bearer ${bearer}` } });
+          let r = await get(t);
+          if (r.status === 401) r = await get(await getToken());   // the token expired
+          return r.ok ? { entity, ...(await r.json()) } : null;   // 404: not a per-user entity
+        }));
+        const shown = results.filter(Boolean);
+        if (shown.length === 0) {
+          box.innerHTML = "None of this solution's entities belong to end users (no <code>end_user</code> field the assistant can use).";
+          return;
+        }
+        box.innerHTML = shown.map(({ entity, total, items }) => {
+          const cols = [...new Set(items.flatMap((i) => Object.keys(i)))].filter((c) => !["created_at", "updated_at", "version"].includes(c)).slice(0, 6);
+          const table = items.length
+            ? `<table><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>${items.map((i) => `<tr>${cols.map((c) => `<td>${esc(typeof i[c] === "object" ? JSON.stringify(i[c]) : i[c])}</td>`).join("")}</tr>`).join("")}</table>`
+            : `<p class="muted">None yet. Ask the assistant to make one.</p>`;
+          return `<h3 style="font-size:14px;margin:12px 0 6px">${esc(entity)} <span class="muted">(${total})</span></h3>${table}`;
+        }).join("");
+      } catch (e) {
+        box.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`;
+      }
+    }
+    $("#refresh").onclick = loadRecords;
+
+    // ------------------------------------------------------------ integration check
+
+    async function check() {
+      const items = [];
+      const add = (cls, html) => items.push(`<li class="${cls}">${html}</li>`);
+      try {
+        const { app } = await fetch("/api/check").then(json);
+        entities = app.entities ?? [];
+        add("ok", `App key works for <b>${esc(app.app)}</b> ${esc(app.version)} (<code>${esc(app.install_id)}</code>)`);
+        if (!app.assistant) add("bad", "This solution has no assistant. Add one in the builder and deploy again.");
+        else {
+          add("ok", `Assistant: <b>${esc(app.assistant.name || "unnamed")}</b>`);
+          const origins = app.assistant.allowed_origins ?? [];
+          if (origins.length === 0) add("warn", "allowed_origins is empty: any site may use it (fine for testing).");
+          else if (origins.includes("*")) add("warn", "allowed_origins is <code>*</code>: any site may use it (fine for testing).");
+          else if (origins.some((o) => o.replace(/\/$/, "") === location.origin)) add("ok", `This site (${esc(location.origin)}) is an allowed origin.`);
+          else add("bad", `This site (${esc(location.origin)}) isn't in allowed_origins (${esc(origins.join(", "))}): chats will get 403. Add it, or use <code>"*"</code> while testing.`);
+        }
+        add("ok", `${entities.length} entities, workflows: ${esc((app.workflows ?? []).join(", ") || "none")}`);
+      } catch (e) {
+        add("bad", esc(e.message));
+      }
+      $("#checks").innerHTML = items.join("");
+    }
+
+    // ------------------------------------------------------------ start
+
+    (async () => {
+      me = (await fetch("/api/me").then(json)).user;
+      renderAccount();
+      await check();
+      await mountChat();
+      await loadRecords();
+    })();
+  </script>
+</body>
+</html>

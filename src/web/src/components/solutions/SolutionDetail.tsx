@@ -180,7 +180,7 @@ function Overview({ solution, canIntegrate, onShow }: { solution: SolutionView; 
                 </div>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                   <dt className="text-zinc-500">Allowed sites</dt>
-                  <dd className="truncate text-zinc-800 dark:text-zinc-200">{a.allowed_origins?.length ? a.allowed_origins.join(", ") : <span className="text-amber-600 dark:text-amber-400">any site</span>}</dd>
+                  <dd className="truncate text-zinc-800 dark:text-zinc-200">{a.allowed_origins?.length && !a.allowed_origins.includes("*") ? a.allowed_origins.join(", ") : <span className="text-amber-600 dark:text-amber-400">any site</span>}</dd>
                   <dt className="text-zinc-500">Cap per customer</dt>
                   <dd className="text-zinc-800 dark:text-zinc-200">{a.monthly_cost_limit_usd_per_user != null ? `$${a.monthly_cost_limit_usd_per_user.toFixed(2)} a month` : <span className="text-amber-600 dark:text-amber-400">none</span>}</dd>
                   <dt className="text-zinc-500">Sign-in</dt>

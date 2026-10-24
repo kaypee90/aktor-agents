@@ -63,9 +63,11 @@ export function IntegrateTab({ solution, canManage }: { solution: SolutionView; 
   if (a) {
     checks.push(
       {
-        ok: origins.length > 0,
+        ok: origins.length > 0 && !origins.includes("*"),
         title: "Only your sites can embed the assistant",
-        detail: origins.length > 0 ? origins.join(", ") : <>Any site can use it with a valid token. Add your sites under <b>Assistant → Allowed sites</b> in the builder.</>,
+        detail: origins.includes("*")
+          ? <>Allowed sites is <code>*</code>, so any site can use it with a valid token. Fine for testing; list your sites under <b>Assistant → Allowed sites</b> before you go live.</>
+          : origins.length > 0 ? origins.join(", ") : <>Any site can use it with a valid token. Add your sites under <b>Assistant → Allowed sites</b> in the builder.</>,
       },
       {
         ok: a.monthly_cost_limit_usd_per_user != null,

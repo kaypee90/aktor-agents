@@ -223,6 +223,21 @@ handing their backend a powerful credential.
   `aktor-acp.mjs` was never tracked. That folder is now included.
 - **Small fixes:** the `aktor init` scaffold's YAML, readable JSON in watch arguments, and numbers
   of any form accepted in number fields.
+- **`allowed_origins: ["*"]`** lets pages on any site use the assistant, for testing. Validation
+  warns while it's there, and the Integrate tab doesn't count it as "only your sites".
+- **Stage ids:** a bad stage id now says what's wrong ("underscores (_) aren't allowed") and
+  suggests one that works (`triage_step` → `triage-step`).
+- **Problems are highlighted in aktor.yaml.** In the builder's Review tab, each problem links to its
+  line and the lines are highlighted, also while editing. YAML that can't be applied keeps the editor
+  open with the bad line selected, instead of losing the edit. The deploy dialog shows the lines
+  of aktor.yaml each problem is about.
+- **YAML syntax errors** now name their line. Before, the message left it out, and an unclosed
+  `[` or `{` crashed the parse with a 500 instead of an error.
+- **Workspace keys:** the error now says underscores aren't allowed.
+- **Signing in** lands on Tasks, instead of Workspaces.
+- **A test site for the assistant:** [samples/assistant-test-app](../samples/assistant-test-app) is
+  a pretend customer site with sign-in, a backend that swaps it for an end-user token, the widget,
+  the user's own records, and an integration check.
 
 ## Documentation and pages
 

@@ -784,7 +784,34 @@ with `{"subject": "Printer on fire", "message": "It started smoking."}` as `data
 - Revoke the key: the check command now answers 401. The organization's audit log
   (`GET /api/organization/policy/audit`) lists `solution.app_key.created` and `…revoked`.
 - With **Allowed sites** empty, **Review & deploy** in the builder warns that any site can use the
-  assistant.
+  assistant. With `*` it warns that it's for testing, and the Integrate checklist shows "Only your
+  sites can embed the assistant" amber.
+
+### SO16. Problems are highlighted in aktor.yaml
+
+**Do:** in the builder, rename a workspace stage to `triage_step`, then open **Review & deploy**.
+Click **Edit YAML**, change a line to `broken: [unclosed` and press **Apply to the forms**. Then
+**Cancel**, and press **Deploy** with the stage still named `triage_step`.
+
+**Check:**
+- The problem says "underscores (_) aren't allowed" and suggests `triage-step`. Its **line N**
+  button scrolls to the stage's line, which is highlighted.
+- The broken YAML isn't applied: the editor stays open with your edit, the error names its line, and
+  that line is selected. Before this fix, an unclosed `[` was a 500.
+- The deploy dialog lists the problem with the few lines of `aktor.yaml` around it.
+
+### SO17. The assistant on a test site
+
+**Do:** follow [samples/assistant-test-app](../samples/assistant-test-app/README.md): set
+**Allowed sites** to `*` and deploy, create an app key, start `node server.mjs`, open
+http://localhost:4000 and sign in as `alice`. Chat, then sign in as `bob`.
+
+**Check:**
+- The integration check panel is green, including the site's origin.
+- Alice's conversation and records aren't shown to Bob.
+- Each conversation shows in the dashboard as a task.
+- With **Allowed sites** set to `https://app.example.com` only, the chat says "This app can't be
+  used from this site."
 
 ---
 

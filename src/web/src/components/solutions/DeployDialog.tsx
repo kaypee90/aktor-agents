@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE,
   apiErrorMessage,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/api";
 import { Badge, Button, CopyField, ErrorBanner, Field, Modal, Toggle, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
+import { YamlExcerpt, useLocatedProblems } from "@/components/solutions/YamlView";
 
 // ---------------------------------------------------------------- deploy
 
@@ -105,6 +106,9 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
     getRegistryPackage(name, version ?? "latest").then((p) => loadRef.current(p.bundle)).catch((e) => setError(apiErrorMessage(e)));
   }, [packageRef]);
 
+  // Each problem with the lines of aktor.yaml it's about.
+  const errors = useMemo(() => validation?.errors ?? [], [validation]);
+  const located = useLocatedProblems(bundle?.manifest ?? "", errors);
   const globalOptions = validation?.globals ?? {};
   const needed = Object.entries(validation?.secrets ?? {}).filter(([connector, list]) => list.length > 0 && !globals[connector]);
   const pickable = Object.entries(globalOptions).filter(([, list]) => list.length > 0);
@@ -166,7 +170,14 @@ export function DeployDialog({ installId, packageRef, initialBundle, currentInpu
         {validation && !validation.ok && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
             <div className="mb-1 font-medium">{validation.errors.length} problem(s) to fix first</div>
-            <ul className="list-disc space-y-0.5 pl-5 text-xs">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>
+            <ul className="list-disc space-y-1.5 pl-5 text-xs">
+              {located.map(({ problem, at }) => (
+                <li key={problem}>
+                  {problem}
+                  {at && bundle && <YamlExcerpt text={bundle.manifest} at={at} />}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
         {validation && validation.warnings.length > 0 && (

@@ -45,6 +45,7 @@ multi-agent runtime based on the Actor Model, described from [section 2](#2-acto
   /web                        Next.js dashboard (solutions, workspaces, tasks, agent graph, analytics, settings)
 /evals                        eval scenarios and the committed baseline (docs/evals.md)
 /samples/solutions            solution packages to deploy (docs/solutions.md)
+/samples/assistant-test-app   a pretend customer site for trying a solution's assistant locally
 /sdk/typescript               TypeScript SDK, the aktor CLI and the aktor-acp bridge
 /sdk/python                   Python SDK and the remote-plugin server
                               (the Node remote-plugin server is @aktor/sdk/plugin in /sdk/typescript)

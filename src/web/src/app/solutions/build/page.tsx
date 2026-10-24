@@ -6,6 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/platform/AuthProvider";
 import { DeployDialog } from "@/components/solutions/DeployDialog";
 import { DesignChat } from "@/components/solutions/DesignChat";
+import { YamlProblemList, YamlView, useLocatedProblems } from "@/components/solutions/YamlView";
 import { connectorsMentioned, renameMentions, solutionMentionables, type MentionScope } from "@/components/solutions/solutionMentions";
 import { MentionTextarea, knowledgeHandle, useKnowledgeMentionables, useSkillMentionables, type Mentionable } from "@/components/ui/MentionTextarea";
 import {
@@ -30,6 +31,7 @@ import { CAPABILITIES } from "@/lib/pipelineTypes";
 import { atLeast, type Role } from "@/lib/platformTypes";
 import { cleanManifest, download, parseSkillMarkdown, skillMarkdown, toYaml, zipPackage, type BuilderSkill, type Json } from "@/lib/solutionPackage";
 import type { PluginInfo } from "@/lib/workspaceTypes";
+import { locateYamlProblem } from "@/lib/yamlProblems";
 import { Badge, Button, Card, CardHeader, ErrorBanner, Field, PageHeader, Toggle, cx, inputClass } from "@/components/ui";
 import { Icons } from "@/components/ui/icons";
 
@@ -388,13 +390,7 @@ function Builder() {
           {section === "evals" && <Evals manifest={manifest} set={set} entities={entities} workspaces={workspaces} mentionsFor={mentionsFor} />}
           {section === "review" && (
             <Review bundle={bundle} validation={validation} manifestName={str(manifest.name) || "solution"}
-              onApply={async (yaml) => {
-                try {
-                  await open({ manifest: yaml, files: bundle.files }, "your YAML");
-                } catch (e) {
-                  setError(apiErrorMessage(e));
-                }
-              }} />
+              onApply={(yaml) => open({ manifest: yaml, files: bundle.files }, "your YAML")} />
           )}
         </main>
       </div>
@@ -1068,7 +1064,7 @@ function Assistant({ manifest, set, entities, mentionsFor }: { manifest: Obj; se
                   <NumberInput value={num(a.monthly_cost_limit_usd_per_user)} onChange={(v) => set(["assistant", "monthly_cost_limit_usd_per_user"], v)} />
                 </Field>
                 <Field label="Messages per minute per customer"><NumberInput value={num(a.max_messages_per_minute)} placeholder="10" onChange={(v) => set(["assistant", "max_messages_per_minute"], v)} /></Field>
-                <Field label="Allowed sites" hint="Comma-separated origins that may embed it, e.g. https://app.example.com. Empty means any site: set this before you go live.">
+                <Field label="Allowed sites" hint="Comma-separated origins that may embed it, e.g. https://app.example.com. Use * to allow any site while testing; empty also means any site. Set this before you go live.">
                   <TextInput value={strs(a.allowed_origins).join(", ")} onChange={(v) => set(["assistant", "allowed_origins"], v.split(",").map((x) => x.trim()).filter(Boolean))} />
                 </Field>
                 {connectors.length > 0 && (
@@ -1321,8 +1317,35 @@ function Evals({ manifest, set, entities, workspaces, mentionsFor }: { manifest:
   );
 }
 
-function Review({ bundle, validation, manifestName, onApply }: { bundle: SolutionBundle; validation: SolutionValidation | null; manifestName: string; onApply: (yaml: string) => void }) {
+function Review({ bundle, validation, manifestName, onApply }: { bundle: SolutionBundle; validation: SolutionValidation | null; manifestName: string; onApply: (yaml: string) => Promise<void> }) {
   const [editing, setEditing] = useState<string | null>(null);
+  // Why the edited YAML couldn't be applied; the editor stays open to fix it.
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [focus, setFocus] = useState<{ line: number } | null>(null);
+  const shown = editing ?? bundle.manifest;
+  const errors = useMemo(() => validation?.errors ?? [], [validation]);
+  const located = useLocatedProblems(shown, errors);
+  const applyProblems = useMemo(() => (applyError ? [applyError] : []), [applyError]);
+  const applyLocated = useLocatedProblems(shown, applyProblems);
+  const all = useMemo(() => [...applyLocated, ...located], [applyLocated, located]);
+
+  async function apply() {
+    if (editing === null) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      await onApply(editing);
+      setEditing(null);
+    } catch (e) {
+      setApplyError(apiErrorMessage(e));
+      const at = locateYamlProblem(editing, apiErrorMessage(e));
+      if (at) setFocus({ line: at.line });
+    } finally {
+      setApplying(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <Card>
@@ -1332,8 +1355,8 @@ function Review({ bundle, validation, manifestName, onApply }: { bundle: Solutio
             : validation.ok ? <div className="text-emerald-600 dark:text-emerald-400">✓ Valid. Deploy it from the button at the top, or download the package.</div>
             : (
               <div className="text-rose-700 dark:text-rose-300">
-                <div className="mb-1 font-medium">{validation.errors.length} problem(s)</div>
-                <ul className="list-disc space-y-0.5 pl-5 text-xs">{validation.errors.map((e) => <li key={e}>{e}</li>)}</ul>
+                <div className="mb-1 font-medium">{validation.errors.length} problem(s){located.some((l) => l.at) ? ": highlighted in aktor.yaml below" : ""}</div>
+                <YamlProblemList located={located} onPick={(line) => setFocus({ line })} />
               </div>
             )}
           {validation?.warnings.length ? <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-400">{validation.warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
@@ -1352,14 +1375,19 @@ function Review({ bundle, validation, manifestName, onApply }: { bundle: Solutio
               {editing === null
                 ? <Button size="sm" onClick={() => setEditing(bundle.manifest)}>Edit YAML</Button>
                 : <>
-                    <Button size="sm" onClick={() => setEditing(null)}>Cancel</Button>
-                    <Button size="sm" variant="primary" onClick={() => { onApply(editing); setEditing(null); }}>Apply to the forms</Button>
+                    <Button size="sm" onClick={() => { setEditing(null); setApplyError(null); }}>Cancel</Button>
+                    <Button size="sm" variant="primary" disabled={applying} onClick={apply}>{applying ? "Applying…" : "Apply to the forms"}</Button>
                   </>}
             </>
           } />
-        {editing === null
-          ? <pre className="max-h-[36rem] overflow-auto bg-zinc-50 p-4 font-mono text-xs leading-5 text-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">{bundle.manifest}</pre>
-          : <textarea className="block h-[36rem] w-full resize-y bg-zinc-50 p-4 font-mono text-xs leading-5 text-zinc-800 outline-none dark:bg-zinc-950 dark:text-zinc-300" value={editing} onChange={(e) => setEditing(e.target.value)} spellCheck={false} />}
+        {applyError && (
+          <div className="border-b border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+            <div className="mb-1 font-medium">Your YAML couldn&apos;t be applied{applyLocated[0]?.at ? ": the problem is highlighted below" : ""}</div>
+            <YamlProblemList located={applyLocated} onPick={(line) => setFocus({ line })} />
+          </div>
+        )}
+        <YamlView text={shown} located={all} focusLine={focus} className={editing === null ? "max-h-[36rem]" : "h-[36rem]"}
+          onChange={editing === null ? undefined : (v) => setEditing(v)} />
         {Object.keys(bundle.files).length > 0 && (
           <div className="border-t border-zinc-200 px-5 py-3 text-xs text-zinc-500 dark:border-zinc-800">
             Also in the package: {Object.keys(bundle.files).map((f) => <code key={f} className="mr-2 rounded bg-zinc-100 px-1 font-mono dark:bg-zinc-800">{f}</code>)}

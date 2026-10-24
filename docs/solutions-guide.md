@@ -89,7 +89,8 @@ The builder's sections are the parts of every solution:
 | **Review & deploy** | | The `aktor.yaml` it makes, every problem found, and Deploy. |
 
 The left-hand list shows a red count for any section with a problem. **Review & deploy** says
-**✓ Valid** when the draft is ready.
+**✓ Valid** when the draft is ready. Until then it lists each problem with a link to its line in
+`aktor.yaml`, and highlights those lines.
 
 ## 3. Make it yours
 
@@ -98,7 +99,8 @@ Make three changes. Together they show the main controls.
 1. **Basics:** set the title to `Acme Support`.
 2. **Assistant → Allowed sites:** enter the address of the site that will embed the assistant. For
    local development that's e.g. `http://localhost:3001`; add `https://app.acme.com` for
-   production. While this is empty any site can use the assistant, and validation warns about it.
+   production. While this is empty or `*` (any site, for testing) any site can use the assistant,
+   and validation warns about it.
 3. **Assistant → Monthly cost cap per customer:** `2`. A customer who reaches $2 of usage in a
    month gets a polite "limit reached" until the next month.
 
@@ -253,6 +255,10 @@ def aktor_token(user=Depends(current_user)):
 - **Already have an identity provider** (Auth0, Clerk, Cognito, Entra…)? Declare `end_users.jwt` in
   the solution ([solutions.md](solutions.md#your-own-sign-in)). Aktor then accepts your users'
   existing JWTs directly, and you don't need this endpoint.
+
+To try all of this before touching your own product,
+[samples/assistant-test-app](../samples/assistant-test-app) is a small pretend customer site (Node,
+no dependencies) with sign-in, a token endpoint, the widget and a panel of the user's own records.
 
 ### 7b. The widget
 
@@ -488,7 +494,7 @@ Also:
 | `401 An app key is required` | The request had no `aks_…` key, or an end-user token where the app key is needed | Send `Authorization: Bearer $AKTOR_APP_KEY` from your server |
 | `401 This app key isn't valid for this solution, or it was revoked` | Wrong install id, a revoked key, or a key for another solution | Check `AKTOR_INSTALL_ID` and the key on the Integrate tab |
 | `403 App keys are for your server` | The app key was sent from a browser (an `Origin` header) | Move the call to your backend; give the browser an end-user token instead |
-| `403 This app can't be used from this site` | The page's origin isn't in **Allowed sites** | Add the exact origin (scheme + host + port) and redeploy |
+| `403 This app can't be used from this site` | The page's origin isn't in **Allowed sites** | Add the exact origin (scheme + host + port) and redeploy; `*` allows any site while testing |
 | `401` on Aktor's API (`/api/v1/solutions…`) with an app key | App keys only work on `/api/v1/apps/{installId}` | Use an organization API key for deploys and admin, the app key for your app |
 | The widget says "Sign in to chat with us." | Your token endpoint answered 401/403 | The visitor isn't signed in to your site, or the endpoint isn't a `POST` handler |
 | `402 You've reached this month's usage limit` | The customer hit **Monthly cost cap per customer** | Expected; raise the cap in a new version if needed |

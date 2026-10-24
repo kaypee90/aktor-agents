@@ -89,6 +89,9 @@ The builder writes the same package the CLI reads:
 - **Review & deploy** shows the `aktor.yaml` it makes. **Package (.zip)** downloads the whole package
   (the manifest and its skill files) for git or the CLI.
 - **Edit YAML** lets you change the text and apply it back to the forms.
+- **Problems are shown in the YAML.** Each problem links to its line in `aktor.yaml`, and those lines
+  are highlighted, also while you edit. YAML that can't be applied keeps the editor open with the bad
+  line selected. The deploy dialog shows the lines each problem is about.
 - **Edit in builder** on an installed solution opens that version. **Open a folder** loads a package
   from disk.
 - Drafts are saved in your browser until you deploy or discard them.
@@ -516,12 +519,13 @@ assistant:
   max_cost_usd: 0.25
   max_conversations_per_day: 20  # per end user
   max_messages_per_minute: 10    # per end user, counted once for the whole cluster
-  allowed_origins: ["https://app.example.com"]   # sites whose pages may call it; empty: any
+  allowed_origins: ["https://app.example.com"]   # sites whose pages may call it; "*" or empty: any (testing)
   monthly_cost_limit_usd_per_user: 2.00          # optional cap per end user per calendar month
 ```
 
 Rate limits are counted per end user across every server, by one grain per user. With
-`allowed_origins`, a request from a page on any other site gets `403`. Requests without an
+`allowed_origins`, a request from a page on any other site gets `403`. `["*"]` allows every site,
+for testing; validation warns until you replace it. Requests without an
 `Origin` header, such as your backend calling the apps API, aren't affected. Secrets for the
 assistant's `connectors` are asked for at install and kept in the vault for the assistant, so a
 connector only the assistant uses works too.
@@ -799,7 +803,7 @@ behaviour.
   pages, are stored as hashes, rate-limited, revocable at once, and audited when created or revoked.
   Your backend never needs an organization API key.
 - **Allowed sites.** With `allowed_origins`, pages on other sites are refused. Validation warns
-  while the list is empty, and when an origin isn't https. The dashboard's own origin is always
+  while the list is empty or is `*`, and when an origin isn't https. The dashboard's own origin is always
   allowed, for its preview, and still needs an end-user token.
 - **End users** hold signed, expiring tokens that work on the apps API only. Their conversations'
   tools are bound to them, so a prompt can't reach another user's data: the runtime filters it

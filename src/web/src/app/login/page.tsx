@@ -8,9 +8,12 @@ import type { Me } from "@/lib/platformTypes";
 
 const field = "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/20 dark:border-zinc-800 dark:bg-zinc-950";
 
+/** Where signing in lands without a ?next=: the Tasks page. */
+const HOME = "/";
+
 /** Only same-site paths, so a crafted ?next= can't send someone to another site after sign-in. */
 function safeNext(value: string | null) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/workspaces";
+  return value && value.startsWith("/") && !value.startsWith("//") ? value : HOME;
 }
 
 export default function LoginPage() {
@@ -45,7 +48,7 @@ export default function LoginPage() {
             if (m.authenticated) {
               // Already signed in: join straight away.
               await acceptInvitation(token);
-              window.location.replace("/workspaces");
+              window.location.replace(HOME);
               return;
             }
             setMode("signup");
